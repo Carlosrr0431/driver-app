@@ -202,7 +202,7 @@ const ActiveTripScreen = () => {
 
     return (
       <View style={{ flex: 1, backgroundColor: colors.background }}>
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle="dark-content" />
         <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 30 }}>
 
           {/* Success Icon */}
@@ -307,7 +307,7 @@ const ActiveTripScreen = () => {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
       {/* Map */}
       <TripMap
@@ -557,21 +557,25 @@ const s = StyleSheet.create({
   // ── Active Trip Screen ──
   statusPill: {
     position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(26,26,46,0.88)', borderRadius: 20,
+    backgroundColor: '#FFFFFF', borderRadius: 20,
     paddingHorizontal: 14, paddingVertical: 7,
+    elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08, shadowRadius: 4, borderWidth: 1, borderColor: '#E2E8F0',
   },
   statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
-  statusText: { color: '#fff', fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  statusText: { color: colors.text, fontSize: 13, fontFamily: 'Inter_600SemiBold' },
   chipRow: {
     position: 'absolute', left: 16, right: 16,
     flexDirection: 'row', justifyContent: 'space-between',
   },
   chip: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(26,26,46,0.85)', borderRadius: 12,
+    backgroundColor: '#FFFFFF', borderRadius: 12,
     paddingHorizontal: 12, paddingVertical: 6,
+    elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08, shadowRadius: 4, borderWidth: 1, borderColor: '#E2E8F0',
   },
-  chipValue: { color: '#fff', fontSize: 18, fontFamily: 'Inter_700Bold' },
+  chipValue: { color: colors.text, fontSize: 18, fontFamily: 'Inter_700Bold' },
   chipLabel: { color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium', marginLeft: 4 },
   sheetBg: {
     backgroundColor: colors.surface, borderTopLeftRadius: 22, borderTopRightRadius: 22,

@@ -37,7 +37,7 @@ const AppNavigator = () => {
   return (
     <NavigationContainer
       theme={{
-        dark: true,
+        dark: false,
         colors: {
           primary: colors.primary,
           background: colors.background,

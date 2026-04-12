@@ -7,15 +7,16 @@ import { decodePolyline } from '../../services/googleMaps';
 import { DEFAULT_REGION } from '../../utils/constants';
 
 const MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#111B2E' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#7088A8' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#111B2E' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1A2540' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#253352' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2A3F5F' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0B1120' }] },
+  { elementType: 'geometry', stylers: [{ color: '#F0F1F5' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#5A6478' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#FFFFFF' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#E2E8F0' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#E8EBF0' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#C9DCF0' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#D5EDDA' }] },
 ];
 
 const DriverDot = React.memo(({ coordinate, heading }) => {
@@ -187,10 +188,10 @@ export const TripMap = React.memo(({
 
       <View style={styles.btnCol}>
         <TouchableOpacity onPress={fitAll} style={styles.mapBtn}>
-          <Ionicons name="expand-outline" size={18} color={colors.primaryLight} />
+          <Ionicons name="expand-outline" size={18} color={colors.secondary} />
         </TouchableOpacity>
         <TouchableOpacity onPress={centerOnDriver} style={styles.mapBtn}>
-          <Ionicons name="locate" size={18} color={colors.primaryLight} />
+          <Ionicons name="locate" size={18} color={colors.secondary} />
         </TouchableOpacity>
       </View>
     </View>
@@ -222,8 +223,12 @@ const styles = StyleSheet.create({
   },
   mapBtn: {
     width: 40, height: 40, borderRadius: 12,
-    backgroundColor: 'rgba(30,30,53,0.92)',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1, borderColor: '#E2E8F0',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08, shadowRadius: 4,
   },
 });

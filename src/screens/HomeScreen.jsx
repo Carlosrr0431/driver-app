@@ -213,7 +213,7 @@ const HomeScreen = () => {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
       {/* ========== MAPA FULLSCREEN ========== */}
       <MapView
@@ -230,7 +230,7 @@ const HomeScreen = () => {
         showsCompass={false}
         showsTraffic={false}
         showsBuildings={false}
-        customMapStyle={mapDarkStyle}
+        customMapStyle={mapLightStyle}
       >
         {currentLocation && (
           <>
@@ -248,7 +248,7 @@ const HomeScreen = () => {
 
       {/* Gradiente superior */}
       <LinearGradient
-        colors={['rgba(11,17,32,0.85)', 'transparent']}
+        colors={['rgba(245,246,250,0.95)', 'transparent']}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top + 56 }}
         pointerEvents="none"
       />
@@ -267,7 +267,7 @@ const HomeScreen = () => {
             <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_700Bold' }}>{initials}</Text>
           </View>
           <View style={{ marginLeft: 10 }}>
-            <Text style={{ color: '#ffffffcc', fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+            <Text style={{ color: colors.textDark, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
               Hola, {firstName} 👋
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 1 }}>
@@ -287,10 +287,12 @@ const HomeScreen = () => {
 
         <TouchableOpacity style={{
           width: 40, height: 40, borderRadius: 20,
-          backgroundColor: 'rgba(26,26,46,0.85)', alignItems: 'center', justifyContent: 'center',
-          borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+          backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+          borderWidth: 1, borderColor: colors.border,
+          elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.08, shadowRadius: 4,
         }}>
-          <Ionicons name="notifications-outline" size={20} color="#fff" />
+          <Ionicons name="notifications-outline" size={20} color={colors.secondary} />
         </TouchableOpacity>
       </View>
 
@@ -298,11 +300,12 @@ const HomeScreen = () => {
       <TouchableOpacity onPress={recenter} style={{
         position: 'absolute', right: 16, top: insets.top + 70,
         width: 42, height: 42, borderRadius: 21,
-        backgroundColor: 'rgba(26,26,46,0.9)', alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-        elevation: 6,
+        backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+        borderWidth: 1, borderColor: colors.border,
+        elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08, shadowRadius: 4,
       }}>
-        <Ionicons name="locate" size={20} color={colors.primary} />
+        <Ionicons name="locate" size={20} color={colors.secondary} />
       </TouchableOpacity>
 
       {/* ========== BOTTOM SHEET ========== */}
@@ -314,6 +317,13 @@ const HomeScreen = () => {
           backgroundColor: colors.background,
           borderTopLeftRadius: 24,
           borderTopRightRadius: 24,
+          borderWidth: 1,
+          borderColor: colors.border,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.1,
+          shadowRadius: 12,
+          elevation: 8,
         }}
         handleIndicatorStyle={{
           backgroundColor: colors.textMuted,
@@ -632,18 +642,18 @@ const SkeletonTrips = () => (
 
 export default HomeScreen;
 
-const mapDarkStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#111B2E' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#111B2E' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#7088A8' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1A2540' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#253352' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#1E2D48' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#2A3F5F' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0A0E1A' }] },
+const mapLightStyle = [
+  { elementType: 'geometry', stylers: [{ color: '#F0F1F5' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#FFFFFF' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#5A6478' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#E2E8F0' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#E8EBF0' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#CBD5E1' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#C9DCF0' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#0F2218' }] },
-  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#253352' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#8899BB' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#D5EDDA' }] },
+  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#CBD5E1' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#475569' }] },
 ];

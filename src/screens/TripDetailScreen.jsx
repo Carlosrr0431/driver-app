@@ -78,7 +78,7 @@ const TripDetailScreen = () => {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
       <ScrollView contentContainerStyle={{ paddingBottom: 30 }} showsVerticalScrollIndicator={false}>
         {/* Map */}
@@ -88,7 +88,7 @@ const TripDetailScreen = () => {
             initialRegion={region}
             scrollEnabled={false}
             zoomEnabled={false}
-            customMapStyle={mapDarkStyle}
+            customMapStyle={mapLightStyle}
           >
             {trip.origin_lat && (
               <Marker coordinate={{ latitude: Number(trip.origin_lat), longitude: Number(trip.origin_lng) }}>
@@ -131,10 +131,12 @@ const TripDetailScreen = () => {
           <TouchableOpacity onPress={() => navigation.goBack()} style={{
             position: 'absolute', top: insets.top + 8, left: 16,
             width: 38, height: 38, borderRadius: 19,
-            backgroundColor: 'rgba(26,26,46,0.85)', alignItems: 'center', justifyContent: 'center',
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+            backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+            borderWidth: 1, borderColor: '#E2E8F0',
+            elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.08, shadowRadius: 4,
           }}>
-            <Ionicons name="arrow-back" size={20} color="#fff" />
+            <Ionicons name="arrow-back" size={20} color={colors.secondary} />
           </TouchableOpacity>
         </View>
 
@@ -265,13 +267,14 @@ const StatBox = ({ icon, label, value, color }) => (
 
 export default TripDetailScreen;
 
-const mapDarkStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a2e' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#6a6a9a' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#252540' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2f2f55' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d0d22' }] },
+const mapLightStyle = [
+  { elementType: 'geometry', stylers: [{ color: '#F0F1F5' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#FFFFFF' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#64748B' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#F8FAFC' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#C9DCF0' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#D5EDDA' }] },
 ];
