@@ -6,6 +6,7 @@ import {
   RefreshControl,
   StatusBar,
   StyleSheet,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, SlideInRight } from 'react-native-reanimated';
@@ -23,6 +24,7 @@ import { useRealtime } from '../hooks/useRealtime';
 import { useLocation } from '../hooks/useLocation';
 import { supabase } from '../services/supabase';
 import { NewTripModal } from '../components/trip/NewTripModal';
+import { VoiceChatModal } from '../components/VoiceChatModal';
 import { formatPrice, formatDistance } from '../utils/formatters';
 import { DEFAULT_REGION } from '../utils/constants';
 import Toast from 'react-native-toast-message';
@@ -66,6 +68,7 @@ const HomeScreen = () => {
   const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showVoice, setShowVoice] = useState(false);
   const snapPoints = useMemo(() => ['35%', '70%'], []);
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
@@ -262,9 +265,13 @@ const HomeScreen = () => {
           <View style={{
             width: 40, height: 40, borderRadius: 20,
             backgroundColor: colors.surfaceLight, borderWidth: 2, borderColor: colors.primary,
-            alignItems: 'center', justifyContent: 'center',
+            alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
           }}>
-            <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_700Bold' }}>{initials}</Text>
+            {driver?.photo_url ? (
+              <Image source={{ uri: driver.photo_url }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+            ) : (
+              <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_700Bold' }}>{initials}</Text>
+            )}
           </View>
           <View style={{ marginLeft: 10 }}>
             <Text style={{ color: colors.textDark, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
@@ -572,6 +579,34 @@ const HomeScreen = () => {
         onAccept={(id) => acceptTrip(id).then(r => r.success && navigation.navigate('ActiveTrip'))}
         onReject={handleRejectTrip}
       />
+
+      {/* Floating radio button */}
+      <TouchableOpacity
+        onPress={() => setShowVoice(true)}
+        activeOpacity={0.8}
+        style={{
+          position: 'absolute',
+          left: 16,
+          top: insets.top + 70,
+          width: 42,
+          height: 42,
+          borderRadius: 21,
+          backgroundColor: '#FFFFFF',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1,
+          borderColor: colors.border,
+          elevation: 3,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.08,
+          shadowRadius: 4,
+        }}
+      >
+        <MaterialCommunityIcons name="radio-tower" size={20} color={colors.primary} />
+      </TouchableOpacity>
+
+      <VoiceChatModal visible={showVoice} onClose={() => setShowVoice(false)} />
     </View>
   );
 };

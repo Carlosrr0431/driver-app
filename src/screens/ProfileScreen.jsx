@@ -14,6 +14,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { decode } from 'base64-arraybuffer';
 import { colors } from '../theme/colors';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthStore } from '../stores/authStore';
@@ -62,27 +63,39 @@ const ProfileScreen = () => {
       allowsEditing: true,
       aspect: type === 'avatar' ? [1, 1] : [16, 9],
       quality: 0.8,
+      base64: true,
     });
-    if (!result.canceled) await uploadImage(result.assets[0].uri, type);
+    if (!result.canceled) await uploadImage(result.assets[0], type);
   };
 
-  const uploadImage = async (uri, type) => {
+  const uploadImage = async (asset, type) => {
     try {
-      const ext = uri.split('.').pop();
-      const fileName = `${driver.id}/${type}-${Date.now()}.${ext}`;
+      const uri = asset.uri;
+      const ext = uri.split('.').pop().toLowerCase().replace(/\?.*$/, '');
+      const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'png' ? 'image/png' : `image/${ext}`;
+      const fileName = `${driver.id}/${type}-${Date.now()}.${ext === 'jpeg' ? 'jpg' : ext}`;
       const bucket = type === 'avatar' ? 'avatars' : 'vehicles';
-      const response = await fetch(uri);
-      const blob = await response.blob();
+
+      let arrayBuffer;
+      if (asset.base64) {
+        arrayBuffer = decode(asset.base64);
+      } else {
+        const response = await fetch(uri);
+        arrayBuffer = await response.arrayBuffer();
+      }
+
       const { error: uploadError } = await supabase.storage
         .from(bucket)
-        .upload(fileName, blob, { contentType: `image/${ext}`, upsert: true });
+        .upload(fileName, arrayBuffer, { contentType: mimeType, upsert: true });
       if (uploadError) throw uploadError;
+
       const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(fileName);
       const field = type === 'avatar' ? 'photo_url' : 'vehicle_photo_url';
       await updateProfile({ [field]: urlData.publicUrl });
       Toast.show({ type: 'success', text1: 'Imagen actualizada' });
     } catch (error) {
-      Toast.show({ type: 'error', text1: 'Error', text2: 'No se pudo subir la imagen' });
+      console.error('Upload error:', error);
+      Toast.show({ type: 'error', text1: 'Error', text2: error.message || 'No se pudo subir la imagen' });
     }
   };
 

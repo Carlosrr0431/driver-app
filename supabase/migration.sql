@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- =====================================================
 -- TABLA: drivers (Choferes)
 -- =====================================================
-CREATE TABLE drivers (
+CREATE TABLE IF NOT EXISTS drivers (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE drivers (
 -- =====================================================
 -- TABLA: trips (Viajes)
 -- =====================================================
-CREATE TABLE trips (
+CREATE TABLE IF NOT EXISTS trips (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   driver_id UUID REFERENCES drivers(id),
   passenger_name TEXT NOT NULL,
@@ -67,7 +67,7 @@ CREATE TABLE trips (
 -- =====================================================
 -- TABLA: trip_tracking (Tracking GPS)
 -- =====================================================
-CREATE TABLE trip_tracking (
+CREATE TABLE IF NOT EXISTS trip_tracking (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   trip_id UUID REFERENCES trips(id) ON DELETE CASCADE,
   driver_id UUID REFERENCES drivers(id),
@@ -81,7 +81,7 @@ CREATE TABLE trip_tracking (
 -- =====================================================
 -- TABLA: dispatcher_messages (Mensajes del despachador)
 -- =====================================================
-CREATE TABLE dispatcher_messages (
+CREATE TABLE IF NOT EXISTS dispatcher_messages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   driver_id UUID REFERENCES drivers(id),
   message TEXT NOT NULL,
@@ -102,7 +102,7 @@ CREATE INDEX idx_trips_status ON trips(status);
 -- =====================================================
 -- TABLA: settings (Configuración del sistema)
 -- =====================================================
-CREATE TABLE settings (
+CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -226,7 +226,7 @@ CREATE TRIGGER trips_completed_stats
 -- Se usa UPSERT (ON CONFLICT) para mantener solo 1 fila por chofer.
 -- Supabase Realtime escucha cambios para el dashboard.
 -- =====================================================
-CREATE TABLE driver_locations (
+CREATE TABLE IF NOT EXISTS driver_locations (
   driver_id UUID PRIMARY KEY REFERENCES drivers(id) ON DELETE CASCADE,
   lat DECIMAL(10, 8) NOT NULL,
   lng DECIMAL(11, 8) NOT NULL,
@@ -335,3 +335,50 @@ ALTER PUBLICATION supabase_realtime ADD TABLE commission_payments;
 -- Setting por defecto: porcentaje de comisión (10%)
 INSERT INTO settings (key, value) VALUES ('commission_percent', '10')
   ON CONFLICT (key) DO NOTHING;
+
+-- =====================================================
+-- SISTEMA DE MENSAJES DE VOZ (Walkie-Talkie)
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS voice_messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
+  sender_type TEXT NOT NULL CHECK (sender_type IN ('base', 'driver')),
+  audio_url TEXT NOT NULL,
+  duration_seconds INTEGER DEFAULT 0,
+  is_played BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_voice_messages_driver ON voice_messages(driver_id);
+CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_at);
+
+ALTER TABLE voice_messages ENABLE ROW LEVEL SECURITY;
+
+-- El chofer puede ver sus propios mensajes de voz
+CREATE POLICY "Chofer ve sus mensajes de voz"
+  ON voice_messages FOR SELECT
+  USING (driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid()));
+
+-- El chofer puede insertar mensajes de voz (sender_type = 'driver')
+CREATE POLICY "Chofer envia mensajes de voz"
+  ON voice_messages FOR INSERT
+  WITH CHECK (driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid()));
+
+-- El chofer puede marcar como leído
+CREATE POLICY "Chofer actualiza mensajes de voz"
+  ON voice_messages FOR UPDATE
+  USING (driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid()));
+
+-- Dashboard (anon) puede leer, insertar y actualizar
+CREATE POLICY "Dashboard lee mensajes de voz" ON voice_messages FOR SELECT TO anon USING (true);
+CREATE POLICY "Dashboard envia mensajes de voz" ON voice_messages FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "Dashboard actualiza mensajes de voz" ON voice_messages FOR UPDATE TO anon USING (true);
+
+ALTER PUBLICATION supabase_realtime ADD TABLE voice_messages;
+
+-- Storage bucket para audios de voz
+INSERT INTO storage.buckets (id, name, public) VALUES ('voice-messages', 'voice-messages', true) ON CONFLICT (id) DO NOTHING;
+CREATE POLICY "Voice upload" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'voice-messages');
+CREATE POLICY "Voice read" ON storage.objects FOR SELECT USING (bucket_id = 'voice-messages');
+CREATE POLICY "Voice update" ON storage.objects FOR UPDATE USING (bucket_id = 'voice-messages');
