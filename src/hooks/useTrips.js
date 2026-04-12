@@ -109,12 +109,69 @@ export const useTrips = () => {
         const totalKm = trips.reduce((sum, t) => sum + (Number(t.distance_km) || 0), 0);
         const totalEarnings = trips.reduce((sum, t) => sum + (Number(t.price) || 0), 0);
         const totalMinutes = trips.reduce((sum, t) => sum + (Number(t.duration_minutes) || 0), 0);
+        const totalCommission = trips.reduce((sum, t) => sum + (Number(t.commission_amount) || 0), 0);
 
         return {
           totalTrips,
           totalKm: Math.round(totalKm * 10) / 10,
           totalEarnings,
           totalHours: Math.round((totalMinutes / 60) * 10) / 10,
+          totalCommission,
+        };
+      },
+      enabled: !!driver?.id,
+      refetchInterval: 60000,
+    });
+  };
+
+  const useCommissionBalance = () => {
+    return useQuery({
+      queryKey: ['commissionBalance', driver?.id],
+      queryFn: async () => {
+        if (!driver?.id) return null;
+
+        // Fetch all completed trips' commission amounts
+        const { data: trips, error: tripsErr } = await supabase
+          .from('trips')
+          .select('commission_amount, completed_at')
+          .eq('driver_id', driver.id)
+          .eq('status', TRIP_STATUS.COMPLETED)
+          .gt('commission_amount', 0)
+          .order('completed_at', { ascending: true });
+
+        if (tripsErr) throw tripsErr;
+
+        // Fetch all commission payments
+        let payments = [];
+        try {
+          const { data: payData } = await supabase
+            .from('commission_payments')
+            .select('amount, created_at')
+            .eq('driver_id', driver.id)
+            .order('created_at', { ascending: false });
+          payments = payData || [];
+        } catch (_) {}
+
+        const totalCommission = (trips || []).reduce((s, t) => s + (Number(t.commission_amount) || 0), 0);
+        const totalPaid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        const balance = Math.round((totalCommission - totalPaid) * 100) / 100;
+
+        // Check if overdue (3 days)
+        const lastPaymentDate = payments.length > 0 ? new Date(payments[0].created_at) : null;
+        const tripsAfterPayment = lastPaymentDate
+          ? (trips || []).filter((t) => new Date(t.completed_at) > lastPaymentDate)
+          : (trips || []);
+        const oldestUnpaid = tripsAfterPayment.length > 0 ? tripsAfterPayment[0] : null;
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+        const isOverdue = balance > 0 && oldestUnpaid && new Date(oldestUnpaid.completed_at) < threeDaysAgo;
+
+        return {
+          totalCommission,
+          totalPaid,
+          balance,
+          isOverdue,
+          isBlocked: isOverdue,
         };
       },
       enabled: !!driver?.id,
@@ -124,6 +181,49 @@ export const useTrips = () => {
 
   const acceptTrip = useCallback(async (tripId) => {
     try {
+      // Check commission balance before accepting
+      const { data: commTrips } = await supabase
+        .from('trips')
+        .select('commission_amount, completed_at')
+        .eq('driver_id', driver.id)
+        .eq('status', TRIP_STATUS.COMPLETED)
+        .gt('commission_amount', 0)
+        .order('completed_at', { ascending: true });
+
+      let payments = [];
+      try {
+        const { data: payData } = await supabase
+          .from('commission_payments')
+          .select('amount, created_at')
+          .eq('driver_id', driver.id)
+          .order('created_at', { ascending: false });
+        payments = payData || [];
+      } catch (_) {}
+
+      const totalComm = (commTrips || []).reduce((s, t) => s + (Number(t.commission_amount) || 0), 0);
+      const totalPaid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const balance = totalComm - totalPaid;
+
+      if (balance > 0) {
+        const lastPayDate = payments.length > 0 ? new Date(payments[0].created_at) : null;
+        const unpaidTrips = lastPayDate
+          ? (commTrips || []).filter((t) => new Date(t.completed_at) > lastPayDate)
+          : (commTrips || []);
+        const oldest = unpaidTrips.length > 0 ? unpaidTrips[0] : null;
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+        if (oldest && new Date(oldest.completed_at) < threeDaysAgo) {
+          Toast.show({
+            type: 'error',
+            text1: 'Cuenta bloqueada',
+            text2: 'Regularizá tus comisiones pendientes para aceptar viajes',
+            visibilityTime: 5000,
+          });
+          clearPendingTrip();
+          return { success: false, blocked: true };
+        }
+      }
+
       const { data, error } = await supabase
         .from('trips')
         .update({
@@ -193,12 +293,34 @@ export const useTrips = () => {
     try {
       const updates = { status, ...extraFields };
 
-      if (status === TRIP_STATUS.GOING_TO_PICKUP) {
-        updates.pickup_at = new Date().toISOString();
-      } else if (status === TRIP_STATUS.IN_PROGRESS) {
+      if (status === TRIP_STATUS.IN_PROGRESS) {
         updates.started_at = new Date().toISOString();
       } else if (status === TRIP_STATUS.COMPLETED) {
         updates.completed_at = new Date().toISOString();
+
+        // Calculate actual distance and price from tariff
+        const { tripDistanceKm, tripTimer } = useTripStore.getState();
+        const distKm = Math.round(tripDistanceKm * 10) / 10;
+        updates.distance_km = distKm;
+        updates.duration_minutes = Math.round(tripTimer / 60);
+
+        // Fetch tariff settings for price calculation
+        try {
+          const { data: settingsData } = await supabase
+            .from('settings')
+            .select('key, value')
+            .in('key', ['tariff_per_km', 'tariff_base', 'commission_percent']);
+          const settingsMap = {};
+          (settingsData || []).forEach(r => { settingsMap[r.key] = parseFloat(r.value) || 0; });
+          const tariffBase = settingsMap.tariff_base || 0;
+          const tariffPerKm = settingsMap.tariff_per_km || 0;
+          const commissionPercent = settingsMap.commission_percent || 10;
+          const totalPrice = Math.round(tariffBase + tariffPerKm * distKm);
+          updates.price = totalPrice;
+          updates.commission_amount = Math.round(totalPrice * commissionPercent / 100);
+        } catch (e) {
+          console.warn('Error fetching tariff settings:', e);
+        }
       }
 
       const { data, error } = await supabase
@@ -235,6 +357,7 @@ export const useTrips = () => {
     useActiveTrip,
     useTripHistory,
     useTodayStats,
+    useCommissionBalance,
     acceptTrip,
     rejectTrip,
     updateTripStatus,

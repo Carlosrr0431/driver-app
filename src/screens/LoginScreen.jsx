@@ -227,7 +227,7 @@ const LoginScreen = () => {
               </Text>
             </View>
             <Text style={{ color: colors.textDark, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 12 }}>
-              © 2025 Remises App
+              © 2025 Profesional App
             </Text>
           </Animated.View>
         </ScrollView>

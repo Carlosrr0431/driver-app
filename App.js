@@ -1,14 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { StatusBar, View, Text, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Font from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Notifications from 'expo-notifications';
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from '@expo-google-fonts/inter';
 import Toast from 'react-native-toast-message';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import AppNavigator from './src/navigation/AppNavigator';
 import { useAuth } from './src/hooks/useAuth';
+import { useTripStore } from './src/stores/tripStore';
 import { colors } from './src/theme/colors';
 
 try {
@@ -62,6 +70,35 @@ const toastConfig = {
 
 const AppContent = () => {
   useAuth();
+  const notificationListener = useRef();
+  const responseListener = useRef();
+
+  useEffect(() => {
+    // Listen for notifications received while app is foregrounded
+    notificationListener.current = Notifications.addNotificationReceivedListener((notification) => {
+      const data = notification.request.content.data;
+      if (data?.type === 'new_trip' && data?.trip) {
+        useTripStore.getState().setPendingTrip(data.trip);
+      }
+    });
+
+    // Handle user tapping on a notification
+    responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data && Object.keys(data).length > 0) {
+        console.log('Notification tapped, data:', data);
+      }
+    });
+
+    // Dismiss all delivered notifications to prevent re-delivery loop
+    Notifications.dismissAllNotificationsAsync().catch(() => {});
+
+    return () => {
+      if (notificationListener.current) notificationListener.current.remove();
+      if (responseListener.current) responseListener.current.remove();
+    };
+  }, []);
+
   return <AppNavigator />;
 };
 
@@ -73,10 +110,10 @@ export default function App() {
     async function prepare() {
       try {
         await Font.loadAsync({
-          Inter_400Regular: require('@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf'),
-          Inter_500Medium: require('@expo-google-fonts/inter/500Medium/Inter_500Medium.ttf'),
-          Inter_600SemiBold: require('@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf'),
-          Inter_700Bold: require('@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf'),
+          Inter_400Regular,
+          Inter_500Medium,
+          Inter_600SemiBold,
+          Inter_700Bold,
         });
       } catch (e) {
         console.warn('Error loading fonts:', e);
@@ -91,16 +128,16 @@ export default function App() {
 
   if (!appReady) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0F0F1A', justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#6C63FF" />
-        <Text style={{ color: '#A0AEC0', marginTop: 16, fontSize: 14 }}>Cargando...</Text>
+      <View style={{ flex: 1, backgroundColor: '#0B1120', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#DC2626" />
+        <Text style={{ color: '#94A3B8', marginTop: 16, fontSize: 14 }}>Cargando...</Text>
       </View>
     );
   }
 
   if (loadError) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0F0F1A', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+      <View style={{ flex: 1, backgroundColor: '#0B1120', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
         <Text style={{ color: '#FF4757', fontSize: 18, fontWeight: 'bold', marginBottom: 8 }}>Error de carga</Text>
         <Text style={{ color: '#A0AEC0', fontSize: 13, textAlign: 'center' }}>{String(loadError)}</Text>
       </View>

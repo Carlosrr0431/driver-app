@@ -48,6 +48,7 @@ export const useLocation = () => {
   const { driver } = useAuthStore();
   const trackingIntervalRef = useRef(null);
   const activeTripIdRef = useRef(null);
+  const watchSubscriptionRef = useRef(null);
 
   const requestPermissions = useCallback(async () => {
     try {
@@ -156,7 +157,7 @@ export const useLocation = () => {
         foregroundService: {
           notificationTitle: 'Viaje en curso',
           notificationBody: 'Rastreando tu ubicación...',
-          notificationColor: '#6C63FF',
+          notificationColor: '#DC2626',
         },
         showsBackgroundLocationIndicator: true,
       });
@@ -175,19 +176,119 @@ export const useLocation = () => {
     }
 
     try {
-      const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
-      if (isRegistered) {
+      const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      if (hasStarted) {
         await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
       }
     } catch (error) {
-      console.error('Error deteniendo tracking:', error);
+      // Task not running — safe to ignore
     }
   }, []);
+
+  const lastLocationRef = useRef(null);
+  const lastSupabasePushRef = useRef(0);
+
+  const getDistanceMeters = (lat1, lng1, lat2, lng2) => {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+
+  const pushLocationToSupabase = useCallback(async (pos) => {
+    if (!driver?.id) return;
+    const now = Date.now();
+    // Throttle: solo pushear cada 5 segundos como mínimo
+    if (now - lastSupabasePushRef.current < 5000) return;
+    lastSupabasePushRef.current = now;
+
+    try {
+      await supabase
+        .from('driver_locations')
+        .upsert({
+          driver_id: driver.id,
+          lat: pos.lat,
+          lng: pos.lng,
+          speed: pos.speed || 0,
+          heading: pos.heading || 0,
+          is_online: true,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'driver_id' });
+    } catch (error) {
+      console.warn('Error pushing location to Supabase:', error.message);
+    }
+  }, [driver]);
+
+  const setOfflineLocation = useCallback(async () => {
+    if (!driver?.id) return;
+    try {
+      await supabase
+        .from('driver_locations')
+        .upsert({
+          driver_id: driver.id,
+          lat: currentLocation?.lat || 0,
+          lng: currentLocation?.lng || 0,
+          is_online: false,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'driver_id' });
+    } catch (error) {
+      console.warn('Error setting offline:', error.message);
+    }
+  }, [driver, currentLocation]);
+
+  const startWatching = useCallback(async () => {
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
+
+    if (watchSubscriptionRef.current) return;
+
+    watchSubscriptionRef.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.High,
+        distanceInterval: 5,
+        timeInterval: 3000,
+      },
+      (location) => {
+        const pos = {
+          lat: location.coords.latitude,
+          lng: location.coords.longitude,
+          speed: location.coords.speed,
+          heading: location.coords.heading,
+        };
+
+        const last = lastLocationRef.current;
+        if (last) {
+          const dist = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
+          if (dist < 5) return;
+        }
+
+        lastLocationRef.current = pos;
+        setCurrentLocation(pos);
+        pushLocationToSupabase(pos);
+        updateDriverLocation(pos);
+      }
+    );
+  }, [requestPermissions, setCurrentLocation, pushLocationToSupabase, updateDriverLocation]);
+
+  const stopWatching = useCallback(() => {
+    if (watchSubscriptionRef.current) {
+      watchSubscriptionRef.current.remove();
+      watchSubscriptionRef.current = null;
+    }
+    setOfflineLocation();
+  }, [setOfflineLocation]);
 
   useEffect(() => {
     return () => {
       if (trackingIntervalRef.current) {
         clearInterval(trackingIntervalRef.current);
+      }
+      if (watchSubscriptionRef.current) {
+        watchSubscriptionRef.current.remove();
+        watchSubscriptionRef.current = null;
       }
     };
   }, []);
@@ -202,6 +303,10 @@ export const useLocation = () => {
     getCurrentPosition,
     startTracking,
     stopTracking,
+    startWatching,
+    stopWatching,
     updateDriverLocation,
+    pushLocationToSupabase,
+    setOfflineLocation,
   };
 };

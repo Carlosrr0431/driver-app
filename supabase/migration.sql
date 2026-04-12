@@ -98,6 +98,27 @@ CREATE INDEX idx_drivers_user_id ON drivers(user_id);
 CREATE INDEX idx_drivers_available ON drivers(is_available);
 CREATE INDEX idx_trips_driver_id ON trips(driver_id);
 CREATE INDEX idx_trips_status ON trips(status);
+
+-- =====================================================
+-- TABLA: settings (Configuración del sistema)
+-- =====================================================
+CREATE TABLE settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Tarifa por kilómetro por defecto
+INSERT INTO settings (key, value) VALUES ('tariff_per_km', '500');
+
+-- Tarifa base (bajada de bandera, opcional)
+INSERT INTO settings (key, value) VALUES ('tariff_base', '0');
+
+-- RLS para settings
+ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permitir leer settings" ON settings FOR SELECT TO anon USING (true);
+CREATE POLICY "Permitir actualizar settings" ON settings FOR UPDATE TO anon USING (true);
+CREATE POLICY "Permitir insertar settings" ON settings FOR INSERT TO anon WITH CHECK (true);
 CREATE INDEX idx_trips_created_at ON trips(created_at);
 CREATE INDEX idx_trip_tracking_trip_id ON trip_tracking(trip_id);
 CREATE INDEX idx_trip_tracking_recorded_at ON trip_tracking(recorded_at);
@@ -199,6 +220,49 @@ CREATE TRIGGER trips_completed_stats
   FOR EACH ROW EXECUTE FUNCTION update_driver_stats();
 
 -- =====================================================
+-- TABLA: driver_locations (Ubicación en tiempo real)
+-- =====================================================
+-- Esta tabla guarda la ÚLTIMA ubicación de cada chofer.
+-- Se usa UPSERT (ON CONFLICT) para mantener solo 1 fila por chofer.
+-- Supabase Realtime escucha cambios para el dashboard.
+-- =====================================================
+CREATE TABLE driver_locations (
+  driver_id UUID PRIMARY KEY REFERENCES drivers(id) ON DELETE CASCADE,
+  lat DECIMAL(10, 8) NOT NULL,
+  lng DECIMAL(11, 8) NOT NULL,
+  speed DECIMAL(5, 2) DEFAULT 0,
+  heading DECIMAL(5, 2) DEFAULT 0,
+  is_online BOOLEAN DEFAULT FALSE,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_driver_locations_online ON driver_locations(is_online);
+CREATE INDEX idx_driver_locations_updated ON driver_locations(updated_at);
+
+ALTER TABLE driver_locations ENABLE ROW LEVEL SECURITY;
+
+-- El chofer puede insertar/actualizar su propia ubicación
+CREATE POLICY "Chofer upsert su ubicación"
+  ON driver_locations FOR INSERT
+  WITH CHECK (driver_id IN (
+    SELECT id FROM drivers WHERE user_id = auth.uid()
+  ));
+
+CREATE POLICY "Chofer actualiza su ubicación"
+  ON driver_locations FOR UPDATE
+  USING (driver_id IN (
+    SELECT id FROM drivers WHERE user_id = auth.uid()
+  ));
+
+-- Cualquier usuario autenticado puede leer ubicaciones (para el dashboard)
+CREATE POLICY "Dashboard lee ubicaciones"
+  ON driver_locations FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+-- Habilitar Realtime en driver_locations
+ALTER PUBLICATION supabase_realtime ADD TABLE driver_locations;
+
+-- =====================================================
 -- REALTIME
 -- =====================================================
 ALTER PUBLICATION supabase_realtime ADD TABLE trips;
@@ -222,3 +286,52 @@ ALTER PUBLICATION supabase_realtime ADD TABLE drivers;
 --
 -- CREATE POLICY "Vehicle read" ON storage.objects FOR SELECT
 --   USING (bucket_id = 'vehicles');
+
+-- =====================================================
+-- MIGRACIÓN: Agregar tipo de vehículo (moto/auto)
+-- =====================================================
+ALTER TABLE drivers ADD COLUMN IF NOT EXISTS vehicle_type TEXT DEFAULT 'auto'
+  CHECK (vehicle_type IN ('auto', 'moto'));
+
+-- Número identificador del móvil/chofer
+ALTER TABLE drivers ADD COLUMN IF NOT EXISTS driver_number INTEGER UNIQUE;
+
+-- =====================================================
+-- SISTEMA DE COMISIONES
+-- =====================================================
+
+-- Agregar columna commission_amount en trips para guardar la comisión por viaje
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS commission_amount DECIMAL(10, 2) DEFAULT 0;
+
+-- Tabla: commission_payments (Pagos/regularización de comisiones)
+-- Registra cuando un chofer paga sus comisiones acumuladas
+CREATE TABLE IF NOT EXISTS commission_payments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
+  amount DECIMAL(10, 2) NOT NULL,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_commission_payments_driver ON commission_payments(driver_id);
+CREATE INDEX IF NOT EXISTS idx_commission_payments_created ON commission_payments(created_at);
+
+ALTER TABLE commission_payments ENABLE ROW LEVEL SECURITY;
+
+-- El chofer puede ver sus propios pagos
+CREATE POLICY "Chofer ve sus pagos de comisión"
+  ON commission_payments FOR SELECT
+  USING (driver_id IN (
+    SELECT id FROM drivers WHERE user_id = auth.uid()
+  ));
+
+-- Dashboard (anon) puede insertar pagos y leer todos
+CREATE POLICY "Dashboard inserta pagos" ON commission_payments FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "Dashboard lee pagos" ON commission_payments FOR SELECT TO anon USING (true);
+
+-- Agregar publicación realtime para commission_payments
+ALTER PUBLICATION supabase_realtime ADD TABLE commission_payments;
+
+-- Setting por defecto: porcentaje de comisión (10%)
+INSERT INTO settings (key, value) VALUES ('commission_percent', '10')
+  ON CONFLICT (key) DO NOTHING;

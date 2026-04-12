@@ -31,11 +31,13 @@ const ProfileScreen = () => {
 
   const [fullName, setFullName] = useState(driver?.full_name || '');
   const [phone, setPhone] = useState(driver?.phone || '');
+  const [driverNumber, setDriverNumber] = useState(driver?.driver_number?.toString() || '');
   const [vehicleBrand, setVehicleBrand] = useState(driver?.vehicle_brand || '');
   const [vehicleModel, setVehicleModel] = useState(driver?.vehicle_model || '');
   const [vehicleYear, setVehicleYear] = useState(driver?.vehicle_year?.toString() || '');
   const [vehiclePlate, setVehiclePlate] = useState(driver?.vehicle_plate || '');
   const [vehicleColor, setVehicleColor] = useState(driver?.vehicle_color || '');
+  const [vehicleType, setVehicleType] = useState(driver?.vehicle_type || 'auto');
   const [saving, setSaving] = useState(false);
 
   const licenseExpiry = driver?.license_expiry ? parseISO(driver.license_expiry) : null;
@@ -86,12 +88,28 @@ const ProfileScreen = () => {
 
   const handleSave = async () => {
     setSaving(true);
-    await updateProfile({
+    const profileData = {
       full_name: fullName, phone,
+      driver_number: driverNumber ? parseInt(driverNumber) : null,
       vehicle_brand: vehicleBrand, vehicle_model: vehicleModel,
       vehicle_year: vehicleYear ? parseInt(vehicleYear) : null,
       vehicle_plate: vehiclePlate, vehicle_color: vehicleColor,
-    });
+    };
+
+    // Try saving vehicle_type to drivers table, fallback to settings
+    const result = await updateProfile(profileData);
+
+    // Save vehicle_type separately (handles missing column gracefully)
+    if (driver?.id) {
+      const { error } = await supabase.from('drivers').update({ vehicle_type: vehicleType }).eq('id', driver.id);
+      if (error) {
+        await supabase.from('settings').upsert(
+          { key: `vehicle_type_${driver.id}`, value: vehicleType },
+          { onConflict: 'key' }
+        ).catch(() => {});
+      }
+    }
+
     setSaving(false);
   };
 
@@ -167,12 +185,58 @@ const ProfileScreen = () => {
             <SectionCard title="Datos personales" icon="account-outline">
               <FormInput label="Nombre completo" value={fullName} onChangeText={setFullName} icon="account" />
               <FormInput label="Teléfono" value={phone} onChangeText={setPhone} icon="phone" keyboardType="phone-pad" />
+              <FormInput label="Número de móvil" value={driverNumber} onChangeText={setDriverNumber} icon="numeric" keyboardType="numeric" placeholder="Ej: 1, 2, 3..." />
             </SectionCard>
           </Animated.View>
 
           {/* Vehicle data */}
           <Animated.View entering={FadeInDown.delay(240).duration(400)}>
             <SectionCard title="Mi vehículo" icon="car-sport">
+              {/* Vehicle Type Selector */}
+              <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium', marginBottom: 8, marginLeft: 2 }}>
+                Tipo de vehículo
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+                {[
+                  { key: 'auto', label: 'Auto', icon: 'car' },
+                  { key: 'moto', label: 'Moto', icon: 'motorbike' },
+                ].map((opt) => {
+                  const isActive = vehicleType === opt.key;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      onPress={() => setVehicleType(opt.key)}
+                      activeOpacity={0.7}
+                      style={{
+                        flex: 1,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        paddingVertical: 12,
+                        borderRadius: 12,
+                        borderWidth: 1.5,
+                        borderColor: isActive ? colors.primary : colors.border,
+                        backgroundColor: isActive ? `${colors.primary}15` : colors.surfaceLight,
+                      }}
+                    >
+                      <MaterialCommunityIcons
+                        name={opt.icon}
+                        size={22}
+                        color={isActive ? colors.primary : colors.textMuted}
+                      />
+                      <Text style={{
+                        fontSize: 14,
+                        fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_500Medium',
+                        color: isActive ? colors.primary : colors.textMuted,
+                      }}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
               <FormInput label="Marca" value={vehicleBrand} onChangeText={setVehicleBrand} icon="car" />
               <FormInput label="Modelo" value={vehicleModel} onChangeText={setVehicleModel} icon="car-side" />
               <View style={{ flexDirection: 'row', gap: 10 }}>

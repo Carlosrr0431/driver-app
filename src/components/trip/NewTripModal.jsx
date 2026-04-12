@@ -1,33 +1,34 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { View, Text, Modal, Linking, Vibration } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, Modal, Linking, Vibration, TouchableOpacity, Pressable, Dimensions } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
+  Easing,
   FadeIn,
-  SlideInDown,
+  FadeInDown,
+  FadeOut,
 } from 'react-native-reanimated';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Button } from '../ui/Button';
-import { Card } from '../ui/Card';
+import { Audio } from 'expo-av';
 import { colors } from '../../theme/colors';
 import { formatPrice, formatDistance, formatDuration } from '../../utils/formatters';
 import { TRIP_ACCEPT_TIMEOUT, CANCEL_REASONS } from '../../utils/constants';
-import BottomSheet, { BottomSheetView } from '@gorhom/bottom-sheet';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const [countdown, setCountdown] = useState(TRIP_ACCEPT_TIMEOUT);
   const [showRejectSheet, setShowRejectSheet] = useState(false);
   const countdownRef = useRef(null);
   const soundRef = useRef(null);
-  const bottomSheetRef = useRef(null);
   const progressWidth = useSharedValue(100);
 
   useEffect(() => {
     if (visible && trip) {
       setCountdown(TRIP_ACCEPT_TIMEOUT);
+      setShowRejectSheet(false);
       progressWidth.value = 100;
       playNotificationSound();
       Vibration.vibrate([0, 500, 200, 500, 200, 500]);
@@ -48,27 +49,44 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
 
     return () => {
       if (countdownRef.current) clearInterval(countdownRef.current);
-      if (soundRef.current) {
-        soundRef.current.unloadAsync();
-      }
+      stopSound();
     };
   }, [visible, trip]);
 
   const playNotificationSound = async () => {
     try {
-      // Sound played via Vibration pattern as fallback in Expo Go
-      Vibration.vibrate([0, 300, 100, 300]);
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
+      });
+      const { sound } = await Audio.Sound.createAsync(
+        require('../../../assets/notification.wav'),
+        { shouldPlay: true, isLooping: true, volume: 1.0 }
+      );
+      soundRef.current = sound;
     } catch (error) {
       console.log('No se pudo reproducir el sonido:', error);
+      Vibration.vibrate([0, 300, 100, 300]);
+    }
+  };
+
+  const stopSound = async () => {
+    if (soundRef.current) {
+      try { await soundRef.current.stopAsync(); await soundRef.current.unloadAsync(); } catch (_) {}
+      soundRef.current = null;
     }
   };
 
   const handleTimeout = () => {
+    stopSound();
     if (onReject) onReject(trip?.id, 'Tiempo agotado');
   };
 
   const handleAccept = () => {
     if (countdownRef.current) clearInterval(countdownRef.current);
+    stopSound();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     if (onAccept) onAccept(trip?.id);
   };
@@ -80,6 +98,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const handleRejectWithReason = (reason) => {
     if (countdownRef.current) clearInterval(countdownRef.current);
     setShowRejectSheet(false);
+    stopSound();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     if (onReject) onReject(trip?.id, reason);
   };
@@ -101,278 +120,362 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     width: `${progressWidth.value}%`,
   }));
 
+  const isUrgent = countdown <= 10;
+
   if (!visible || !trip) return null;
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent>
       <Animated.View
-        entering={FadeIn.duration(300)}
+        entering={FadeIn.duration(250)}
         style={{
           flex: 1,
-          backgroundColor: colors.overlay,
+          backgroundColor: 'rgba(0,0,0,0.7)',
           justifyContent: 'flex-end',
         }}
       >
-        <Animated.View entering={SlideInDown.springify().damping(15)}>
+        {/* Main card — smooth slide, no bounce */}
+        <Animated.View
+          entering={FadeInDown.duration(450).easing(Easing.out(Easing.cubic))}
+          style={{
+            backgroundColor: colors.background,
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            paddingTop: 12,
+            paddingHorizontal: 20,
+            paddingBottom: 36,
+          }}
+        >
+          {/* Handle */}
+          <View style={{ alignItems: 'center', marginBottom: 16 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+          </View>
+
+          {/* Progress bar */}
           <View
             style={{
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              padding: 20,
-              paddingBottom: 40,
+              height: 3,
+              backgroundColor: `${colors.border}60`,
+              borderRadius: 2,
+              marginBottom: 20,
+              overflow: 'hidden',
             }}
           >
-            {/* Progress Bar */}
+            <Animated.View
+              style={[
+                {
+                  height: '100%',
+                  borderRadius: 2,
+                  backgroundColor: isUrgent ? colors.danger : colors.primary,
+                },
+                progressStyle,
+              ]}
+            />
+          </View>
+
+          {/* Header: title + timer */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <Text style={{ color: colors.text, fontSize: 20, fontFamily: 'Inter_700Bold' }}>
+              Nuevo viaje
+            </Text>
             <View
               style={{
-                height: 4,
-                backgroundColor: colors.border,
-                borderRadius: 2,
-                marginBottom: 16,
-                overflow: 'hidden',
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isUrgent ? `${colors.danger}18` : `${colors.primary}15`,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 20,
               }}
             >
-              <Animated.View
-                style={[
-                  {
-                    height: '100%',
-                    backgroundColor: countdown > 10 ? colors.success : colors.danger,
-                    borderRadius: 2,
-                  },
-                  progressStyle,
-                ]}
+              <MaterialCommunityIcons
+                name="timer-outline"
+                size={16}
+                color={isUrgent ? colors.danger : colors.primary}
+                style={{ marginRight: 4 }}
               />
-            </View>
-
-            {/* Timer */}
-            <View style={{ alignItems: 'center', marginBottom: 12 }}>
               <Text
                 style={{
-                  color: countdown > 10 ? colors.warning : colors.danger,
-                  fontSize: 15,
-                  fontFamily: 'Inter_600SemiBold',
+                  color: isUrgent ? colors.danger : colors.primary,
+                  fontSize: 14,
+                  fontFamily: 'Inter_700Bold',
                 }}
               >
-                ⏱ {countdown}s para responder
+                {countdown}s
               </Text>
             </View>
+          </View>
 
-            {/* Title */}
-            <Text
+          {/* Passenger */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              marginBottom: 18,
+              paddingBottom: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: `${colors.border}50`,
+            }}
+          >
+            <View
               style={{
-                color: colors.text,
-                fontSize: 22,
-                fontFamily: 'Inter_700Bold',
-                textAlign: 'center',
-                marginBottom: 16,
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: `${colors.primary}15`,
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
             >
-              🚖 Nuevo viaje asignado
-            </Text>
-
-            <Card style={{ marginBottom: 12 }}>
-              {/* Passenger */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-                <MaterialCommunityIcons name="account" size={22} color={colors.primary} />
-                <Text
-                  style={{
-                    color: colors.text,
-                    fontSize: 17,
-                    fontFamily: 'Inter_600SemiBold',
-                    marginLeft: 8,
-                  }}
-                >
-                  {trip.passenger_name}
-                </Text>
-              </View>
-
-              {/* Origin */}
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12 }}>
-                <View
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 14,
-                    backgroundColor: `${colors.success}20`,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <MaterialCommunityIcons name="map-marker" size={18} color={colors.success} />
-                </View>
-                <View style={{ marginLeft: 10, flex: 1 }}>
-                  <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium' }}>
-                    ORIGEN
-                  </Text>
-                  <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium' }}>
-                    {trip.origin_address}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Dotted line */}
-              <View style={{ marginLeft: 14, marginBottom: 12 }}>
-                {[1, 2, 3].map((i) => (
-                  <View
-                    key={i}
+              <MaterialCommunityIcons name="account" size={22} color={colors.primary} />
+            </View>
+            <View style={{ marginLeft: 12, flex: 1 }}>
+              <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium', letterSpacing: 0.5 }}>
+                PASAJERO
+              </Text>
+              <Text style={{ color: colors.text, fontSize: 16, fontFamily: 'Inter_600SemiBold', marginTop: 1 }}>
+                {trip.passenger_name}
+              </Text>
+            </View>
+            {/* Quick contact icons */}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {trip?.passenger_phone && (
+                <>
+                  <TouchableOpacity
+                    onPress={callPassenger}
                     style={{
-                      width: 2,
-                      height: 4,
-                      backgroundColor: colors.textMuted,
-                      marginBottom: 3,
-                      borderRadius: 1,
-                    }}
-                  />
-                ))}
-              </View>
-
-              {/* Destination */}
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 }}>
-                <View
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 14,
-                    backgroundColor: `${colors.danger}20`,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <MaterialCommunityIcons name="flag-checkered" size={18} color={colors.danger} />
-                </View>
-                <View style={{ marginLeft: 10, flex: 1 }}>
-                  <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium' }}>
-                    DESTINO
-                  </Text>
-                  <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium' }}>
-                    {trip.destination_address}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Trip Info Row */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  justifyContent: 'space-around',
-                  paddingVertical: 12,
-                  borderTopWidth: 1,
-                  borderTopColor: colors.border,
-                }}
-              >
-                <View style={{ alignItems: 'center' }}>
-                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>📏 Distancia</Text>
-                  <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
-                    {formatDistance(trip.distance_km)}
-                  </Text>
-                </View>
-                <View style={{ alignItems: 'center' }}>
-                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>⏱ Tiempo</Text>
-                  <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
-                    {formatDuration(trip.duration_minutes)}
-                  </Text>
-                </View>
-                <View style={{ alignItems: 'center' }}>
-                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>💰 Precio</Text>
-                  <Text
-                    style={{
-                      color: colors.secondary,
-                      fontSize: 20,
-                      fontFamily: 'Inter_700Bold',
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: `${colors.success}15`,
+                      alignItems: 'center',
+                      justifyContent: 'center',
                     }}
                   >
-                    {formatPrice(trip.price)}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Notes */}
-              {trip.notes && (
-                <View
-                  style={{
-                    marginTop: 12,
-                    padding: 12,
-                    backgroundColor: `${colors.warning}10`,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: `${colors.warning}30`,
-                  }}
-                >
-                  <Text style={{ color: colors.warning, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
-                    📝 {trip.notes}
-                  </Text>
-                </View>
+                    <MaterialCommunityIcons name="phone" size={18} color={colors.success} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={whatsappPassenger}
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: `${colors.success}15`,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <MaterialCommunityIcons name="whatsapp" size={18} color={colors.success} />
+                  </TouchableOpacity>
+                </>
               )}
-            </Card>
+            </View>
+          </View>
 
-            {/* Quick Actions */}
-            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 16, marginBottom: 16 }}>
-              <Button
-                title="📞 Llamar"
-                variant="outline"
-                size="sm"
-                fullWidth={false}
-                onPress={callPassenger}
-              />
-              <Button
-                title="💬 WhatsApp"
-                variant="outline"
-                size="sm"
-                fullWidth={false}
-                onPress={whatsappPassenger}
-              />
+          {/* Route */}
+          <View style={{ marginBottom: 18 }}>
+            {/* Origin */}
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <View style={{ alignItems: 'center', width: 24 }}>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.success }} />
+              </View>
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8 }}>
+                  ORIGEN
+                </Text>
+                <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium', marginTop: 2 }}>
+                  {trip.origin_address}
+                </Text>
+              </View>
             </View>
 
-            {/* Action Buttons */}
-            <Button
-              title="✅ ACEPTAR VIAJE"
-              variant="success"
-              size="xl"
-              onPress={handleAccept}
-              style={{ marginBottom: 10 }}
-            />
-            <Button
-              title="❌ RECHAZAR"
-              variant="outlineDanger"
-              size="md"
-              onPress={handleReject}
-            />
+            {/* Dotted connector */}
+            <View style={{ marginLeft: 11, paddingVertical: 4 }}>
+              {[1, 2, 3].map((i) => (
+                <View
+                  key={i}
+                  style={{
+                    width: 2,
+                    height: 4,
+                    backgroundColor: `${colors.textMuted}50`,
+                    marginBottom: 2,
+                    borderRadius: 1,
+                  }}
+                />
+              ))}
+            </View>
 
-            {/* Reject Reasons */}
-            {showRejectSheet && (
-              <View
+            {/* Destination */}
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <View style={{ alignItems: 'center', width: 24 }}>
+                <View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: colors.primary }} />
+              </View>
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8 }}>
+                  DESTINO
+                </Text>
+                <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium', marginTop: 2 }}>
+                  {trip.destination_address}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Trip stats pills */}
+          <View
+            style={{
+              flexDirection: 'row',
+              gap: 8,
+              marginBottom: 18,
+            }}
+          >
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: colors.surface,
+                borderRadius: 14,
+                paddingVertical: 12,
+                alignItems: 'center',
+              }}
+            >
+              <MaterialCommunityIcons name="map-marker-distance" size={18} color={colors.textMuted} style={{ marginBottom: 4 }} />
+              <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_700Bold' }}>
+                {formatDistance(trip.distance_km)}
+              </Text>
+              <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 1 }}>
+                Distancia
+              </Text>
+            </View>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: colors.surface,
+                borderRadius: 14,
+                paddingVertical: 12,
+                alignItems: 'center',
+              }}
+            >
+              <MaterialCommunityIcons name="clock-outline" size={18} color={colors.textMuted} style={{ marginBottom: 4 }} />
+              <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_700Bold' }}>
+                {formatDuration(trip.duration_minutes)}
+              </Text>
+              <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 1 }}>
+                Duración
+              </Text>
+            </View>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: `${colors.secondary}12`,
+                borderRadius: 14,
+                paddingVertical: 12,
+                alignItems: 'center',
+                borderWidth: 1,
+                borderColor: `${colors.secondary}25`,
+              }}
+            >
+              <MaterialCommunityIcons name="cash" size={18} color={colors.secondary} style={{ marginBottom: 4 }} />
+              <Text style={{ color: colors.secondary, fontSize: 17, fontFamily: 'Inter_700Bold' }}>
+                {formatPrice(trip.price)}
+              </Text>
+              <Text style={{ color: colors.secondary, fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 1, opacity: 0.7 }}>
+                Precio
+              </Text>
+            </View>
+          </View>
+
+          {/* Notes */}
+          {trip.notes && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+                backgroundColor: `${colors.warning}0D`,
+                padding: 12,
+                borderRadius: 12,
+                marginBottom: 18,
+                gap: 8,
+              }}
+            >
+              <MaterialCommunityIcons name="note-text-outline" size={16} color={colors.warning} style={{ marginTop: 1 }} />
+              <Text style={{ color: colors.warning, fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1 }}>
+                {trip.notes}
+              </Text>
+            </View>
+          )}
+
+          {/* Accept button */}
+          <TouchableOpacity
+            onPress={handleAccept}
+            activeOpacity={0.8}
+            style={{
+              backgroundColor: colors.success,
+              borderRadius: 16,
+              paddingVertical: 16,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 10,
+            }}
+          >
+            <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 }}>
+              Aceptar viaje
+            </Text>
+          </TouchableOpacity>
+
+          {/* Reject button */}
+          {!showRejectSheet ? (
+            <TouchableOpacity
+              onPress={handleReject}
+              activeOpacity={0.7}
+              style={{
+                paddingVertical: 12,
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: colors.textMuted, fontSize: 14, fontFamily: 'Inter_500Medium' }}>
+                Rechazar
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <Animated.View
+              entering={FadeIn.duration(200)}
+              style={{
+                marginTop: 8,
+                backgroundColor: colors.surface,
+                borderRadius: 16,
+                padding: 16,
+              }}
+            >
+              <Text
                 style={{
-                  marginTop: 16,
-                  padding: 16,
-                  backgroundColor: colors.surfaceLight,
-                  borderRadius: 16,
+                  color: colors.text,
+                  fontSize: 14,
+                  fontFamily: 'Inter_600SemiBold',
+                  marginBottom: 12,
+                  textAlign: 'center',
                 }}
               >
-                <Text
-                  style={{
-                    color: colors.text,
-                    fontSize: 15,
-                    fontFamily: 'Inter_600SemiBold',
-                    marginBottom: 12,
-                    textAlign: 'center',
-                  }}
+                Motivo del rechazo
+              </Text>
+              {CANCEL_REASONS.map((reason) => (
+                <Pressable
+                  key={reason}
+                  onPress={() => handleRejectWithReason(reason)}
+                  style={({ pressed }) => ({
+                    paddingVertical: 11,
+                    paddingHorizontal: 14,
+                    borderRadius: 10,
+                    marginBottom: 4,
+                    backgroundColor: pressed ? `${colors.primary}15` : 'transparent',
+                  })}
                 >
-                  Motivo del rechazo
-                </Text>
-                {CANCEL_REASONS.map((reason) => (
-                  <Button
-                    key={reason}
-                    title={reason}
-                    variant="ghost"
-                    size="sm"
-                    onPress={() => handleRejectWithReason(reason)}
-                    style={{ marginBottom: 6 }}
-                  />
-                ))}
-              </View>
-            )}
-          </View>
+                  <Text style={{ color: colors.textMuted, fontSize: 14, fontFamily: 'Inter_500Medium' }}>
+                    {reason}
+                  </Text>
+                </Pressable>
+              ))}
+            </Animated.View>
+          )}
         </Animated.View>
       </Animated.View>
     </Modal>

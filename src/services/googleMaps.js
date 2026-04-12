@@ -1,4 +1,4 @@
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || 'your-google-maps-api-key';
+const GOOGLE_MAPS_API_KEY = 'AIzaSyAkXsxRZfAehqO8EPxFN24nSJRPDHqh2jg';
 
 const DIRECTIONS_BASE_URL = 'https://maps.googleapis.com/maps/api/directions/json';
 const GEOCODE_BASE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
@@ -21,8 +21,10 @@ export const getDirections = async (origin, destination) => {
     const leg = route.legs[0];
 
     return {
-      distance: leg.distance,
-      duration: leg.duration,
+      distance: leg.distance.text,
+      duration: leg.duration.text,
+      distanceValue: leg.distance.value,
+      durationValue: leg.duration.value,
       polyline: route.overview_polyline.points,
       steps: leg.steps,
     };

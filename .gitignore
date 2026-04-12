@@ -1,0 +1,21 @@
+node_modules/
+.expo/
+dist/
+*.tsbuildinfo
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Android
+android/app/build/
+android/.gradle/
+android/build/
+
+# iOS
+ios/Pods/
+ios/build/
+
+# Environment
+.env
+.env.local

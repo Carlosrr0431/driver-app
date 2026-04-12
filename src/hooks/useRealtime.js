@@ -13,7 +13,12 @@ export const useRealtime = () => {
   const messageChannelRef = useRef(null);
 
   const subscribeToNewTrips = useCallback((onNewTrip) => {
-    if (!driver?.id) return;
+    if (!driver?.id) {
+      console.log('subscribeToNewTrips: no driver.id, skipping');
+      return;
+    }
+
+    console.log('subscribeToNewTrips: subscribing for driver_id =', driver.id);
 
     if (tripChannelRef.current) {
       supabase.removeChannel(tripChannelRef.current);

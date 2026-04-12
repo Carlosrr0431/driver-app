@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
+import { registerForPushNotifications } from '../services/notifications';
 import Toast from 'react-native-toast-message';
 
 export const useAuth = () => {
@@ -64,7 +65,24 @@ export const useAuth = () => {
         .single();
 
       if (error) throw error;
+
+      // If vehicle_type is not in the data (column doesn't exist yet), check settings fallback
+      if (data && !data.vehicle_type) {
+        try {
+          const { data: setting } = await supabase
+            .from('settings')
+            .select('value')
+            .eq('key', `vehicle_type_${data.id}`)
+            .single();
+          if (setting?.value) {
+            data.vehicle_type = setting.value;
+          }
+        } catch (_) {}
+      }
+
       setDriver(data);
+      // Register push notifications after we have the driver profile
+      registerForPushNotifications(data.id).catch(console.warn);
       return data;
     } catch (error) {
       console.error('Error obteniendo perfil del chofer:', error);

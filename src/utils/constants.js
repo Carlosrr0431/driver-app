@@ -19,7 +19,7 @@ export const TRIP_STATUS_LABELS = {
 export const TRIP_STATUS_COLORS = {
   pending: '#FFA502',
   accepted: '#1E90FF',
-  going_to_pickup: '#6C63FF',
+  going_to_pickup: '#DC2626',
   in_progress: '#2ECC71',
   completed: '#27AE60',
   cancelled: '#FF4757',
@@ -43,8 +43,8 @@ export const GPS_CONFIG = {
 export const TRIP_ACCEPT_TIMEOUT = 30;
 
 export const DEFAULT_REGION = {
-  latitude: -34.6037,
-  longitude: -58.3816,
+  latitude: -24.7821,
+  longitude: -65.4232,
   latitudeDelta: 0.05,
   longitudeDelta: 0.05,
 };

@@ -8,20 +8,20 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        primary: '#6C63FF',
-        secondary: '#00D4AA',
-        background: '#0F0F1A',
-        surface: '#1A1A2E',
-        surfaceLight: '#252540',
-        border: '#2D2D50',
+        primary: '#DC2626',
+        secondary: '#F87171',
+        background: '#0B1120',
+        surface: '#111B2E',
+        surfaceLight: '#1A2540',
+        border: '#253352',
         textPrimary: '#FFFFFF',
-        textMuted: '#A0AEC0',
+        textMuted: '#94A3B8',
         success: '#2ECC71',
         danger: '#FF4757',
         warning: '#FFA502',
         info: '#1E90FF',
         online: '#2ECC71',
-        offline: '#636E72',
+        offline: '#64748B',
       },
       fontFamily: {
         inter: ['Inter_400Regular'],
