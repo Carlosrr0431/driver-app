@@ -45,6 +45,20 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
 }
 
 function resolvePickupPoint(trip, currentLocation) {
+  const overrideLat = parseFloat(trip?.pickup_override_lat);
+  const overrideLng = parseFloat(trip?.pickup_override_lng);
+  const hasOverride = Number.isFinite(overrideLat) && Number.isFinite(overrideLng);
+  if (hasOverride) {
+    return {
+      point: {
+        lat: overrideLat,
+        lng: overrideLng,
+        address: trip?.pickup_override_address || trip?.destination_address,
+      },
+      isApproachOnly: true,
+    };
+  }
+
   const originLat = parseFloat(trip?.origin_lat);
   const originLng = parseFloat(trip?.origin_lng);
   const destLat = parseFloat(trip?.destination_lat);

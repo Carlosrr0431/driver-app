@@ -7,6 +7,26 @@ import { TRIP_STATUS, PAGINATION_LIMIT } from '../utils/constants';
 import Toast from 'react-native-toast-message';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
+function enrichApproachTrip(trip, fallback = null) {
+  if (!trip) return trip;
+  const notes = String(trip.notes || fallback?.notes || '');
+  const isApproachOnly = notes.includes('[APPROACH_ONLY]');
+  if (!isApproachOnly) return { ...fallback, ...trip };
+
+  const destinationAddress = trip.destination_address || fallback?.destination_address || null;
+  const destinationLat = trip.destination_lat ?? fallback?.destination_lat ?? null;
+  const destinationLng = trip.destination_lng ?? fallback?.destination_lng ?? null;
+
+  return {
+    ...fallback,
+    ...trip,
+    is_approach_only: true,
+    pickup_override_address: destinationAddress,
+    pickup_override_lat: destinationLat,
+    pickup_override_lng: destinationLng,
+  };
+}
+
 export const useTrips = () => {
   const { driver } = useAuthStore();
   const {
@@ -37,7 +57,11 @@ export const useTrips = () => {
           .maybeSingle();
 
         if (error) throw error;
-        if (data) setActiveTrip(data);
+        if (data) {
+          const currentActiveTrip = useTripStore.getState().activeTrip;
+          const enriched = enrichApproachTrip(data, currentActiveTrip?.id === data.id ? currentActiveTrip : null);
+          setActiveTrip(enriched);
+        }
         return data;
       },
       enabled: !!driver?.id,
@@ -181,6 +205,8 @@ export const useTrips = () => {
 
   const acceptTrip = useCallback(async (tripId) => {
     try {
+      const pendingTripSnapshot = useTripStore.getState().pendingTrip;
+
       // Check commission balance before accepting
       const { data: commTrips } = await supabase
         .from('trips')
@@ -236,7 +262,8 @@ export const useTrips = () => {
 
       if (error) throw error;
 
-      setActiveTrip(data);
+  const enrichedActiveTrip = enrichApproachTrip(data, pendingTripSnapshot?.id === tripId ? pendingTripSnapshot : null);
+  setActiveTrip(enrichedActiveTrip);
       clearPendingTrip();
       queryClient.invalidateQueries({ queryKey: ['activeTrip'] });
 
