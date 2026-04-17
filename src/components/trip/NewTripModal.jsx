@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, Modal, Linking, Vibration, TouchableOpacity, Pressable, Dimensions } from 'react-native';
+import { View, Text, Modal, Linking, Vibration, TouchableOpacity, Pressable, Dimensions, ActivityIndicator } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -21,6 +21,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const [countdown, setCountdown] = useState(TRIP_ACCEPT_TIMEOUT);
   const [showRejectSheet, setShowRejectSheet] = useState(false);
+  const [isAccepting, setIsAccepting] = useState(false);
   const countdownRef = useRef(null);
   const soundRef = useRef(null);
   const progressWidth = useSharedValue(100);
@@ -29,6 +30,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     if (visible && trip) {
       setCountdown(TRIP_ACCEPT_TIMEOUT);
       setShowRejectSheet(false);
+      setIsAccepting(false);
       progressWidth.value = 100;
       playNotificationSound();
       Vibration.vibrate([0, 500, 200, 500, 200, 500]);
@@ -84,11 +86,17 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     if (onReject) onReject(trip?.id, 'Tiempo agotado');
   };
 
-  const handleAccept = () => {
+  const handleAccept = async () => {
+    if (isAccepting) return;
     if (countdownRef.current) clearInterval(countdownRef.current);
+    setIsAccepting(true);
     stopSound();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    if (onAccept) onAccept(trip?.id);
+    try {
+      if (onAccept) await onAccept(trip?.id);
+    } finally {
+      setIsAccepting(false);
+    }
   };
 
   const handleReject = () => {
@@ -408,6 +416,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
           <TouchableOpacity
             onPress={handleAccept}
             activeOpacity={0.8}
+            disabled={isAccepting}
             style={{
               backgroundColor: colors.success,
               borderRadius: 16,
@@ -415,11 +424,21 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
               alignItems: 'center',
               justifyContent: 'center',
               marginBottom: 10,
+              opacity: isAccepting ? 0.7 : 1,
             }}
           >
-            <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 }}>
-              Aceptar viaje
-            </Text>
+            {isAccepting ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 }}>
+                  Aceptando...
+                </Text>
+              </View>
+            ) : (
+              <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 }}>
+                Aceptar viaje
+              </Text>
+            )}
           </TouchableOpacity>
 
           {/* Reject button */}
@@ -427,9 +446,11 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
             <TouchableOpacity
               onPress={handleReject}
               activeOpacity={0.7}
+              disabled={isAccepting}
               style={{
                 paddingVertical: 12,
                 alignItems: 'center',
+                opacity: isAccepting ? 0.6 : 1,
               }}
             >
               <Text style={{ color: colors.textMuted, fontSize: 14, fontFamily: 'Inter_500Medium' }}>

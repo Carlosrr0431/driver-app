@@ -205,6 +205,15 @@ export const useTrips = () => {
 
   const acceptTrip = useCallback(async (tripId) => {
     try {
+      if (!driver?.id) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'No se encontró sesión de chofer',
+        });
+        return { success: false, error: new Error('driver_not_ready') };
+      }
+
       const pendingTripSnapshot = useTripStore.getState().pendingTrip;
 
       // Check commission balance before accepting
@@ -262,8 +271,8 @@ export const useTrips = () => {
 
       if (error) throw error;
 
-  const enrichedActiveTrip = enrichApproachTrip(data, pendingTripSnapshot?.id === tripId ? pendingTripSnapshot : null);
-  setActiveTrip(enrichedActiveTrip);
+      const enrichedActiveTrip = enrichApproachTrip(data, pendingTripSnapshot?.id === tripId ? pendingTripSnapshot : null);
+      setActiveTrip(enrichedActiveTrip);
       clearPendingTrip();
       queryClient.invalidateQueries({ queryKey: ['activeTrip'] });
 
@@ -282,7 +291,7 @@ export const useTrips = () => {
       });
       return { success: false, error };
     }
-  }, []);
+  }, [driver?.id, clearPendingTrip, queryClient, setActiveTrip]);
 
   const rejectTrip = useCallback(async (tripId, reason) => {
     try {

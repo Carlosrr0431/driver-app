@@ -580,7 +580,13 @@ const HomeScreen = () => {
       <NewTripModal
         visible={showNewTripModal}
         trip={pendingTrip}
-        onAccept={(id) => acceptTrip(id).then(r => r.success && navigation.navigate('ActiveTrip'))}
+        onAccept={async (id) => {
+          const result = await acceptTrip(id);
+          if (result?.success) {
+            navigation.navigate('ActiveTrip');
+          }
+          return result;
+        }}
         onReject={handleRejectTrip}
       />
 
