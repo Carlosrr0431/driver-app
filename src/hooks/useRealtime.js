@@ -42,9 +42,11 @@ export const useRealtime = () => {
 
             setPendingTrip(trip);
 
+            const isApproachOnly = String(trip.notes || '').includes('[APPROACH_ONLY]');
+            const pickupAddress = isApproachOnly ? trip.destination_address : trip.origin_address;
             await sendLocalNotification(
               '🚖 Nuevo viaje asignado',
-              `${trip.passenger_name} - ${trip.origin_address}`,
+              `${trip.passenger_name} - ${pickupAddress}`,
               { tripId: trip.id }
             );
 

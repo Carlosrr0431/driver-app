@@ -281,10 +281,10 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
               </View>
               <View style={{ marginLeft: 10, flex: 1 }}>
                 <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8 }}>
-                  ORIGEN
+                  {String(trip?.notes || '').includes('[APPROACH_ONLY]') ? 'RETIRO PASAJERO' : 'ORIGEN'}
                 </Text>
                 <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium', marginTop: 2 }}>
-                  {trip.origin_address}
+                  {String(trip?.notes || '').includes('[APPROACH_ONLY]') ? trip.destination_address : trip.origin_address}
                 </Text>
               </View>
             </View>
@@ -315,7 +315,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                   DESTINO
                 </Text>
                 <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium', marginTop: 2 }}>
-                  {trip.destination_address}
+                  {String(trip?.notes || '').includes('[APPROACH_ONLY]') ? 'A definir al subir el pasajero' : trip.destination_address}
                 </Text>
               </View>
             </View>
