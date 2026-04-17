@@ -181,7 +181,7 @@ const ActiveTripScreen = () => {
     routeFetched.current = false;
     setRoutePolyline(null);
     setRouteInfo(null);
-  }, [flowStep, destinationSet]);
+  }, [activeTrip?.id, flowStep, destinationSet]);
 
   // Fetch route
   useEffect(() => {
@@ -207,7 +207,7 @@ const ActiveTripScreen = () => {
       }
     };
     fetchRoute();
-  }, [activeTrip?.id, !!currentLocation, flowStep, destinationSet]);
+  }, [activeTrip?.id, currentLocation?.lat, currentLocation?.lng, flowStep, destinationSet]);
 
   // Timer - only in_progress
   useEffect(() => {
