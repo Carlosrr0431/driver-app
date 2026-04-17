@@ -2,24 +2,24 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
-import { TRIP_STATUS } from '../../utils/constants';
 
 const STEPS = [
-  { key: TRIP_STATUS.ACCEPTED, label: 'Viaje aceptado', icon: 'check-circle' },
-  { key: TRIP_STATUS.GOING_TO_PICKUP, label: 'En camino al pasajero', icon: 'car' },
-  { key: 'passenger_aboard', label: 'Pasajero a bordo', icon: 'account-check' },
-  { key: TRIP_STATUS.COMPLETED, label: 'Viaje completado', icon: 'flag-checkered' },
+  { key: 'going_to_pickup', label: 'En camino al pasajero', icon: 'car' },
+  { key: 'at_pickup', label: 'Pasajero a bordo', icon: 'account-check' },
+  { key: 'set_destination', label: 'Destino por voz', icon: 'microphone' },
+  { key: 'in_progress', label: 'Viaje en curso', icon: 'road-variant' },
 ];
 
-const STATUS_ORDER = {
-  [TRIP_STATUS.ACCEPTED]: 0,
-  [TRIP_STATUS.GOING_TO_PICKUP]: 1,
-  [TRIP_STATUS.IN_PROGRESS]: 2,
-  [TRIP_STATUS.COMPLETED]: 3,
+const STEP_ORDER = {
+  'going_to_pickup': 0,
+  'at_pickup': 1,
+  'set_destination': 2,
+  'in_progress': 3,
+  'completed': 4,
 };
 
 export const TripStepper = ({ currentStatus }) => {
-  const currentIndex = STATUS_ORDER[currentStatus] ?? 0;
+  const currentIndex = STEP_ORDER[currentStatus] ?? 0;
 
   return (
     <View style={{ paddingVertical: 8 }}>

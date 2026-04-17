@@ -9,8 +9,8 @@ import {
   Animated as RNAnimated,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { colors } from '../../theme/colors';
-import { useVoiceChat } from '../../hooks/useVoiceChat';
+import { colors } from '../theme/colors';
+import { useVoiceChat } from '../hooks/useVoiceChat';
 
 export function VoiceChatModal({ visible, onClose }) {
   const {

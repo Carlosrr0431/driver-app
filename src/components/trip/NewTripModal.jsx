@@ -376,10 +376,10 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
             >
               <MaterialCommunityIcons name="cash" size={18} color={colors.secondary} style={{ marginBottom: 4 }} />
               <Text style={{ color: colors.secondary, fontSize: 17, fontFamily: 'Inter_700Bold' }}>
-                {formatPrice(trip.price)}
+                {trip.price == null ? 'A definir' : formatPrice(trip.price)}
               </Text>
               <Text style={{ color: colors.secondary, fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 1, opacity: 0.7 }}>
-                Precio
+                {trip.price == null ? 'Al iniciar viaje' : 'Precio'}
               </Text>
             </View>
           </View>

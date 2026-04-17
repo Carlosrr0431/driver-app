@@ -25,6 +25,7 @@ import { useLocation } from '../hooks/useLocation';
 import { supabase } from '../services/supabase';
 import { NewTripModal } from '../components/trip/NewTripModal';
 import { VoiceChatModal } from '../components/VoiceChatModal';
+import { useVoiceAutoPlay } from '../hooks/useVoiceAutoPlay';
 import { formatPrice, formatDistance } from '../utils/formatters';
 import { DEFAULT_REGION } from '../utils/constants';
 import Toast from 'react-native-toast-message';
@@ -70,6 +71,9 @@ const HomeScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
   const snapPoints = useMemo(() => ['35%', '70%'], []);
+
+  // Auto-play incoming voice messages from base (always active)
+  useVoiceAutoPlay();
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
   const { data: activeTripData } = useActiveTrip();

@@ -97,7 +97,7 @@ export const TripCard = ({ trip, onPress }) => {
               fontFamily: 'Inter_700Bold',
             }}
           >
-            {formatPrice(trip.price)}
+            {trip.price == null ? 'A definir' : formatPrice(trip.price)}
           </Text>
         </View>
 

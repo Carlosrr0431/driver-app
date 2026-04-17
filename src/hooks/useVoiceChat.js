@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import Toast from 'react-native-toast-message';
@@ -51,10 +51,6 @@ export function useVoiceChat() {
       }, async (payload) => {
         const msg = payload.new;
         setMessages((prev) => [...prev, msg]);
-        // Auto-play if from base
-        if (msg.sender_type === 'base' && msg.audio_url) {
-          await playAudio(msg.audio_url);
-        }
       })
       .subscribe();
 
@@ -78,20 +74,24 @@ export function useVoiceChat() {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
+        staysActiveInBackground: true,
+        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+        interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
       });
       const { sound } = await Audio.Sound.createAsync(
         { uri: url },
-        { shouldPlay: true, volume: 1.0 }
+        { shouldPlay: false, volume: 1.0 }
       );
       soundRef.current = sound;
       sound.setOnPlaybackStatusUpdate((status) => {
         if (status.didJustFinish) {
           sound.unloadAsync().catch(() => {});
-          soundRef.current = null;
+          if (soundRef.current === sound) soundRef.current = null;
         }
       });
+      await sound.playAsync();
     } catch (err) {
       console.error('Error playing audio:', err);
     }
@@ -108,11 +108,39 @@ export function useVoiceChat() {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
+        staysActiveInBackground: true,
+        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+        interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
       });
 
+      const recordingOptions = {
+        isMeteringEnabled: true,
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.MAX,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 128000,
+        },
+      };
+
       const { recording: rec } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
+        recordingOptions
       );
       recordingRef.current = rec;
       setRecording(true);

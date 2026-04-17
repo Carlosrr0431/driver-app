@@ -227,7 +227,7 @@ export const useTrips = () => {
       const { data, error } = await supabase
         .from('trips')
         .update({
-          status: TRIP_STATUS.ACCEPTED,
+          status: TRIP_STATUS.GOING_TO_PICKUP,
           accepted_at: new Date().toISOString(),
         })
         .eq('id', tripId)

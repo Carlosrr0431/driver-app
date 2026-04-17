@@ -6,7 +6,7 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "node -e \"console.error('driver-app solo soporta Android/iOS. Web deshabilitado.'); process.exit(1);\""
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
@@ -38,7 +38,6 @@
     "expo-task-manager": "~14.0.9",
     "nativewind": "^4.1.0",
     "react": "19.1.0",
-    "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-maps": "1.20.1",
@@ -47,13 +46,14 @@
     "react-native-screens": "~4.16.0",
     "react-native-skeleton-placeholder": "^5.2.4",
     "react-native-toast-message": "^2.2.1",
-    "react-native-web": "^0.21.0",
     "react-native-worklets": "0.5.1",
     "tailwindcss": "^3.4.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.26.0"
+    "@babel/core": "^7.26.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "sharp": "^0.34.5"
   },
   "private": true
 }
