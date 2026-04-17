@@ -44,6 +44,50 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function resolvePickupPoint(trip, currentLocation) {
+  const originLat = parseFloat(trip?.origin_lat);
+  const originLng = parseFloat(trip?.origin_lng);
+  const destLat = parseFloat(trip?.destination_lat);
+  const destLng = parseFloat(trip?.destination_lng);
+
+  const hasOrigin = Number.isFinite(originLat) && Number.isFinite(originLng);
+  const hasDestination = Number.isFinite(destLat) && Number.isFinite(destLng);
+  const notes = String(trip?.notes || '');
+  const hasApproachTag = notes.includes('[APPROACH_ONLY]');
+
+  if (hasApproachTag && hasDestination) {
+    return {
+      point: { lat: destLat, lng: destLng, address: trip?.destination_address },
+      isApproachOnly: true,
+    };
+  }
+
+  // Defensive fallback for legacy/inconsistent WhatsApp trips where notes tag may be missing.
+  const isWhatsappTrip = /whatsapp/i.test(notes);
+  if (isWhatsappTrip && currentLocation && hasOrigin && hasDestination) {
+    const metersToOrigin = haversineMeters(currentLocation.lat, currentLocation.lng, originLat, originLng);
+    const metersToDestination = haversineMeters(currentLocation.lat, currentLocation.lng, destLat, destLng);
+    if (metersToOrigin <= 120 && metersToDestination > 250) {
+      return {
+        point: { lat: destLat, lng: destLng, address: trip?.destination_address },
+        isApproachOnly: true,
+      };
+    }
+  }
+
+  if (hasOrigin) {
+    return {
+      point: { lat: originLat, lng: originLng, address: trip?.origin_address },
+      isApproachOnly: false,
+    };
+  }
+
+  return {
+    point: hasDestination ? { lat: destLat, lng: destLng, address: trip?.destination_address } : null,
+    isApproachOnly: false,
+  };
+}
+
 const ActiveTripScreen = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -138,15 +182,13 @@ const ActiveTripScreen = () => {
     const fetchRoute = async () => {
       try {
         let origin, destination;
-        const isApproachOnlyTrip = String(activeTrip.notes || '').includes('[APPROACH_ONLY]');
-        const pickupLat = isApproachOnlyTrip ? parseFloat(activeTrip.destination_lat) : parseFloat(activeTrip.origin_lat);
-        const pickupLng = isApproachOnlyTrip ? parseFloat(activeTrip.destination_lng) : parseFloat(activeTrip.origin_lng);
+        const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
         if (flowStep === FLOW_STEP.IN_PROGRESS || destinationSet) {
           origin = { lat: currentLocation.lat, lng: currentLocation.lng };
           destination = { lat: parseFloat(activeTrip.destination_lat), lng: parseFloat(activeTrip.destination_lng) };
         } else {
           origin = { lat: currentLocation.lat, lng: currentLocation.lng };
-          destination = { lat: pickupLat, lng: pickupLng };
+          destination = { lat: pickupPoint?.lat, lng: pickupPoint?.lng };
         }
         if (!destination.lat || !destination.lng || isNaN(destination.lat) || isNaN(destination.lng)) return;
         const result = await getDirections(origin, destination);
@@ -186,9 +228,10 @@ const ActiveTripScreen = () => {
   // Distance to pickup
   const distanceToPickup = useMemo(() => {
     if (!currentLocation || !activeTrip) return null;
-    const isApproachOnlyTrip = String(activeTrip.notes || '').includes('[APPROACH_ONLY]');
-    const pickupLat = isApproachOnlyTrip ? parseFloat(activeTrip.destination_lat) : parseFloat(activeTrip.origin_lat);
-    const pickupLng = isApproachOnlyTrip ? parseFloat(activeTrip.destination_lng) : parseFloat(activeTrip.origin_lng);
+    const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
+    const pickupLat = pickupPoint?.lat;
+    const pickupLng = pickupPoint?.lng;
+    if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) return null;
     return haversineMeters(
       currentLocation.lat, currentLocation.lng,
       pickupLat, pickupLng
@@ -498,11 +541,7 @@ const ActiveTripScreen = () => {
   const statusInfo = getStatusInfo();
   const speedKmh = speed ? Math.round((speed < 0 ? 0 : speed) * 3.6) : 0;
   const isInProgress = flowStep === FLOW_STEP.IN_PROGRESS;
-  const isApproachOnlyTrip = String(activeTrip.notes || '').includes('[APPROACH_ONLY]');
-
-  const pickupPoint = isApproachOnlyTrip
-    ? { lat: activeTrip.destination_lat, lng: activeTrip.destination_lng, address: activeTrip.destination_address }
-    : { lat: activeTrip.origin_lat, lng: activeTrip.origin_lng, address: activeTrip.origin_address };
+  const { point: pickupPoint, isApproachOnly: isApproachOnlyTrip } = resolvePickupPoint(activeTrip, currentLocation);
 
   // Map destination target based on step
   const mapDestination = (flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.AT_PICKUP)
@@ -596,7 +635,7 @@ const ActiveTripScreen = () => {
                   <View style={[s.addressDot, { backgroundColor: colors.primary }]} />
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text style={s.addressLabel}>Buscá al pasajero en</Text>
-                    <Text style={s.addressText} numberOfLines={2}>{pickupPoint.address}</Text>
+                    <Text style={s.addressText} numberOfLines={2}>{pickupPoint?.address || 'Ubicación pendiente de confirmar'}</Text>
                   </View>
                 </View>
               </View>
