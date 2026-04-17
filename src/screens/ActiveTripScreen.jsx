@@ -62,9 +62,11 @@ function resolvePickupPoint(trip, currentLocation) {
     };
   }
 
-  // Defensive fallback for legacy/inconsistent WhatsApp trips where notes tag may be missing.
-  const isWhatsappTrip = /whatsapp/i.test(notes);
-  if (isWhatsappTrip && currentLocation && hasOrigin && hasDestination) {
+  // Defensive fallback for legacy/inconsistent approach trips where notes tag may be missing.
+  // If current location is almost at origin but destination is still far away, pickup is destination.
+  const tripStatus = String(trip?.status || '').toLowerCase();
+  const isPickupPhase = tripStatus === 'pending' || tripStatus === 'accepted' || tripStatus === 'going_to_pickup';
+  if (currentLocation && hasOrigin && hasDestination && isPickupPhase) {
     const metersToOrigin = haversineMeters(currentLocation.lat, currentLocation.lng, originLat, originLng);
     const metersToDestination = haversineMeters(currentLocation.lat, currentLocation.lng, destLat, destLng);
     if (metersToOrigin <= 120 && metersToDestination > 250) {
