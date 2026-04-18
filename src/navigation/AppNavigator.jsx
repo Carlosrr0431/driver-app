@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ActivityIndicator, Text } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { useAuthStore } from '../stores/authStore';
 import AuthNavigator from './AuthNavigator';
@@ -20,16 +20,6 @@ const AppNavigator = () => {
         }}
       >
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text
-          style={{
-            color: colors.textMuted,
-            fontSize: 14,
-            fontFamily: 'Inter_400Regular',
-            marginTop: 16,
-          }}
-        >
-          Cargando...
-        </Text>
       </View>
     );
   }

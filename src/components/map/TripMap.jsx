@@ -6,6 +6,9 @@ import { colors } from '../../theme/colors';
 import { decodePolyline } from '../../services/googleMaps';
 import { DEFAULT_REGION } from '../../utils/constants';
 
+const ROUTE_BLUE = '#2563EB';
+const ROUTE_BLUE_SHADOW = 'rgba(37,99,235,0.24)';
+
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#F0F1F5' }] },
   { elementType: 'labels.text.fill', stylers: [{ color: '#5A6478' }] },
@@ -76,6 +79,7 @@ export const TripMap = React.memo(({
 }) => {
   const mapRef = useRef(null);
   const hasFitted = useRef(false);
+  const lastNearestIdxRef = useRef(0);
   const [routeCoords, setRouteCoords] = useState([]);
 
   useEffect(() => {
@@ -83,6 +87,7 @@ export const TripMap = React.memo(({
       const decoded = decodePolyline(polyline);
       setRouteCoords(decoded);
       hasFitted.current = false;
+      lastNearestIdxRef.current = 0;
     }
   }, [polyline]);
 
@@ -115,6 +120,45 @@ export const TripMap = React.memo(({
     if (!destination) return null;
     return { latitude: parseFloat(destination.lat), longitude: parseFloat(destination.lng) };
   }, [destination?.lat, destination?.lng]);
+
+  const getPointDistanceMeters = useCallback((a, b) => {
+    const R = 6371000;
+    const dLat = ((b.latitude - a.latitude) * Math.PI) / 180;
+    const dLng = ((b.longitude - a.longitude) * Math.PI) / 180;
+    const lat1 = (a.latitude * Math.PI) / 180;
+    const lat2 = (b.latitude * Math.PI) / 180;
+    const hav =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.atan2(Math.sqrt(hav), Math.sqrt(1 - hav));
+  }, []);
+
+  const getRemainingRouteCoords = useCallback(() => {
+    if (!driverCoord || routeCoords.length === 0) return routeCoords;
+
+    let nearestIdx = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (let i = 0; i < routeCoords.length; i += 1) {
+      const d = getPointDistanceMeters(driverCoord, routeCoords[i]);
+      if (d < nearestDistance) {
+        nearestDistance = d;
+        nearestIdx = i;
+      }
+    }
+
+    // Keep progress monotonic to avoid route jumping backwards due to GPS drift.
+    nearestIdx = Math.max(lastNearestIdxRef.current, nearestIdx);
+    lastNearestIdxRef.current = nearestIdx;
+
+    const remaining = routeCoords.slice(nearestIdx);
+    if (remaining.length === 0) return [];
+
+    // Start the visible route exactly at driver's current position.
+    return [driverCoord, ...remaining];
+  }, [driverCoord, routeCoords, getPointDistanceMeters]);
+
+  const remainingRouteCoords = useMemo(() => getRemainingRouteCoords(), [getRemainingRouteCoords]);
 
   const fitAll = useCallback(() => {
     if (!mapRef.current) return;
@@ -159,18 +203,18 @@ export const TripMap = React.memo(({
         moveOnMarkerPress={false}
       >
         {/* Route shadow */}
-        {routeCoords.length > 0 && (
+        {remainingRouteCoords.length > 1 && (
           <Polyline
-            coordinates={routeCoords}
-            strokeColor="rgba(220,38,38,0.2)"
+            coordinates={remainingRouteCoords}
+            strokeColor={ROUTE_BLUE_SHADOW}
             strokeWidth={8}
           />
         )}
         {/* Route main */}
-        {routeCoords.length > 0 && (
+        {remainingRouteCoords.length > 1 && (
           <Polyline
-            coordinates={routeCoords}
-            strokeColor={colors.primary}
+            coordinates={remainingRouteCoords}
+            strokeColor={ROUTE_BLUE}
             strokeWidth={4}
           />
         )}

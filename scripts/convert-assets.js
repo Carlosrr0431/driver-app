@@ -77,17 +77,18 @@ async function convertAssets() {
   const splashSizes = { mdpi: 288, hdpi: 432, xhdpi: 576, xxhdpi: 864, xxxhdpi: 1152 };
   const whiteBg = { r: 255, g: 255, b: 255, alpha: 1 };
   for (const [density, size] of Object.entries(splashSizes)) {
-    // Render isotipo at ~55% of canvas to fit within Android 12's circular safe zone
-    const isotipoSplash = renderSvg(path.join(assetsDir, 'isotipo profesional-04.svg'), Math.round(size * 0.55));
+    // Keep extra padding for Android 12 splash safe zone to prevent top clipping.
+    const isotipoSplash = renderSvg(path.join(assetsDir, 'isotipo profesional-04.svg'), Math.round(size * 0.46));
     const dir = path.join(resDir, 'drawable-' + density);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const splashTop = Math.round((size - isotipoSplash.height) / 2) + Math.round(size * 0.02);
     await sharp({
       create: { width: size, height: size, channels: 4, background: whiteBg },
     })
       .composite([{
         input: isotipoSplash.buffer,
         left: Math.round((size - isotipoSplash.width) / 2),
-        top: Math.round((size - isotipoSplash.height) / 2),
+        top: splashTop,
       }])
       .png()
       .toFile(path.join(dir, 'splashscreen_logo.png'));

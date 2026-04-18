@@ -70,9 +70,8 @@ const HomeScreen = () => {
   const bottomSheetRef = useRef(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
-  const snapPoints = useMemo(() => ['35%', '70%'], []);
+  const snapPoints = useMemo(() => ['25%', '70%'], []);
 
-  // Auto-play incoming voice messages from base (always active)
   useVoiceAutoPlay();
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
@@ -90,16 +89,11 @@ const HomeScreen = () => {
       if (isOnline) startWatching();
     };
     init();
-
-    return () => {
-      stopWatching();
-    };
+    return () => { stopWatching(); };
   }, []);
 
-  // Subscribe to realtime only when driver is loaded
   useEffect(() => {
     if (driver?.id) {
-      console.log('Suscribiendo a viajes para driver:', driver.id);
       subscribeToNewTrips();
       subscribeToMessages();
     }
@@ -131,7 +125,6 @@ const HomeScreen = () => {
     const newStatus = !isOnline;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    // Block going online if commissions overdue
     if (newStatus && commissionData?.isBlocked) {
       Toast.show({
         type: 'error',
@@ -143,11 +136,9 @@ const HomeScreen = () => {
     }
 
     try {
-      // Update drivers table
       const { error } = await supabase.from('drivers').update({ is_available: newStatus }).eq('id', driver.id);
       if (error) throw error;
 
-      // Update driver_locations table for realtime dashboard
       await supabase.from('driver_locations').upsert({
         driver_id: driver.id,
         is_online: newStatus,
@@ -155,12 +146,7 @@ const HomeScreen = () => {
       }, { onConflict: 'driver_id' });
 
       updateDriver({ is_available: newStatus });
-
-      if (newStatus) {
-        startWatching();
-      } else {
-        stopWatching();
-      }
+      if (newStatus) { startWatching(); } else { stopWatching(); }
 
       Toast.show({
         type: 'success',
@@ -180,18 +166,14 @@ const HomeScreen = () => {
     if (type === currentVehicleType || !driver?.id) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
-      // Try updating the drivers table column first
       const { error } = await supabase.from('drivers').update({ vehicle_type: type }).eq('id', driver.id);
-
       if (error) {
-        // If column doesn't exist yet, store in settings as fallback
         const { error: settingsError } = await supabase.from('settings').upsert(
           { key: `vehicle_type_${driver.id}`, value: type },
           { onConflict: 'key' }
         );
         if (settingsError) throw settingsError;
       }
-
       updateDriver({ vehicle_type: type });
       Toast.show({
         type: 'success',
@@ -222,7 +204,7 @@ const HomeScreen = () => {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
-      {/* ========== MAPA FULLSCREEN ========== */}
+      {/* MAPA */}
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
@@ -325,162 +307,134 @@ const HomeScreen = () => {
         index={0}
         snapPoints={snapPoints}
         backgroundStyle={{
-          backgroundColor: colors.background,
-          borderTopLeftRadius: 24,
-          borderTopRightRadius: 24,
-          borderWidth: 1,
-          borderColor: colors.border,
+          backgroundColor: '#FFFFFF',
+          borderTopLeftRadius: 28,
+          borderTopRightRadius: 28,
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: 0.1,
-          shadowRadius: 12,
-          elevation: 8,
+          shadowOffset: { width: 0, height: -6 },
+          shadowOpacity: 0.08,
+          shadowRadius: 16,
+          elevation: 12,
         }}
         handleIndicatorStyle={{
-          backgroundColor: colors.textMuted,
-          width: 40,
+          backgroundColor: '#D1D5DB',
+          width: 36,
           height: 4,
           borderRadius: 2,
         }}
         enablePanDownToClose={false}
       >
+        {/* ── ZONA FIJA: siempre visible aunque el sheet esté en el snap mínimo ── */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 10 }}>
+
+          {/* Toggle estado */}
+          <TouchableOpacity onPress={handleToggleStatus} activeOpacity={0.82}
+            style={{
+              flexDirection: 'row', alignItems: 'center',
+              backgroundColor: isOnline ? '#F0FDF4' : '#F9FAFB',
+              borderRadius: 18, paddingVertical: 11, paddingHorizontal: 14,
+              borderWidth: 1.5, borderColor: isOnline ? '#86EFAC' : '#E5E7EB',
+            }}>
+            <View style={{
+              width: 40, height: 40, borderRadius: 20,
+              backgroundColor: isOnline ? '#DCFCE7' : '#F3F4F6',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <MaterialCommunityIcons
+                name={isOnline ? 'power' : 'power-off'}
+                size={21} color={isOnline ? '#16A34A' : '#9CA3AF'}
+              />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={{
+                fontSize: 15, fontFamily: 'Inter_700Bold',
+                color: isOnline ? '#15803D' : '#4B5563',
+              }}>
+                {isOnline ? 'En línea · Recibiendo viajes' : 'Desconectado'}
+              </Text>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#9CA3AF', marginTop: 1 }}>
+                {isOnline ? 'Toca para desconectarte' : 'Toca para conectarte'}
+              </Text>
+            </View>
+            <View style={{
+              width: 46, height: 26, borderRadius: 13,
+              backgroundColor: isOnline ? '#16A34A' : '#D1D5DB',
+              justifyContent: 'center', paddingHorizontal: 3,
+            }}>
+              <View style={{
+                width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff',
+                alignSelf: isOnline ? 'flex-end' : 'flex-start',
+                elevation: 2, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 2,
+              }} />
+            </View>
+          </TouchableOpacity>
+
+          {/* Selector de vehículo */}
+          <View style={{
+            flexDirection: 'row', marginTop: 8,
+            backgroundColor: '#F3F4F6', borderRadius: 14, padding: 4,
+          }}>
+            {[
+              { key: 'auto', label: 'Auto', icon: 'car' },
+              { key: 'moto', label: 'Moto', icon: 'motorbike' },
+            ].map((opt) => {
+              const isActive = currentVehicleType === opt.key;
+              const activeColor = opt.key === 'moto' ? '#F59E0B' : colors.primary;
+              return (
+                <TouchableOpacity key={opt.key} onPress={() => handleChangeVehicleType(opt.key)}
+                  activeOpacity={0.75} style={{
+                    flex: 1, flexDirection: 'row', alignItems: 'center',
+                    justifyContent: 'center', gap: 6, paddingVertical: 8, borderRadius: 11,
+                    backgroundColor: isActive ? '#FFFFFF' : 'transparent',
+                    elevation: isActive ? 2 : 0,
+                    shadowColor: '#000', shadowOpacity: isActive ? 0.06 : 0, shadowRadius: 4,
+                  }}>
+                  <MaterialCommunityIcons name={opt.icon} size={17}
+                    color={isActive ? activeColor : '#9CA3AF'} />
+                  <Text style={{
+                    fontSize: 13,
+                    fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                    color: isActive ? activeColor : '#9CA3AF',
+                  }}>{opt.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Divisor */}
+        <View style={{ height: 1, backgroundColor: '#F3F4F6', marginHorizontal: 16, marginBottom: 2 }} />
+
+        {/* ── ZONA SCROLL: stats + historial ── */}
         <BottomSheetScrollView
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 20 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh}
               tintColor={colors.primary} colors={[colors.primary]} />
           }
           showsVerticalScrollIndicator={false}
         >
-          {/* Toggle estado */}
-          <Animated.View entering={FadeInUp.delay(80).duration(400)}>
-            <TouchableOpacity onPress={handleToggleStatus} activeOpacity={0.85}
-              style={{
-                flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                backgroundColor: isOnline ? `${colors.success}10` : colors.surface,
-                borderRadius: 16, padding: 16,
-                borderWidth: 1.5, borderColor: isOnline ? `${colors.success}35` : colors.border,
-              }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <View style={{
-                  width: 46, height: 46, borderRadius: 23,
-                  backgroundColor: isOnline ? `${colors.success}18` : `${colors.offline}12`,
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <MaterialCommunityIcons
-                    name={isOnline ? 'power' : 'power-off'}
-                    size={24} color={isOnline ? colors.success : colors.offline}
-                  />
-                </View>
-                <View style={{ marginLeft: 14, flex: 1 }}>
-                  <Text style={{
-                    color: isOnline ? colors.success : colors.textMuted,
-                    fontSize: 15, fontFamily: 'Inter_700Bold',
-                  }}>
-                    {isOnline ? 'Estás en línea' : 'Estás desconectado'}
-                  </Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
-                    {isOnline ? 'Recibiendo viajes' : 'Toca para conectarte'}
-                  </Text>
-                </View>
-              </View>
+          {/* Alerta de comisiones */}
+          {commissionData && commissionData.balance > 0 && (
+            <Animated.View entering={FadeInUp.delay(60).duration(350)}>
               <View style={{
-                width: 50, height: 28, borderRadius: 14,
-                backgroundColor: isOnline ? colors.success : colors.surfaceLight,
-                justifyContent: 'center', paddingHorizontal: 3,
+                backgroundColor: commissionData.isOverdue ? '#FEF2F2' : '#FFFBEB',
+                borderRadius: 14, padding: 14, marginBottom: 12,
+                borderWidth: 1, borderColor: commissionData.isOverdue ? '#FECACA' : '#FDE68A',
               }}>
-                <View style={{
-                  width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff',
-                  alignSelf: isOnline ? 'flex-end' : 'flex-start',
-                  elevation: 2,
-                }} />
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* Vehicle Type Selector */}
-          <Animated.View entering={FadeInUp.delay(120).duration(400)} style={{ marginTop: 12 }}>
-            <View style={{
-              flexDirection: 'row', gap: 8,
-              backgroundColor: colors.surface, borderRadius: 16, padding: 6,
-              borderWidth: 1, borderColor: colors.border,
-            }}>
-              {[
-                { key: 'auto', label: 'Auto', icon: 'car', emoji: '🚗' },
-                { key: 'moto', label: 'Moto', icon: 'motorbike', emoji: '🏍️' },
-              ].map((opt) => {
-                const isActive = currentVehicleType === opt.key;
-                return (
-                  <TouchableOpacity
-                    key={opt.key}
-                    onPress={() => handleChangeVehicleType(opt.key)}
-                    activeOpacity={0.7}
-                    style={{
-                      flex: 1,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      paddingVertical: 10,
-                      borderRadius: 12,
-                      backgroundColor: isActive
-                        ? opt.key === 'moto' ? 'rgba(245,158,11,0.15)' : `${colors.primary}15`
-                        : 'transparent',
-                    }}
-                  >
-                    <MaterialCommunityIcons
-                      name={opt.icon}
-                      size={20}
-                      color={isActive
-                        ? opt.key === 'moto' ? '#F59E0B' : colors.primary
-                        : colors.textMuted
-                      }
-                    />
-                    <Text style={{
-                      fontSize: 13,
-                      fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_500Medium',
-                      color: isActive
-                        ? opt.key === 'moto' ? '#F59E0B' : colors.primary
-                        : colors.textMuted,
-                    }}>
-                      {opt.label}
-                    </Text>
-                    {isActive && (
-                      <View style={{
-                        width: 6, height: 6, borderRadius: 3,
-                        backgroundColor: opt.key === 'moto' ? '#F59E0B' : colors.primary,
-                      }} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </Animated.View>
-
-          {/* Stats */}
-          <Animated.View entering={FadeInUp.delay(200).duration(400)} style={{ marginTop: 14 }}>
-            {/* Commission alert */}
-            {commissionData && commissionData.balance > 0 && (
-              <View style={{
-                backgroundColor: commissionData.isOverdue ? `${colors.danger}15` : `${colors.warning}12`,
-                borderRadius: 14, padding: 14, marginBottom: 10,
-                borderWidth: 1.5,
-                borderColor: commissionData.isOverdue ? `${colors.danger}40` : `${colors.warning}30`,
-              }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5 }}>
                   <MaterialCommunityIcons
                     name={commissionData.isOverdue ? 'alert-circle' : 'cash-clock'}
-                    size={18}
-                    color={commissionData.isOverdue ? colors.danger : colors.warning}
+                    size={17} color={commissionData.isOverdue ? '#DC2626' : '#D97706'}
                   />
                   <Text style={{
-                    color: commissionData.isOverdue ? colors.danger : colors.warning,
-                    fontSize: 13, fontFamily: 'Inter_700Bold', marginLeft: 8,
+                    color: commissionData.isOverdue ? '#DC2626' : '#D97706',
+                    fontSize: 13, fontFamily: 'Inter_700Bold', marginLeft: 7,
                   }}>
                     {commissionData.isOverdue ? 'Cuenta suspendida' : 'Comisión pendiente'}
                   </Text>
                 </View>
-                <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 }}>
+                <Text style={{ color: '#6B7280', fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 }}>
                   {commissionData.isOverdue
                     ? 'Tu cuenta está bloqueada por comisiones vencidas. Regularizá tu deuda para recibir viajes.'
                     : 'Tenés comisiones pendientes. Regularizá dentro de los 3 días para evitar bloqueo.'
@@ -489,22 +443,23 @@ const HomeScreen = () => {
                 <View style={{
                   flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
                   marginTop: 8, paddingTop: 8,
-                  borderTopWidth: 1, borderTopColor: commissionData.isOverdue ? `${colors.danger}20` : `${colors.warning}15`,
+                  borderTopWidth: 1, borderTopColor: commissionData.isOverdue ? '#FEE2E2' : '#FEF3C7',
                 }}>
-                  <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium' }}>
-                    Deuda actual
-                  </Text>
+                  <Text style={{ color: '#9CA3AF', fontSize: 10, fontFamily: 'Inter_500Medium' }}>Deuda actual</Text>
                   <Text style={{
-                    color: commissionData.isOverdue ? colors.danger : colors.warning,
+                    color: commissionData.isOverdue ? '#DC2626' : '#D97706',
                     fontSize: 16, fontFamily: 'Inter_700Bold',
                   }}>
                     {formatPrice(commissionData.balance)}
                   </Text>
                 </View>
               </View>
-            )}
+            </Animated.View>
+          )}
 
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+          {/* Stats */}
+          <Animated.View entering={FadeInUp.delay(80).duration(380)}>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 4 }}>
               <MiniStat icon="car-side" label="Viajes" value={String(stats?.totalTrips || 0)} color={colors.primary} />
               <MiniStat icon="map-marker-distance" label="Distancia" value={formatDistance(stats?.totalKm)} color={colors.info} />
               <MiniStat icon="clock-outline" label="Horas" value={`${stats?.totalHours || 0}h`} color={colors.warning} />
@@ -514,39 +469,39 @@ const HomeScreen = () => {
 
           {/* Viaje activo */}
           {activeTrip && (
-            <Animated.View entering={SlideInRight.delay(280).springify()} style={{ marginTop: 14 }}>
+            <Animated.View entering={SlideInRight.delay(100).springify()} style={{ marginTop: 12 }}>
               <TouchableOpacity onPress={() => navigation.navigate('ActiveTrip')} activeOpacity={0.8}
                 style={{
-                  backgroundColor: `${colors.primary}12`, borderRadius: 16, padding: 16,
-                  borderWidth: 1.5, borderColor: colors.primary,
+                  backgroundColor: '#EFF6FF', borderRadius: 16, padding: 14,
+                  borderWidth: 1, borderColor: '#BFDBFE',
                   flexDirection: 'row', alignItems: 'center',
                 }}>
                 <View style={{
-                  width: 42, height: 42, borderRadius: 21,
-                  backgroundColor: `${colors.primary}20`, alignItems: 'center', justifyContent: 'center',
+                  width: 40, height: 40, borderRadius: 20,
+                  backgroundColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center',
                 }}>
                   <MaterialCommunityIcons name="navigation" size={20} color={colors.primary} />
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>Viaje en curso</Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
+                  <Text style={{ color: '#1D4ED8', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>Viaje en curso</Text>
+                  <Text style={{ color: '#60A5FA', fontSize: 12, marginTop: 2 }} numberOfLines={1}>
                     {activeTrip.destination_address}
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color={colors.primary} />
+                <Ionicons name="chevron-forward" size={18} color={colors.primary} />
               </TouchableOpacity>
             </Animated.View>
           )}
 
           {/* Actividad reciente */}
-          <Animated.View entering={FadeInUp.delay(360).duration(400)} style={{ marginTop: 18 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
+          <Animated.View entering={FadeInUp.delay(140).duration(380)} style={{ marginTop: 18 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ color: '#111827', fontSize: 15, fontFamily: 'Inter_700Bold' }}>
                 Actividad reciente
               </Text>
               {allTrips.length > 0 && (
                 <TouchableOpacity onPress={() => navigation.navigate('History')}>
-                  <Text style={{ color: colors.primary, fontSize: 12, fontFamily: 'Inter_500Medium' }}>Ver todo</Text>
+                  <Text style={{ color: colors.primary, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>Ver todo →</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -555,20 +510,20 @@ const HomeScreen = () => {
               <SkeletonTrips />
             ) : allTrips.length > 0 ? (
               allTrips.slice(0, 3).map((trip, idx) => (
-                <Animated.View key={trip.id} entering={FadeInUp.delay(320 + idx * 60).duration(350)}>
+                <Animated.View key={trip.id} entering={FadeInUp.delay(160 + idx * 50).duration(300)}>
                   <TripRow trip={trip} onPress={() => navigation.navigate('TripDetail', { tripId: trip.id })} />
                 </Animated.View>
               ))
             ) : (
               <View style={{
-                backgroundColor: colors.surface, borderRadius: 16, padding: 28,
-                alignItems: 'center', borderWidth: 1, borderColor: colors.border,
+                backgroundColor: '#F9FAFB', borderRadius: 16, padding: 28,
+                alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6',
               }}>
-                <MaterialCommunityIcons name="car-off" size={36} color={colors.textMuted} style={{ marginBottom: 8 }} />
-                <Text style={{ color: colors.textMuted, fontSize: 14, fontFamily: 'Inter_500Medium' }}>
+                <MaterialCommunityIcons name="car-off" size={36} color="#D1D5DB" style={{ marginBottom: 8 }} />
+                <Text style={{ color: '#6B7280', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
                   Sin viajes hoy
                 </Text>
-                <Text style={{ color: colors.textDark, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 4, textAlign: 'center' }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 4, textAlign: 'center' }}>
                   {isOnline ? 'Esperando asignaciones...' : 'Conectate para recibir viajes'}
                 </Text>
               </View>
@@ -625,12 +580,12 @@ const HomeScreen = () => {
 
 const MiniStat = ({ icon, label, value, color }) => (
   <View style={{
-    flex: 1, backgroundColor: colors.surface, borderRadius: 14, paddingVertical: 12,
-    alignItems: 'center', borderWidth: 1, borderColor: colors.border,
+    flex: 1, backgroundColor: '#F9FAFB', borderRadius: 14, paddingVertical: 12,
+    alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6',
   }}>
     <MaterialCommunityIcons name={icon} size={18} color={color} style={{ marginBottom: 4 }} />
-    <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_700Bold' }}>{value}</Text>
-    <Text style={{ color: colors.textMuted, fontSize: 9, fontFamily: 'Inter_500Medium', marginTop: 2 }}>{label}</Text>
+    <Text style={{ color: '#111827', fontSize: 14, fontFamily: 'Inter_700Bold' }}>{value}</Text>
+    <Text style={{ color: '#9CA3AF', fontSize: 9, fontFamily: 'Inter_500Medium', marginTop: 2 }}>{label}</Text>
   </View>
 );
 
@@ -647,8 +602,9 @@ const TripRow = ({ trip, onPress }) => {
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={{
       flexDirection: 'row', alignItems: 'center',
-      backgroundColor: colors.surface, borderRadius: 14, padding: 12, marginBottom: 8,
-      borderWidth: 1, borderColor: colors.border,
+      backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, marginBottom: 8,
+      borderWidth: 1, borderColor: '#F3F4F6',
+      elevation: 1, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4,
     }}>
       <View style={{
         width: 38, height: 38, borderRadius: 12,
@@ -660,10 +616,10 @@ const TripRow = ({ trip, onPress }) => {
         />
       </View>
       <View style={{ flex: 1, marginLeft: 10 }}>
-        <Text style={{ color: colors.text, fontSize: 13, fontFamily: 'Inter_600SemiBold' }} numberOfLines={1}>
+        <Text style={{ color: '#111827', fontSize: 13, fontFamily: 'Inter_600SemiBold' }} numberOfLines={1}>
           {trip.destination_address || 'Viaje'}
         </Text>
-        <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 1 }}>
+        <Text style={{ color: '#9CA3AF', fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 1 }}>
           {time} · {formatDistance(trip.distance_km)}
         </Text>
       </View>
@@ -678,8 +634,8 @@ const SkeletonTrips = () => (
   <View>
     {[1, 2, 3].map(i => (
       <View key={i} style={{
-        backgroundColor: colors.surface, borderRadius: 14, height: 62, marginBottom: 8,
-        borderWidth: 1, borderColor: colors.border, opacity: 0.5,
+        backgroundColor: '#F9FAFB', borderRadius: 14, height: 62, marginBottom: 8,
+        borderWidth: 1, borderColor: '#F3F4F6', opacity: 0.6,
       }} />
     ))}
   </View>

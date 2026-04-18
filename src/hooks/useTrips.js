@@ -10,7 +10,11 @@ import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth 
 function enrichApproachTrip(trip, fallback = null) {
   if (!trip) return trip;
   const notes = String(trip.notes || fallback?.notes || '');
-  const isApproachOnly = notes.includes('[APPROACH_ONLY]');
+  const notesNorm = notes.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const isApproachOnly =
+    notesNorm.includes('[approach_only]') ||
+    notesNorm.includes('approach_only') ||
+    notesNorm.includes('creado automaticamente desde whatsapp');
   if (!isApproachOnly) return { ...fallback, ...trip };
 
   const destinationAddress = trip.destination_address || fallback?.destination_address || null;

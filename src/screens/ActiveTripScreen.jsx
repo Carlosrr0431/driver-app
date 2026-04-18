@@ -67,7 +67,9 @@ function resolvePickupPoint(trip, currentLocation) {
   const hasOrigin = Number.isFinite(originLat) && Number.isFinite(originLng);
   const hasDestination = Number.isFinite(destLat) && Number.isFinite(destLng);
   const notes = String(trip?.notes || '');
-  const hasApproachTag = notes.includes('[APPROACH_ONLY]');
+  const notesNorm = notes.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const hasApproachTag = notesNorm.includes('[approach_only]') || notesNorm.includes('approach_only');
+  const hasWhatsappAutoMarker = notesNorm.includes('creado automaticamente desde whatsapp');
 
   if (hasApproachTag && hasDestination) {
     return {
@@ -83,12 +85,13 @@ function resolvePickupPoint(trip, currentLocation) {
   const phoneDigits = String(trip?.passenger_phone || '').replace(/\D/g, '');
   const isLikelyWhatsappPhone = phoneDigits.length >= 10;
   const hasNoFareDataYet = trip?.price == null && trip?.distance_km == null && trip?.duration_minutes == null;
-  const shouldUseLegacyApproachFallback = !hasApproachTag && isPickupPhase && isLikelyWhatsappPhone && hasNoFareDataYet;
+  const looksLikeApproachTrip = hasApproachTag || hasWhatsappAutoMarker;
+  const shouldUseLegacyApproachFallback = !looksLikeApproachTrip && isPickupPhase && isLikelyWhatsappPhone && hasNoFareDataYet;
 
   if (currentLocation && hasOrigin && hasDestination && shouldUseLegacyApproachFallback) {
     const metersToOrigin = haversineMeters(currentLocation.lat, currentLocation.lng, originLat, originLng);
     const metersToDestination = haversineMeters(currentLocation.lat, currentLocation.lng, destLat, destLng);
-    if (metersToOrigin <= 120 && metersToDestination > 250) {
+    if (metersToOrigin <= 300 && metersToDestination > 250) {
       return {
         point: { lat: destLat, lng: destLng, address: trip?.destination_address },
         isApproachOnly: true,
@@ -142,7 +145,7 @@ const ActiveTripScreen = () => {
   const voiceRecordingRef = useRef(null);
   const voiceTimerRef = useRef(null);
 
-  const snapPoints = useMemo(() => ['35%', '65%'], []);
+  const snapPoints = useMemo(() => ['38%', '68%'], []);
 
   // Derive initial flow step from DB status
   useEffect(() => {
@@ -152,8 +155,9 @@ const ActiveTripScreen = () => {
       setDestinationSet(true);
     } else if (activeTrip.status === TRIP_STATUS.GOING_TO_PICKUP || activeTrip.status === TRIP_STATUS.ACCEPTED) {
       setFlowStep(FLOW_STEP.GOING_TO_PICKUP);
+      setDestinationSet(false);
     }
-  }, [activeTrip?.id]);
+  }, [activeTrip?.id, activeTrip?.status]);
 
   // Fetch tariff
   useEffect(() => {
@@ -206,12 +210,18 @@ const ActiveTripScreen = () => {
         const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
         if (flowStep === FLOW_STEP.IN_PROGRESS || destinationSet) {
           origin = { lat: currentLocation.lat, lng: currentLocation.lng };
-          destination = { lat: parseFloat(activeTrip.destination_lat), lng: parseFloat(activeTrip.destination_lng) };
+          destination = {
+            lat: parseFloat(activeTrip.destination_lat),
+            lng: parseFloat(activeTrip.destination_lng),
+          };
         } else {
           origin = { lat: currentLocation.lat, lng: currentLocation.lng };
-          destination = { lat: pickupPoint?.lat, lng: pickupPoint?.lng };
+          destination = {
+            lat: parseFloat(pickupPoint?.lat),
+            lng: parseFloat(pickupPoint?.lng),
+          };
         }
-        if (!destination.lat || !destination.lng || isNaN(destination.lat) || isNaN(destination.lng)) return;
+        if (!Number.isFinite(destination.lat) || !Number.isFinite(destination.lng)) return;
         const result = await getDirections(origin, destination);
         setRoutePolyline(result.polyline);
         setRouteInfo({ distance: result.distance, duration: result.duration });
@@ -272,7 +282,7 @@ const ActiveTripScreen = () => {
   // Step 2 -> Step 3 (or skip to Step 4 if destination already set by dashboard)
   const handlePassengerAboard = useCallback(async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const isApproachOnlyTrip = String(activeTrip?.notes || '').includes('[APPROACH_ONLY]');
+    const { isApproachOnly: isApproachOnlyTrip } = resolvePickupPoint(activeTrip, currentLocation);
 
     if (isApproachOnlyTrip && activeTrip?.id) {
       try {
@@ -305,7 +315,7 @@ const ActiveTripScreen = () => {
     } else {
       setFlowStep(FLOW_STEP.SET_DESTINATION);
     }
-  }, [activeTrip]);
+  }, [activeTrip, currentLocation]);
 
   // Step 3: Voice recording
   const handleStartVoiceRecording = useCallback(async () => {
@@ -567,7 +577,11 @@ const ActiveTripScreen = () => {
   // Map destination target based on step
   const mapDestination = (flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.AT_PICKUP)
     ? pickupPoint
-    : { lat: activeTrip.destination_lat, lng: activeTrip.destination_lng, address: activeTrip.destination_address };
+    : {
+      lat: parseFloat(activeTrip.destination_lat),
+      lng: parseFloat(activeTrip.destination_lng),
+      address: activeTrip.destination_address,
+    };
 
   return (
     <View style={s.root}>
@@ -623,34 +637,18 @@ const ActiveTripScreen = () => {
       >
         <BottomSheetScrollView contentContainerStyle={s.sheetContent} showsVerticalScrollIndicator={false}>
 
-          {/* Passenger row */}
-          <View style={s.passengerRow}>
-            <View style={s.avatarCircle}>
-              <Text style={s.avatarText}>
-                {(activeTrip.passenger_name || '?').charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={s.nameText}>{activeTrip.passenger_name}</Text>
-              {routeInfo && (
-                <Text style={s.routeInfoText}>{routeInfo.distance} · {routeInfo.duration}</Text>
-              )}
-            </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {activeTrip.passenger_phone ? (
-                <TouchableOpacity style={s.iconBtn} onPress={() => Linking.openURL(`tel:${activeTrip.passenger_phone}`)}>
-                  <Ionicons name="call" size={18} color={colors.primary} />
-                </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity style={s.iconBtn} onPress={() => Linking.openURL(`tel:${DISPATCHER_PHONE}`)}>
-                <MaterialCommunityIcons name="headset" size={18} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-          </View>
-
           {/* STEP 1: Going to pickup */}
           {flowStep === FLOW_STEP.GOING_TO_PICKUP && (
             <>
+              <TouchableOpacity
+                style={[s.actionBtn, { backgroundColor: colors.primary }]}
+                onPress={handleConfirmArrival}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="map-marker-check" size={22} color="#fff" />
+                <Text style={s.actionBtnText}>Llegué al punto de encuentro</Text>
+              </TouchableOpacity>
+
               <View style={s.addressCard}>
                 <View style={s.addressRow}>
                   <View style={[s.addressDot, { backgroundColor: colors.primary }]} />
@@ -675,29 +673,12 @@ const ActiveTripScreen = () => {
                   </Text>
                 </View>
               )}
-
-              <TouchableOpacity
-                style={[s.actionBtn, { backgroundColor: colors.primary }]}
-                onPress={handleConfirmArrival}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="map-marker-check" size={22} color="#fff" />
-                <Text style={s.actionBtnText}>Llegué al punto de encuentro</Text>
-              </TouchableOpacity>
             </>
           )}
 
           {/* STEP 2: At pickup - Confirm passenger aboard */}
           {flowStep === FLOW_STEP.AT_PICKUP && (
             <>
-              <View style={s.stepInfoCard}>
-                <MaterialCommunityIcons name="account-check" size={28} color={colors.warning} />
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={s.stepInfoTitle}>¿El pasajero subió?</Text>
-                  <Text style={s.stepInfoSubtitle}>Confirmá que el pasajero está a bordo para continuar</Text>
-                </View>
-              </View>
-
               <TouchableOpacity
                 style={[s.actionBtn, { backgroundColor: colors.warning }]}
                 onPress={handlePassengerAboard}
@@ -706,6 +687,14 @@ const ActiveTripScreen = () => {
                 <MaterialCommunityIcons name="account-check" size={22} color="#fff" />
                 <Text style={s.actionBtnText}>Pasajero a bordo</Text>
               </TouchableOpacity>
+
+              <View style={s.stepInfoCard}>
+                <MaterialCommunityIcons name="account-check" size={28} color={colors.warning} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={s.stepInfoTitle}>¿El pasajero subió?</Text>
+                  <Text style={s.stepInfoSubtitle}>Confirmá que el pasajero está a bordo para continuar</Text>
+                </View>
+              </View>
             </>
           )}
 
@@ -714,14 +703,6 @@ const ActiveTripScreen = () => {
             <>
               {!destinationSet ? (
                 <>
-                  <View style={s.stepInfoCard}>
-                    <MaterialCommunityIcons name="microphone" size={28} color={colors.info} />
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={s.stepInfoTitle}>¿A dónde van?</Text>
-                      <Text style={s.stepInfoSubtitle}>Grabá un audio diciendo la dirección de destino</Text>
-                    </View>
-                  </View>
-
                   <View style={s.voiceDestSection}>
                     {destinationOptions.length > 0 ? (
                       <View>
@@ -784,9 +765,26 @@ const ActiveTripScreen = () => {
                       </TouchableOpacity>
                     )}
                   </View>
+
+                  <View style={s.stepInfoCard}>
+                    <MaterialCommunityIcons name="microphone" size={28} color={colors.info} />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={s.stepInfoTitle}>¿A dónde van?</Text>
+                      <Text style={s.stepInfoSubtitle}>Grabá un audio diciendo la dirección de destino</Text>
+                    </View>
+                  </View>
                 </>
               ) : (
                 <>
+                  <TouchableOpacity
+                    style={[s.actionBtn, { backgroundColor: colors.success }]}
+                    onPress={handleStartTrip}
+                    activeOpacity={0.85}
+                  >
+                    <MaterialCommunityIcons name="car" size={22} color="#fff" />
+                    <Text style={s.actionBtnText}>Empezar viaje</Text>
+                  </TouchableOpacity>
+
                   {/* Destination confirmed - show address and start button */}
                   <View style={s.addressCard}>
                     <View style={s.addressRow}>
@@ -805,15 +803,6 @@ const ActiveTripScreen = () => {
                     </View>
                   )}
 
-                  <TouchableOpacity
-                    style={[s.actionBtn, { backgroundColor: colors.success }]}
-                    onPress={handleStartTrip}
-                    activeOpacity={0.85}
-                  >
-                    <MaterialCommunityIcons name="car" size={22} color="#fff" />
-                    <Text style={s.actionBtnText}>Empezar viaje</Text>
-                  </TouchableOpacity>
-
                   {/* Allow re-recording */}
                   <TouchableOpacity
                     style={s.reRecordBtn}
@@ -831,6 +820,15 @@ const ActiveTripScreen = () => {
           {/* STEP 4: In progress */}
           {flowStep === FLOW_STEP.IN_PROGRESS && (
             <>
+              <TouchableOpacity
+                style={[s.actionBtn, { backgroundColor: colors.danger }]}
+                onPress={handleEndTrip}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="flag-checkered" size={22} color="#fff" />
+                <Text style={s.actionBtnText}>Finalizar viaje</Text>
+              </TouchableOpacity>
+
               <View style={s.addressCard}>
                 <View style={s.addressRow}>
                   <View style={[s.addressDot, { backgroundColor: colors.success }]} />
@@ -858,17 +856,33 @@ const ActiveTripScreen = () => {
                   <Text style={s.livePriceValue}>{formatPrice(livePrice)}</Text>
                 </View>
               </View>
-
-              <TouchableOpacity
-                style={[s.actionBtn, { backgroundColor: colors.danger }]}
-                onPress={handleEndTrip}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="flag-checkered" size={22} color="#fff" />
-                <Text style={s.actionBtnText}>Finalizar viaje</Text>
-              </TouchableOpacity>
             </>
           )}
+
+          {/* Passenger row (moved to end to prioritize actions) */}
+          <View style={s.passengerRow}>
+            <View style={s.avatarCircle}>
+              <Text style={s.avatarText}>
+                {(activeTrip.passenger_name || '?').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={s.nameText}>{activeTrip.passenger_name}</Text>
+              {routeInfo && (
+                <Text style={s.routeInfoText}>{routeInfo.distance} · {routeInfo.duration}</Text>
+              )}
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {activeTrip.passenger_phone ? (
+                <TouchableOpacity style={s.iconBtn} onPress={() => Linking.openURL(`tel:${activeTrip.passenger_phone}`)}>
+                  <Ionicons name="call" size={18} color={colors.primary} />
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity style={s.iconBtn} onPress={() => Linking.openURL(`tel:${DISPATCHER_PHONE}`)}>
+                <MaterialCommunityIcons name="headset" size={18} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+          </View>
 
           {/* SOS */}
           <TouchableOpacity style={s.sosBtn} onPress={() => Linking.openURL(`tel:${EMERGENCY_PHONE}`)}>

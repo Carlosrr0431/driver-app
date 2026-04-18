@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { supabase } from '../services/supabase';
@@ -49,6 +50,7 @@ export const useLocation = () => {
   const trackingIntervalRef = useRef(null);
   const activeTripIdRef = useRef(null);
   const watchSubscriptionRef = useRef(null);
+  const pendingBackgroundStartRef = useRef(false);
 
   const requestPermissions = useCallback(async () => {
     try {
@@ -132,6 +134,50 @@ export const useLocation = () => {
     }
   }, [driver]);
 
+  const maybeStartBackgroundUpdates = useCallback(async () => {
+    try {
+      const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      if (hasStarted) {
+        pendingBackgroundStartRef.current = false;
+        return true;
+      }
+
+      // Android foreground service can only be started while app is active.
+      if (AppState.currentState !== 'active') {
+        pendingBackgroundStartRef.current = true;
+        return false;
+      }
+
+      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+        accuracy: Location.Accuracy.High,
+        distanceInterval: GPS_CONFIG.DISTANCE_FILTER,
+        timeInterval: GPS_CONFIG.TRACKING_INTERVAL,
+        foregroundService: {
+          notificationTitle: 'Viaje en curso',
+          notificationBody: 'Rastreando tu ubicacion...',
+          notificationColor: '#DC2626',
+        },
+        showsBackgroundLocationIndicator: true,
+      });
+
+      pendingBackgroundStartRef.current = false;
+      return true;
+    } catch (error) {
+      const message = String(error?.message || '').toLowerCase();
+      const isForegroundServiceTimingError =
+        message.includes('foreground service cannot be started when the application is in the background') ||
+        message.includes("couldn't start the foreground service");
+
+      if (isForegroundServiceTimingError) {
+        pendingBackgroundStartRef.current = true;
+        return false;
+      }
+
+      console.error('Error iniciando tracking en background:', error);
+      return false;
+    }
+  }, []);
+
   const startTracking = useCallback(async (tripId) => {
     const hasPermission = await requestPermissions();
     if (!hasPermission) return;
@@ -149,25 +195,12 @@ export const useLocation = () => {
       }
     }, GPS_CONFIG.TRACKING_INTERVAL);
 
-    try {
-      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-        accuracy: Location.Accuracy.High,
-        distanceInterval: GPS_CONFIG.DISTANCE_FILTER,
-        timeInterval: GPS_CONFIG.TRACKING_INTERVAL,
-        foregroundService: {
-          notificationTitle: 'Viaje en curso',
-          notificationBody: 'Rastreando tu ubicación...',
-          notificationColor: '#DC2626',
-        },
-        showsBackgroundLocationIndicator: true,
-      });
-    } catch (error) {
-      console.error('Error iniciando tracking en background:', error);
-    }
-  }, [requestPermissions, getCurrentPosition, updateDriverLocation, sendTrackingPoint]);
+    await maybeStartBackgroundUpdates();
+  }, [requestPermissions, getCurrentPosition, updateDriverLocation, sendTrackingPoint, maybeStartBackgroundUpdates]);
 
   const stopTracking = useCallback(async () => {
     activeTripIdRef.current = null;
+    pendingBackgroundStartRef.current = false;
     setIsTracking(false);
 
     if (trackingIntervalRef.current) {
@@ -282,7 +315,14 @@ export const useLocation = () => {
   }, [setOfflineLocation]);
 
   useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' && pendingBackgroundStartRef.current && activeTripIdRef.current) {
+        maybeStartBackgroundUpdates();
+      }
+    });
+
     return () => {
+      subscription.remove();
       if (trackingIntervalRef.current) {
         clearInterval(trackingIntervalRef.current);
       }
@@ -291,7 +331,7 @@ export const useLocation = () => {
         watchSubscriptionRef.current = null;
       }
     };
-  }, []);
+  }, [maybeStartBackgroundUpdates]);
 
   return {
     currentLocation,

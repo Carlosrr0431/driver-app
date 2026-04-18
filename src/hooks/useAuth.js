@@ -26,45 +26,45 @@ export const useAuth = () => {
   };
 
   useEffect(() => {
+    let initialized = false;
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (session?.user) {
           setUser(session.user);
           setSession(session);
           await fetchDriverProfile(session.user.id);
-        } else {
+        } else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' && !session) {
+          logoutStore();
+        } else if (!initialized && !session) {
           logoutStore();
         }
         setLoading(false);
+        initialized = true;
       }
     );
 
-    checkSession();
-
-    return () => {
-      subscription?.unsubscribe();
-    };
-  }, []);
-
-  const checkSession = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        setUser(session.user);
-        setSession(session);
-        await fetchDriverProfile(session.user.id);
+    // Only read cached session, never trigger a refresh here
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!initialized) {
+        if (!session) {
+          setLoading(false);
+        }
+        // If session exists, onAuthStateChange will fire INITIAL_SESSION and handle it
       }
-    } catch (error) {
+    }).catch(async (error) => {
       if (isInvalidRefreshTokenError(error)) {
         await supabase.auth.signOut({ scope: 'local' });
         logoutStore();
         return;
       }
-      console.error('Error verificando sesión:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (!initialized) setLoading(false);
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   const fetchDriverProfile = async (userId) => {
     try {
