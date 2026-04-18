@@ -1,8 +1,225 @@
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
-import { autocompleteAddressSalta } from './googleMaps';
+import { autocompleteAddressSalta, geocodeAddressMultiple } from './googleMaps';
 import { BARRIO_NAMES, findBarrio, searchBarrios } from '../data/barrios';
 
 const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY || '';
+
+const MATCH_STOPWORDS = new Set([
+  'a', 'al', 'la', 'el', 'los', 'las', 'de', 'del', 'en', 'y', 'por', 'para', 'con', 'sin', 'que', 'un', 'una', 'me',
+]);
+
+const NUMBER_WORDS = {
+  cero: 0,
+  un: 1,
+  uno: 1,
+  una: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  once: 11,
+  doce: 12,
+  trece: 13,
+  catorce: 14,
+  quince: 15,
+  dieciseis: 16,
+  diecisiete: 17,
+  dieciocho: 18,
+  diecinueve: 19,
+  veinte: 20,
+  veintiuno: 21,
+  veintidos: 22,
+  veintitres: 23,
+  veinticuatro: 24,
+  veinticinco: 25,
+  veintiseis: 26,
+  veintisiete: 27,
+  veintiocho: 28,
+  veintinueve: 29,
+  treinta: 30,
+  cuarenta: 40,
+  cincuenta: 50,
+  sesenta: 60,
+  setenta: 70,
+  ochenta: 80,
+  noventa: 90,
+  cien: 100,
+  ciento: 100,
+  doscientos: 200,
+  trescientos: 300,
+  cuatrocientos: 400,
+  quinientos: 500,
+  seiscientos: 600,
+  setecientos: 700,
+  ochocientos: 800,
+  novecientos: 900,
+  mil: 1000,
+};
+
+function normalizeForMatch(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeForMatch(value) {
+  return normalizeForMatch(value)
+    .split(' ')
+    .filter((token) => token && !MATCH_STOPWORDS.has(token));
+}
+
+function ensureSaltaSuffix(query) {
+  const normalized = normalizeForMatch(query);
+  if (!normalized) return '';
+  return normalized.includes('salta') ? query.trim() : `${query.trim().replace(/,$/, '')}, Salta`;
+}
+
+function extractNumbers(value) {
+  const matches = String(value || '').match(/\b\d{1,5}\b/g);
+  return new Set((matches || []).map((n) => Number(n)));
+}
+
+function parseNumberWords(tokens, startIndex) {
+  let total = 0;
+  let current = 0;
+  let consumed = 0;
+  let sawNumberWord = false;
+
+  for (let i = startIndex; i < tokens.length && consumed < 6; i += 1) {
+    const token = normalizeForMatch(tokens[i]);
+    if (!token) break;
+    if (token === 'y') {
+      consumed += 1;
+      continue;
+    }
+
+    const value = NUMBER_WORDS[token];
+    if (typeof value !== 'number') break;
+    sawNumberWord = true;
+
+    if (token === 'mil') {
+      current = current || 1;
+      total += current * 1000;
+      current = 0;
+    } else if (value >= 100) {
+      current += value;
+    } else {
+      current += value;
+    }
+    consumed += 1;
+  }
+
+  if (!sawNumberWord || consumed < 2) return null;
+  const finalValue = total + current;
+  if (!Number.isFinite(finalValue) || finalValue <= 0 || finalValue > 20000) return null;
+  return { value: finalValue, consumed };
+}
+
+function replaceSpokenNumbers(text) {
+  const tokens = String(text || '').split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return String(text || '').trim();
+
+  const output = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const parsed = parseNumberWords(tokens, i);
+    if (parsed) {
+      output.push(String(parsed.value));
+      i += parsed.consumed - 1;
+      continue;
+    }
+    output.push(tokens[i]);
+  }
+
+  return output.join(' ').trim();
+}
+
+function createQueryVariants({ rawText, extractedQuery, isBarrio }) {
+  const variants = [];
+  const raw = String(rawText || '').trim();
+  const extracted = String(extractedQuery || '').trim();
+
+  if (extracted) {
+    variants.push(extracted);
+    variants.push(replaceSpokenNumbers(extracted));
+  }
+
+  if (raw) {
+    variants.push(raw);
+    variants.push(replaceSpokenNumbers(raw));
+  }
+
+  const normalizedRaw = normalizeForMatch(raw);
+  const intersectionMatch = normalizedRaw.match(/([a-z0-9\s]+?)\s+(?:y|esquina\s+con)\s+([a-z0-9\s]+)/i);
+  if (intersectionMatch) {
+    const streetA = intersectionMatch[1].trim();
+    const streetB = intersectionMatch[2].trim();
+    if (streetA && streetB) {
+      variants.push(`${streetA} y ${streetB}, Salta`);
+    }
+  }
+
+  const barrioFromExtracted = findBarrio(extracted);
+  const barrioFromRaw = findBarrio(raw);
+  const barrioHint = barrioFromExtracted || barrioFromRaw;
+  if (isBarrio && barrioHint) {
+    variants.push(`Barrio ${barrioHint.name}, Salta`);
+  }
+
+  const normalizedSeen = new Set();
+  const cleaned = [];
+  for (const variant of variants) {
+    const q = ensureSaltaSuffix(String(variant || '').replace(/\s+/g, ' ').trim());
+    if (!q) continue;
+    const normalized = normalizeForMatch(q);
+    if (!normalized || normalizedSeen.has(normalized)) continue;
+    normalizedSeen.add(normalized);
+    cleaned.push(q);
+  }
+
+  return { variants: cleaned.slice(0, 6), barrioHint };
+}
+
+function scoreCandidate(query, address, { barrioHint = null } = {}) {
+  const queryTokens = tokenizeForMatch(query);
+  const addressTokens = tokenizeForMatch(address);
+  const querySet = new Set(queryTokens);
+  const addressSet = new Set(addressTokens);
+
+  let overlap = 0;
+  querySet.forEach((token) => {
+    if (addressSet.has(token)) overlap += 1;
+  });
+
+  let score = querySet.size > 0 ? overlap / querySet.size : 0;
+
+  const queryNumbers = extractNumbers(query);
+  const addressNumbers = extractNumbers(address);
+  if (queryNumbers.size > 0) {
+    let matched = 0;
+    queryNumbers.forEach((num) => {
+      if (addressNumbers.has(num)) matched += 1;
+    });
+    score += matched > 0 ? 0.35 : -0.2;
+  }
+
+  const normalizedAddress = normalizeForMatch(address);
+  if (normalizedAddress.includes('salta')) score += 0.1;
+
+  if (barrioHint && normalizedAddress.includes(normalizeForMatch(barrioHint.name))) {
+    score += 0.3;
+  }
+
+  return score;
+}
 
 function requireOpenAIKey() {
   if (!OPENAI_API_KEY) {
@@ -164,9 +381,22 @@ export async function voiceToDestination(uri) {
   const allResults = [];
   const seenKeys = new Set();
 
+  const { variants: queryVariants, barrioHint } = createQueryVariants({
+    rawText: rawText,
+    extractedQuery: query,
+    isBarrio,
+  });
+
+  if (queryVariants.length === 0) {
+    throw new Error('No se pudo construir una búsqueda válida para el destino.');
+  }
+
   // Step 3: If it's a barrio, try local lookup (instant, before API calls)
-  if (isBarrio) {
-    const barrioName = query.replace(/^Barrio\s+/i, '').replace(/[,\s]*Salta.*$/i, '').trim();
+  if (isBarrio || barrioHint) {
+    const barrioName = (barrioHint?.name || query)
+      .replace(/^Barrio\s+/i, '')
+      .replace(/[,\s]*Salta.*$/i, '')
+      .trim();
     // Use searchBarrios which finds ALL partial matches (contains, startsWith)
     const barrioResults = searchBarrios(barrioName);
     for (const br of barrioResults.slice(0, 5)) {
@@ -177,36 +407,77 @@ export async function voiceToDestination(uri) {
           address: `Barrio ${br.name}, Salta`,
           lat: br.lat,
           lng: br.lng,
+          _score: 1.5,
+          _sourceQuery: `barrio:${barrioName}`,
         });
       }
     }
   }
 
-  // Step 4: Google Places Autocomplete (instant, no lat/lng resolution yet)
-  try {
-    const autocompleteResults = await autocompleteAddressSalta(query, 5);
-    for (const r of autocompleteResults) {
-      const key = r.address.toLowerCase();
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key);
-        allResults.push({
-          address: r.address,
-          placeId: r.placeId,
-          // lat/lng resolved on selection via getPlaceDetails
-        });
+  // Step 4: Autocomplete over multiple query variants
+  for (const variant of queryVariants) {
+    try {
+      const autocompleteResults = await autocompleteAddressSalta(variant, 5);
+      for (const r of autocompleteResults) {
+        const key = normalizeForMatch(r.address);
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          allResults.push({
+            address: r.address,
+            placeId: r.placeId,
+            _score: scoreCandidate(variant, r.address, { barrioHint }),
+            _sourceQuery: variant,
+          });
+        }
       }
+    } catch (err) {
+      console.warn('Autocomplete error:', err);
     }
-  } catch (err) {
-    console.warn('Autocomplete error:', err);
+  }
+
+  // Step 5: Geocoding fallback for additional robustness when autocomplete is weak/ambiguous
+  for (const variant of queryVariants.slice(0, 3)) {
+    try {
+      const geocodeResults = await geocodeAddressMultiple(variant, 3);
+      for (const g of geocodeResults) {
+        const key = normalizeForMatch(g.formattedAddress || g.address);
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          const formatted = g.formattedAddress || g.address;
+          allResults.push({
+            address: formatted,
+            lat: g.lat,
+            lng: g.lng,
+            _score: scoreCandidate(variant, formatted, { barrioHint }) + 0.15,
+            _sourceQuery: variant,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Geocode fallback error:', err);
+    }
   }
 
   if (allResults.length === 0) {
     throw new Error('No se encontraron direcciones. Intentá de nuevo.');
   }
 
+  allResults.sort((a, b) => {
+    const scoreDiff = (b._score || 0) - (a._score || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return String(a.address).localeCompare(String(b.address));
+  });
+
+  const rankedCandidates = allResults.slice(0, 8).map((item) => ({
+    address: item.address,
+    placeId: item.placeId,
+    lat: item.lat,
+    lng: item.lng,
+  }));
+
   return {
     transcription: rawText,
-    candidates: allResults,
+    candidates: rankedCandidates,
   };
 }
 
