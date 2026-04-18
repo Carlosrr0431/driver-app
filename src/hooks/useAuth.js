@@ -20,6 +20,11 @@ export const useAuth = () => {
     updateDriver,
   } = useAuthStore();
 
+  const isInvalidRefreshTokenError = (error) => {
+    const message = error?.message || '';
+    return /Invalid Refresh Token|Already Used|Refresh Token Not Found/i.test(message);
+  };
+
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
@@ -50,6 +55,11 @@ export const useAuth = () => {
         await fetchDriverProfile(session.user.id);
       }
     } catch (error) {
+      if (isInvalidRefreshTokenError(error)) {
+        await supabase.auth.signOut({ scope: 'local' });
+        logoutStore();
+        return;
+      }
       console.error('Error verificando sesión:', error);
     } finally {
       setLoading(false);
