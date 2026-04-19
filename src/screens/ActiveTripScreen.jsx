@@ -44,6 +44,36 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function parseSettingNumber(rawValue) {
+  const normalized = String(rawValue ?? '')
+    .replace(',', '.')
+    .replace(/[^0-9.-]/g, '');
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseRouteDistanceKm(routeInfo) {
+  const meters = Number(routeInfo?.distanceValue);
+  if (Number.isFinite(meters) && meters > 0) return meters / 1000;
+
+  const distanceText = String(routeInfo?.distance || '').toLowerCase().trim();
+  if (!distanceText) return null;
+
+  const kmMatch = distanceText.match(/([\d.,]+)\s*km/);
+  if (kmMatch?.[1]) {
+    const km = Number.parseFloat(kmMatch[1].replace(',', '.'));
+    if (Number.isFinite(km) && km > 0) return km;
+  }
+
+  const mMatch = distanceText.match(/([\d.,]+)\s*m/);
+  if (mMatch?.[1]) {
+    const m = Number.parseFloat(mMatch[1].replace(',', '.'));
+    if (Number.isFinite(m) && m > 0) return m / 1000;
+  }
+
+  return null;
+}
+
 function resolvePickupPoint(trip, currentLocation) {
   const overrideLat = parseFloat(trip?.pickup_override_lat);
   const overrideLng = parseFloat(trip?.pickup_override_lng);
@@ -113,11 +143,13 @@ function resolvePickupPoint(trip, currentLocation) {
 }
 
 const ActiveTripScreen = () => {
+  const DEFAULT_TARIFF_PER_KM = 600;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const bottomSheetRef = useRef(null);
   const timerRef = useRef(null);
   const routeFetched = useRef(false);
+  const lastRouteKeyRef = useRef('');
 
   const { activeTrip, tripTimer, tripDistanceKm, setTripTimer, addTripDistance } = useTripStore();
   const { updateTripStatus } = useTrips();
@@ -131,6 +163,7 @@ const ActiveTripScreen = () => {
   const [showSummary, setShowSummary] = useState(false);
   const [completedTrip, setCompletedTrip] = useState(null);
   const [tariffInfo, setTariffInfo] = useState({ base: 0, perKm: 0, commission: 15 });
+  const [tariffLoaded, setTariffLoaded] = useState(false);
 
   // Local flow step
   const [flowStep, setFlowStep] = useState(FLOW_STEP.GOING_TO_PICKUP);
@@ -167,15 +200,35 @@ const ActiveTripScreen = () => {
           .from('settings')
           .select('key, value')
           .in('key', ['tariff_per_km', 'tariff_base', 'commission_percent']);
+
+        const rows = Array.isArray(data) ? data : [];
         const map = {};
-        (data || []).forEach(r => { map[r.key] = parseFloat(r.value) || 0; });
+        rows.forEach((r) => {
+          const key = String(r?.key || '').trim().toLowerCase();
+          if (key) map[key] = parseSettingNumber(r?.value);
+        });
+
+        // Fallback query if key filter returned empty/incomplete values.
+        if (!Number.isFinite(map.tariff_per_km) || map.tariff_per_km <= 0) {
+          const { data: perKmRow } = await supabase
+            .from('settings')
+            .select('key, value')
+            .ilike('key', 'tariff_per_km')
+            .limit(1)
+            .maybeSingle();
+          map.tariff_per_km = parseSettingNumber(perKmRow?.value);
+        }
+
         setTariffInfo({
-          base: map.tariff_base || 0,
-          perKm: map.tariff_per_km || 0,
-          commission: map.commission_percent || 10,
+          base: Number.isFinite(map.tariff_base) ? map.tariff_base : 0,
+          perKm: Number.isFinite(map.tariff_per_km) && map.tariff_per_km > 0 ? map.tariff_per_km : DEFAULT_TARIFF_PER_KM,
+          commission: Number.isFinite(map.commission_percent) && map.commission_percent > 0 ? map.commission_percent : 10,
         });
       } catch (e) {
         console.warn('Error fetching tariff:', e);
+        setTariffInfo((prev) => ({ ...prev, perKm: prev.perKm > 0 ? prev.perKm : DEFAULT_TARIFF_PER_KM }));
+      } finally {
+        setTariffLoaded(true);
       }
     };
     fetchTariff();
@@ -194,22 +247,36 @@ const ActiveTripScreen = () => {
     };
   }, [activeTrip?.id]);
 
-  // Reset route when flow step changes
+  // Reset route when routing-relevant trip data changes
   useEffect(() => {
     routeFetched.current = false;
+    lastRouteKeyRef.current = '';
     setRoutePolyline(null);
     setRouteInfo(null);
-  }, [activeTrip?.id, flowStep, destinationSet]);
+  }, [
+    activeTrip?.id,
+    activeTrip?.origin_lat,
+    activeTrip?.origin_lng,
+    activeTrip?.destination_lat,
+    activeTrip?.destination_lng,
+    activeTrip?.notes,
+    flowStep,
+    destinationSet,
+  ]);
 
   // Fetch route
   useEffect(() => {
-    if (!activeTrip || !currentLocation || routeFetched.current) return;
+    if (!activeTrip || !currentLocation) return;
     const fetchRoute = async () => {
       try {
         let origin, destination;
         const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
         if (flowStep === FLOW_STEP.IN_PROGRESS || destinationSet) {
-          origin = { lat: currentLocation.lat, lng: currentLocation.lng };
+          const tripOriginLat = parseFloat(activeTrip.origin_lat);
+          const tripOriginLng = parseFloat(activeTrip.origin_lng);
+          origin = (Number.isFinite(tripOriginLat) && Number.isFinite(tripOriginLng))
+            ? { lat: tripOriginLat, lng: tripOriginLng }
+            : { lat: currentLocation.lat, lng: currentLocation.lng };
           destination = {
             lat: parseFloat(activeTrip.destination_lat),
             lng: parseFloat(activeTrip.destination_lng),
@@ -221,17 +288,50 @@ const ActiveTripScreen = () => {
             lng: parseFloat(pickupPoint?.lng),
           };
         }
+        if (!Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return;
         if (!Number.isFinite(destination.lat) || !Number.isFinite(destination.lng)) return;
+
+        const routeKey = [
+          activeTrip.id,
+          flowStep,
+          destinationSet ? '1' : '0',
+          Number(origin.lat).toFixed(6),
+          Number(origin.lng).toFixed(6),
+          Number(destination.lat).toFixed(6),
+          Number(destination.lng).toFixed(6),
+        ].join('|');
+
+        if (routeFetched.current && lastRouteKeyRef.current === routeKey) {
+          return;
+        }
+
         const result = await getDirections(origin, destination);
         setRoutePolyline(result.polyline);
-        setRouteInfo({ distance: result.distance, duration: result.duration });
+        setRouteInfo({
+          distance: result.distance,
+          duration: result.duration,
+          distanceValue: result.distanceValue,
+          durationValue: result.durationValue,
+        });
         routeFetched.current = true;
+        lastRouteKeyRef.current = routeKey;
       } catch (error) {
         console.log('Error fetching route:', error);
       }
     };
     fetchRoute();
-  }, [activeTrip?.id, currentLocation?.lat, currentLocation?.lng, flowStep, destinationSet]);
+  }, [
+    activeTrip?.id,
+    activeTrip?.origin_lat,
+    activeTrip?.origin_lng,
+    activeTrip?.destination_lat,
+    activeTrip?.destination_lng,
+    activeTrip?.notes,
+    currentLocation?.lat,
+    currentLocation?.lng,
+    flowStep,
+    destinationSet,
+  ]);
 
   // Timer - only in_progress
   useEffect(() => {
@@ -255,6 +355,24 @@ const ActiveTripScreen = () => {
   const livePrice = useMemo(() => {
     return Math.round(tariffInfo.base + tariffInfo.perKm * tripDistanceKm);
   }, [tripDistanceKm, tariffInfo]);
+
+  // Estimated total using full route distance (when available)
+  const routeDistanceKm = useMemo(() => parseRouteDistanceKm(routeInfo), [routeInfo]);
+
+  const effectiveTariffPerKm = useMemo(() => {
+    const kmRate = Number(tariffInfo.perKm);
+    return Number.isFinite(kmRate) && kmRate > 0 ? kmRate : DEFAULT_TARIFF_PER_KM;
+  }, [tariffInfo.perKm]);
+
+  const estimatedTotalPrice = useMemo(() => {
+    if (!Number.isFinite(routeDistanceKm)) return livePrice;
+    return Math.round(tariffInfo.base + tariffInfo.perKm * routeDistanceKm);
+  }, [routeDistanceKm, tariffInfo, livePrice]);
+
+  const routeBasedTotalPrice = useMemo(() => {
+    if (!tariffLoaded || !Number.isFinite(routeDistanceKm)) return null;
+    return Math.round(effectiveTariffPerKm * routeDistanceKm);
+  }, [tariffLoaded, effectiveTariffPerKm, routeDistanceKm]);
 
   // Distance to pickup
   const distanceToPickup = useMemo(() => {
@@ -431,7 +549,7 @@ const ActiveTripScreen = () => {
     if (!activeTrip) return;
     Alert.alert(
       'Finalizar viaje',
-      `¿Confirmar fin del viaje?\n\nDistancia: ${formatDistance(tripDistanceKm)}\nTotal: ${formatPrice(livePrice)}`,
+      `¿Confirmar fin del viaje?\n\nDistancia: ${formatDistance(routeDistanceKm || tripDistanceKm)}\nTotal: ${formatPrice(routeBasedTotalPrice ?? livePrice)}`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -573,8 +691,16 @@ const ActiveTripScreen = () => {
   const speedKmh = speed ? Math.round((speed < 0 ? 0 : speed) * 3.6) : 0;
   const isInProgress = flowStep === FLOW_STEP.IN_PROGRESS;
   const { point: pickupPoint, isApproachOnly: isApproachOnlyTrip } = resolvePickupPoint(activeTrip, currentLocation);
+  const tripOriginPoint = {
+    lat: parseFloat(activeTrip.origin_lat),
+    lng: parseFloat(activeTrip.origin_lng),
+    address: activeTrip.origin_address,
+  };
+  const hasTripOrigin = Number.isFinite(tripOriginPoint.lat) && Number.isFinite(tripOriginPoint.lng);
+  const useTripOriginRoute = flowStep === FLOW_STEP.SET_DESTINATION || flowStep === FLOW_STEP.IN_PROGRESS || destinationSet;
 
   // Map destination target based on step
+  const mapOrigin = (useTripOriginRoute && hasTripOrigin) ? tripOriginPoint : pickupPoint;
   const mapDestination = (flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.AT_PICKUP)
     ? pickupPoint
     : {
@@ -590,7 +716,7 @@ const ActiveTripScreen = () => {
       {/* Map */}
       <TripMap
         driverLocation={currentLocation}
-        origin={pickupPoint}
+        origin={mapOrigin}
         destination={mapDestination}
         polyline={routePolyline}
         heading={heading}
@@ -803,6 +929,22 @@ const ActiveTripScreen = () => {
                     </View>
                   )}
 
+                  <View style={s.livePriceCard}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View>
+                        <Text style={s.livePriceLabel}>Costo total</Text>
+                        <Text style={s.livePriceSubLabel}>
+                          {Number.isFinite(routeDistanceKm)
+                            ? `${formatDistance(routeDistanceKm)} x ${formatPrice(effectiveTariffPerKm)}/km`
+                            : 'Calculando costo...'}
+                        </Text>
+                      </View>
+                      <Text style={s.livePriceValue}>
+                        {routeBasedTotalPrice == null ? '...' : formatPrice(routeBasedTotalPrice)}
+                      </Text>
+                    </View>
+                  </View>
+
                   {/* Allow re-recording */}
                   <TouchableOpacity
                     style={s.reRecordBtn}
@@ -850,10 +992,16 @@ const ActiveTripScreen = () => {
               <View style={s.livePriceCard}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View>
-                    <Text style={s.livePriceLabel}>Estimado en vivo</Text>
-                    <Text style={s.livePriceSubLabel}>{formatDistance(tripDistanceKm)} recorridos</Text>
+                    <Text style={s.livePriceLabel}>Costo total</Text>
+                    <Text style={s.livePriceSubLabel}>
+                      {Number.isFinite(routeDistanceKm)
+                        ? `${formatDistance(routeDistanceKm)} x ${formatPrice(effectiveTariffPerKm)}/km`
+                        : 'Calculando costo...'}
+                    </Text>
                   </View>
-                  <Text style={s.livePriceValue}>{formatPrice(livePrice)}</Text>
+                  <Text style={s.livePriceValue}>
+                    {routeBasedTotalPrice == null ? '...' : formatPrice(routeBasedTotalPrice)}
+                  </Text>
                 </View>
               </View>
             </>
