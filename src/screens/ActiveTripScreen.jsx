@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, Alert, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -13,7 +13,14 @@ import { useLocationStore } from '../stores/locationStore';
 import { TripMap } from '../components/map/TripMap';
 import { TRIP_STATUS, EMERGENCY_PHONE, DISPATCHER_PHONE } from '../utils/constants';
 import { formatTimerMMSS, formatPrice, formatDistance, formatDuration } from '../utils/formatters';
-import { getDirections, getPlaceDetails } from '../services/googleMaps';
+import {
+  decodePolyline,
+  getCurrentNavigationStep,
+  getDirections,
+  getDistanceToPolylineMeters,
+  getPlaceDetails,
+  getRouteRemainingMeters,
+} from '../services/googleMaps';
 import { startDestinationRecording, stopDestinationRecording, voiceToDestination } from '../services/voiceDestination';
 import { supabase } from '../services/supabase';
 import Toast from 'react-native-toast-message';
@@ -71,6 +78,260 @@ function parseRouteDistanceKm(routeInfo) {
     if (Number.isFinite(m) && m > 0) return m / 1000;
   }
 
+  return null;
+}
+
+function formatRemainingDistance(distanceMeters) {
+  if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) return 'Llegando';
+  if (distanceMeters < 1000) return `${Math.round(distanceMeters)} m`;
+  return `${(distanceMeters / 1000).toFixed(distanceMeters >= 10000 ? 0 : 1)} km`;
+}
+
+function formatEta(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0 min';
+  const totalMinutes = Math.max(1, Math.round(seconds / 60));
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours} h ${minutes} min` : `${hours} h`;
+}
+
+function getManeuverIcon(maneuver) {
+  const normalized = String(maneuver || '').toLowerCase();
+
+  if (!normalized) return 'arrow-up';
+  if (normalized.includes('uturn') || normalized.includes('u-turn')) return 'backup-restore';
+  if (normalized.includes('roundabout')) return 'rotate-orbit';
+  if (normalized.includes('fork-left') || normalized.includes('keep-left') || normalized.includes('ramp-left') || normalized.includes('turn-slight-left')) return 'arrow-top-left';
+  if (normalized.includes('fork-right') || normalized.includes('keep-right') || normalized.includes('ramp-right') || normalized.includes('turn-slight-right')) return 'arrow-top-right';
+  if (normalized.includes('turn-left')) return 'arrow-left-top';
+  if (normalized.includes('turn-right')) return 'arrow-right-top';
+  if (normalized.includes('merge')) return 'call-merge';
+  if (normalized.includes('ferry')) return 'ferry';
+  if (normalized.includes('straight')) return 'arrow-up';
+
+  return 'arrow-up';
+}
+
+function getManeuverPresentation(maneuver, remainingDistanceMeters, nextStepDistanceMeters) {
+  const normalized = String(maneuver || '').toLowerCase();
+  const isArriving = Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters <= 40;
+
+  if (isArriving) {
+    return {
+      icon: 'map-marker-check',
+      tint: colors.success,
+      background: `${colors.success}12`,
+      border: `${colors.success}28`,
+      isCritical: true,
+      shortLabel: 'Llegada',
+      instructionPrefix: 'Llegaste',
+    };
+  }
+
+  if (normalized.includes('roundabout')) {
+    return {
+      icon: 'rotate-orbit',
+      tint: colors.warning,
+      background: `${colors.warning}12`,
+      border: `${colors.warning}28`,
+      isCritical: true,
+      shortLabel: 'Rotonda',
+      instructionPrefix: 'Atento',
+    };
+  }
+
+  if (normalized.includes('uturn') || normalized.includes('u-turn')) {
+    return {
+      icon: 'backup-restore',
+      tint: colors.danger,
+      background: `${colors.danger}12`,
+      border: `${colors.danger}28`,
+      isCritical: true,
+      shortLabel: 'Retorno',
+      instructionPrefix: 'Prepararse',
+    };
+  }
+
+  if (normalized.includes('turn-left') || normalized.includes('turn-right')) {
+    return {
+      icon: getManeuverIcon(normalized),
+      tint: colors.primary,
+      background: `${colors.primary}12`,
+      border: `${colors.primary}24`,
+      isCritical: Number(nextStepDistanceMeters) <= 120,
+      shortLabel: normalized.includes('left') ? 'Giro izq.' : 'Giro der.',
+      instructionPrefix: 'Próxima maniobra',
+    };
+  }
+
+  if (
+    normalized.includes('fork')
+    || normalized.includes('keep-')
+    || normalized.includes('ramp')
+    || normalized.includes('merge')
+  ) {
+    return {
+      icon: getManeuverIcon(normalized),
+      tint: colors.info,
+      background: `${colors.info}12`,
+      border: `${colors.info}24`,
+      isCritical: true,
+      shortLabel: 'Desvío',
+      instructionPrefix: 'Mantener atención',
+    };
+  }
+
+  return {
+    icon: getManeuverIcon(normalized),
+    tint: colors.primary,
+    background: `${colors.primary}10`,
+    border: `${colors.primary}20`,
+    isCritical: false,
+    shortLabel: 'Seguir',
+    instructionPrefix: 'Continuar',
+  };
+}
+
+function extractRoadNameFromInstruction(instruction) {
+  const text = String(instruction || '').trim();
+  if (!text) return null;
+
+  const cleanedText = text
+    .replace(/^dir[ií]gete\s+hacia\s+/i, '')
+    .replace(/^contin[uú]a\s+/i, '')
+    .trim();
+
+  const patterns = [
+    /(?:por|direcci[oó]n a|hacia)\s+([A-Z0-9ÁÉÍÓÚÑ][^,.]+)/i,
+    /en\s+([A-Z0-9ÁÉÍÓÚÑ][^,.]+?)(?:\s+hacia|\s+con\s+direcci[oó]n|\s*,|$)/i,
+    /(?:continua|continuá|sigue|seguí)\s+por\s+([A-Z0-9ÁÉÍÓÚÑ][^,.]+)/i,
+    /(?:incorp[oó]rate|incorporate)\s+a\s+([A-Z0-9ÁÉÍÓÚÑ][^,.]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleanedText.match(pattern);
+    if (match?.[1]) {
+      const road = match[1]
+        .replace(/^(el|la|los|las)\s+(norte|sur|este|oeste|noreste|noroeste|sureste|suroeste)\s+en\s+/i, '')
+        .replace(/\s+hacia\s+[A-Z0-9ÁÉÍÓÚÑ].*$/i, '')
+        .replace(/\s+con\s+direcci[oó]n\s+a\s+[A-Z0-9ÁÉÍÓÚÑ].*$/i, '')
+        .trim();
+      if (!road) return null;
+      if (/^(el|la|los|las)\s+(norte|sur|este|oeste|noreste|noroeste|sureste|suroeste)$/i.test(road)) {
+        return null;
+      }
+      return road;
+    }
+  }
+
+  return null;
+}
+
+function formatDistanceForSpeech(distanceMeters) {
+  const meters = Math.max(0, Math.round(Number(distanceMeters) || 0));
+  if (meters <= 35) return 'ahora';
+  if (meters < 80) return 'en unos metros';
+  if (meters <= 650) {
+    const blocks = Math.max(1, Math.round(meters / 100));
+    return blocks === 1 ? 'en 1 cuadra' : `en ${blocks} cuadras`;
+  }
+  if (meters < 1000) return `en ${meters} metros`;
+  const km = meters / 1000;
+  return `en ${km >= 10 ? Math.round(km) : km.toFixed(1)} km`;
+}
+
+// Tabla de equivalencias: clave Google → texto en español rioplatense
+// Las claves más específicas van primero para que el match parcial sea correcto.
+const MANEUVER_TEXT_MAP = [
+  ['turn-sharp-right',    'doblá bien a la derecha'],
+  ['turn-sharp-left',     'doblá bien a la izquierda'],
+  ['turn-slight-right',   'seguí levemente a la derecha'],
+  ['turn-slight-left',    'seguí levemente a la izquierda'],
+  ['turn-right',          'doblá a la derecha'],
+  ['turn-left',           'doblá a la izquierda'],
+  ['roundabout-right',    'en la rotonda, salí a la derecha'],
+  ['roundabout-left',     'en la rotonda, salí a la izquierda'],
+  ['roundabout',          'entrá en la rotonda'],
+  ['uturn-right',         'hacé un retorno a la derecha'],
+  ['uturn-left',          'hacé un retorno a la izquierda'],
+  ['u-turn',              'hacé un retorno'],
+  ['fork-right',          'mantenete a la derecha'],
+  ['fork-left',           'mantenete a la izquierda'],
+  ['keep-right',          'mantenete a la derecha'],
+  ['keep-left',           'mantenete a la izquierda'],
+  ['ramp-right',          'tomá la rampa a la derecha'],
+  ['ramp-left',           'tomá la rampa a la izquierda'],
+  ['merge',               'incorporate al tráfico'],
+  ['ferry',               'tomá el ferry'],
+  ['straight',            'seguí derecho'],
+];
+
+function getDirectActionText(maneuver, roadName) {
+  const normalized = String(maneuver || '').toLowerCase();
+  const roadSuffix = roadName ? ` por ${roadName}` : '';
+
+  // Buscar en tabla de equivalencias (orden importa: más específico primero)
+  for (const [key, text] of MANEUVER_TEXT_MAP) {
+    if (normalized.includes(key)) return `${text}${roadSuffix}`;
+  }
+
+  // Fallback: detectar español en el texto crudo de la instrucción
+  if (normalized.includes('derecha')) return roadName ? `doblá a la derecha por ${roadName}` : 'doblá a la derecha';
+  if (normalized.includes('izquierda')) return roadName ? `doblá a la izquierda por ${roadName}` : 'doblá a la izquierda';
+
+  return roadName ? `seguí por ${roadName}` : 'seguí derecho';
+}
+
+function buildDirectNavigationInstruction(step, remainingDistanceMeters) {
+  const isArriving = Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters <= 40;
+  if (isArriving) {
+    return {
+      primary: 'Llegaste a destino',
+      roadName: null,
+    };
+  }
+
+  const roadName = extractRoadNameFromInstruction(step?.instruction);
+  const maneuverOrText = step?.maneuver || step?.instruction || '';
+  const actionText = getDirectActionText(maneuverOrText, roadName);
+  const distanceText = formatDistanceForSpeech(step?.distanceToStepMeters);
+  const prefix = distanceText === 'ahora'
+    ? 'Ahora'
+    : `${distanceText.charAt(0).toUpperCase()}${distanceText.slice(1)}`;
+
+  return {
+    primary: `${prefix}, ${actionText}`,
+    roadName,
+  };
+}
+
+/**
+ * Parsea el destino final geocodificado desde el campo notes del viaje.
+ * El campo tiene el formato: [FINAL_DEST_JSON:{"address":"...","lat":...,"lng":...}]
+ * Retorna { address, lat, lng } o null si no está disponible.
+ */
+function parsePreloadedDestination(notes) {
+  const raw = String(notes || '');
+  const match = raw.match(/\[FINAL_DEST_JSON:(\{[^}]+\})\]/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1]);
+    if (
+      parsed &&
+      typeof parsed.address === 'string' &&
+      Number.isFinite(Number(parsed.lat)) &&
+      Number.isFinite(Number(parsed.lng))
+    ) {
+      return {
+        address: parsed.address,
+        lat: Number(parsed.lat),
+        lng: Number(parsed.lng),
+      };
+    }
+  } catch {
+    // ignore
+  }
   return null;
 }
 
@@ -150,6 +411,7 @@ const ActiveTripScreen = () => {
   const timerRef = useRef(null);
   const routeFetched = useRef(false);
   const lastRouteKeyRef = useRef('');
+  const lastRerouteAtRef = useRef(0);
 
   const { activeTrip, tripTimer, tripDistanceKm, setTripTimer, addTripDistance } = useTripStore();
   const { updateTripStatus } = useTrips();
@@ -160,10 +422,16 @@ const ActiveTripScreen = () => {
 
   const [routePolyline, setRoutePolyline] = useState(null);
   const [routeInfo, setRouteInfo] = useState(null);
+  const [routeSteps, setRouteSteps] = useState([]);
   const [showSummary, setShowSummary] = useState(false);
   const [completedTrip, setCompletedTrip] = useState(null);
+  const [showFinishModal, setShowFinishModal] = useState(false);
+  const [finishingTrip, setFinishingTrip] = useState(false);
   const [tariffInfo, setTariffInfo] = useState({ base: 0, perKm: 0, commission: 15 });
   const [tariffLoaded, setTariffLoaded] = useState(false);
+  const [remainingDistanceMeters, setRemainingDistanceMeters] = useState(null);
+  const [remainingDurationSeconds, setRemainingDurationSeconds] = useState(null);
+  const [nextStepInfo, setNextStepInfo] = useState(null);
 
   // Local flow step
   const [flowStep, setFlowStep] = useState(FLOW_STEP.GOING_TO_PICKUP);
@@ -178,7 +446,7 @@ const ActiveTripScreen = () => {
   const voiceRecordingRef = useRef(null);
   const voiceTimerRef = useRef(null);
 
-  const snapPoints = useMemo(() => ['38%', '68%'], []);
+  const snapPoints = useMemo(() => ['18%', '68%'], []);
 
   // Derive initial flow step from DB status
   useEffect(() => {
@@ -192,6 +460,11 @@ const ActiveTripScreen = () => {
     }
   }, [activeTrip?.id, activeTrip?.status]);
 
+  useEffect(() => {
+    if (!bottomSheetRef.current) return;
+    bottomSheetRef.current.snapToIndex(0);
+  }, [flowStep, activeTrip?.id]);
+
   // Fetch tariff
   useEffect(() => {
     const fetchTariff = async () => {
@@ -199,7 +472,7 @@ const ActiveTripScreen = () => {
         const { data } = await supabase
           .from('settings')
           .select('key, value')
-          .in('key', ['tariff_per_km', 'tariff_base', 'commission_percent']);
+          .in('key', ['tariff_per_km', 'tariff_base', 'commission_percent', 'whatsapp_driver_commission']);
 
         const rows = Array.isArray(data) ? data : [];
         const map = {};
@@ -222,7 +495,9 @@ const ActiveTripScreen = () => {
         setTariffInfo({
           base: Number.isFinite(map.tariff_base) ? map.tariff_base : 0,
           perKm: Number.isFinite(map.tariff_per_km) && map.tariff_per_km > 0 ? map.tariff_per_km : DEFAULT_TARIFF_PER_KM,
-          commission: Number.isFinite(map.commission_percent) && map.commission_percent > 0 ? map.commission_percent : 10,
+          commission: Number.isFinite(map.whatsapp_driver_commission) && map.whatsapp_driver_commission > 0
+            ? map.whatsapp_driver_commission
+            : (Number.isFinite(map.commission_percent) && map.commission_percent > 0 ? map.commission_percent : 10),
         });
       } catch (e) {
         console.warn('Error fetching tariff:', e);
@@ -253,6 +528,10 @@ const ActiveTripScreen = () => {
     lastRouteKeyRef.current = '';
     setRoutePolyline(null);
     setRouteInfo(null);
+    setRouteSteps([]);
+    setRemainingDistanceMeters(null);
+    setRemainingDurationSeconds(null);
+    setNextStepInfo(null);
   }, [
     activeTrip?.id,
     activeTrip?.origin_lat,
@@ -264,74 +543,61 @@ const ActiveTripScreen = () => {
     destinationSet,
   ]);
 
-  // Fetch route
-  useEffect(() => {
+  const fetchNavigationRoute = useCallback(async (forceRefresh = false) => {
     if (!activeTrip || !currentLocation) return;
-    const fetchRoute = async () => {
-      try {
-        let origin, destination;
-        const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
-        if (flowStep === FLOW_STEP.IN_PROGRESS || destinationSet) {
-          const tripOriginLat = parseFloat(activeTrip.origin_lat);
-          const tripOriginLng = parseFloat(activeTrip.origin_lng);
-          origin = (Number.isFinite(tripOriginLat) && Number.isFinite(tripOriginLng))
-            ? { lat: tripOriginLat, lng: tripOriginLng }
-            : { lat: currentLocation.lat, lng: currentLocation.lng };
-          destination = {
-            lat: parseFloat(activeTrip.destination_lat),
-            lng: parseFloat(activeTrip.destination_lng),
-          };
-        } else {
-          origin = { lat: currentLocation.lat, lng: currentLocation.lng };
-          destination = {
-            lat: parseFloat(pickupPoint?.lat),
-            lng: parseFloat(pickupPoint?.lng),
-          };
+
+    try {
+      const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
+      const origin = { lat: currentLocation.lat, lng: currentLocation.lng };
+      const destination = (flowStep === FLOW_STEP.IN_PROGRESS || destinationSet)
+        ? {
+          lat: parseFloat(activeTrip.destination_lat),
+          lng: parseFloat(activeTrip.destination_lng),
         }
-        if (!Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return;
-        if (!Number.isFinite(destination.lat) || !Number.isFinite(destination.lng)) return;
+        : {
+          lat: parseFloat(pickupPoint?.lat),
+          lng: parseFloat(pickupPoint?.lng),
+        };
 
-        const routeKey = [
-          activeTrip.id,
-          flowStep,
-          destinationSet ? '1' : '0',
-          Number(origin.lat).toFixed(6),
-          Number(origin.lng).toFixed(6),
-          Number(destination.lat).toFixed(6),
-          Number(destination.lng).toFixed(6),
-        ].join('|');
+      if (!Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return;
+      if (!Number.isFinite(destination.lat) || !Number.isFinite(destination.lng)) return;
 
-        if (routeFetched.current && lastRouteKeyRef.current === routeKey) {
-          return;
-        }
+      const routeKey = [
+        activeTrip.id,
+        flowStep,
+        destinationSet ? '1' : '0',
+        Number(destination.lat).toFixed(6),
+        Number(destination.lng).toFixed(6),
+      ].join('|');
 
-        const result = await getDirections(origin, destination);
-        setRoutePolyline(result.polyline);
-        setRouteInfo({
-          distance: result.distance,
-          duration: result.duration,
-          distanceValue: result.distanceValue,
-          durationValue: result.durationValue,
-        });
-        routeFetched.current = true;
-        lastRouteKeyRef.current = routeKey;
-      } catch (error) {
-        console.log('Error fetching route:', error);
+      if (!forceRefresh && routeFetched.current && lastRouteKeyRef.current === routeKey) {
+        return;
       }
-    };
-    fetchRoute();
+
+      const result = await getDirections(origin, destination);
+      setRoutePolyline(result.polyline);
+      setRouteInfo({
+        distance: result.distance,
+        duration: result.duration,
+        distanceValue: result.distanceValue,
+        durationValue: result.durationValue,
+      });
+      setRouteSteps(Array.isArray(result.steps) ? result.steps : []);
+      routeFetched.current = true;
+      lastRouteKeyRef.current = routeKey;
+    } catch (error) {
+      console.log('Error fetching route:', error);
+    }
   }, [
-    activeTrip?.id,
-    activeTrip?.origin_lat,
-    activeTrip?.origin_lng,
-    activeTrip?.destination_lat,
-    activeTrip?.destination_lng,
-    activeTrip?.notes,
-    currentLocation?.lat,
-    currentLocation?.lng,
+    activeTrip,
+    currentLocation,
     flowStep,
     destinationSet,
   ]);
+
+  useEffect(() => {
+    fetchNavigationRoute();
+  }, [fetchNavigationRoute]);
 
   // Timer - only in_progress
   useEffect(() => {
@@ -358,6 +624,10 @@ const ActiveTripScreen = () => {
 
   // Estimated total using full route distance (when available)
   const routeDistanceKm = useMemo(() => parseRouteDistanceKm(routeInfo), [routeInfo]);
+  const routeCoords = useMemo(
+    () => (routePolyline ? decodePolyline(routePolyline) : []),
+    [routePolyline]
+  );
 
   const effectiveTariffPerKm = useMemo(() => {
     const kmRate = Number(tariffInfo.perKm);
@@ -373,6 +643,56 @@ const ActiveTripScreen = () => {
     if (!tariffLoaded || !Number.isFinite(routeDistanceKm)) return null;
     return Math.round(effectiveTariffPerKm * routeDistanceKm);
   }, [tariffLoaded, effectiveTariffPerKm, routeDistanceKm]);
+
+  const checkoutDistanceKm = useMemo(() => {
+    if (Number.isFinite(routeDistanceKm) && routeDistanceKm > 0) return routeDistanceKm;
+    return tripDistanceKm;
+  }, [routeDistanceKm, tripDistanceKm]);
+
+  const checkoutTotalPrice = useMemo(() => {
+    if (Number.isFinite(routeBasedTotalPrice) && routeBasedTotalPrice > 0) return routeBasedTotalPrice;
+    if (Number.isFinite(checkoutDistanceKm) && checkoutDistanceKm > 0) {
+      return Math.round(effectiveTariffPerKm * checkoutDistanceKm);
+    }
+    return livePrice;
+  }, [routeBasedTotalPrice, checkoutDistanceKm, effectiveTariffPerKm, livePrice]);
+
+  useEffect(() => {
+    if (!currentLocation || routeCoords.length === 0) return;
+
+    const currentPoint = {
+      latitude: currentLocation.lat,
+      longitude: currentLocation.lng,
+    };
+
+    const remainingMeters = getRouteRemainingMeters(currentPoint, routeCoords);
+    setRemainingDistanceMeters(remainingMeters);
+
+    const totalDistanceMeters = Number(routeInfo?.distanceValue) || 0;
+    const totalDurationSeconds = Number(routeInfo?.durationValue) || 0;
+    const estimatedRemainingSeconds = totalDistanceMeters > 0 && totalDurationSeconds > 0
+      ? Math.max(0, Math.round((remainingMeters / totalDistanceMeters) * totalDurationSeconds))
+      : null;
+    setRemainingDurationSeconds(estimatedRemainingSeconds);
+
+    const step = getCurrentNavigationStep(currentPoint, routeSteps);
+    setNextStepInfo(step);
+  }, [currentLocation, routeCoords, routeInfo?.distanceValue, routeInfo?.durationValue, routeSteps]);
+
+  useEffect(() => {
+    if (!currentLocation || routeCoords.length < 2) return;
+
+    const currentPoint = {
+      latitude: currentLocation.lat,
+      longitude: currentLocation.lng,
+    };
+    const deviationMeters = getDistanceToPolylineMeters(currentPoint, routeCoords);
+    const now = Date.now();
+    if (deviationMeters > 80 && now - lastRerouteAtRef.current > 4000) {
+      lastRerouteAtRef.current = now;
+      fetchNavigationRoute(true);
+    }
+  }, [currentLocation, routeCoords, fetchNavigationRoute]);
 
   // Distance to pickup
   const distanceToPickup = useMemo(() => {
@@ -397,7 +717,7 @@ const ActiveTripScreen = () => {
     setFlowStep(FLOW_STEP.AT_PICKUP);
   }, []);
 
-  // Step 2 -> Step 3 (or skip to Step 4 if destination already set by dashboard)
+  // Step 2 -> Step 3 (or skip to Step 4 if destination already set by dashboard or preloaded from notes)
   const handlePassengerAboard = useCallback(async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const { isApproachOnly: isApproachOnlyTrip } = resolvePickupPoint(activeTrip, currentLocation);
@@ -422,6 +742,45 @@ const ActiveTripScreen = () => {
         }
       } catch (err) {
         console.warn('Error updating pickup as origin:', err);
+      }
+    }
+
+    // Verificar si el destino final fue precargado por el pasajero vía WhatsApp
+    const preloadedDest = parsePreloadedDestination(activeTrip?.notes);
+
+    // Si ya hay un destino precargado desde WhatsApp, auto-setearlo sin pasar por voz
+    if (preloadedDest) {
+      try {
+        const { data: updatedTrip, error } = await supabase
+          .from('trips')
+          .update({
+            destination_address: preloadedDest.address,
+            destination_lat: preloadedDest.lat,
+            destination_lng: preloadedDest.lng,
+          })
+          .eq('id', activeTrip.id)
+          .select()
+          .single();
+
+        if (!error && updatedTrip) {
+          useTripStore.getState().updateActiveTrip(updatedTrip);
+        }
+
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Toast.show({
+          type: 'success',
+          text1: 'Destino cargado automáticamente',
+          text2: preloadedDest.address,
+          visibilityTime: 4000,
+        });
+
+        setDestinationSet(true);
+        setFlowStep(FLOW_STEP.IN_PROGRESS);
+        updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS);
+        return;
+      } catch (err) {
+        console.warn('Error aplicando destino precargado:', err);
+        // Si falla, continuar al flujo normal de voz
       }
     }
 
@@ -546,29 +905,45 @@ const ActiveTripScreen = () => {
 
   // Step 4 -> Complete
   const handleEndTrip = useCallback(async () => {
-    if (!activeTrip) return;
-    Alert.alert(
-      'Finalizar viaje',
-      `¿Confirmar fin del viaje?\n\nDistancia: ${formatDistance(routeDistanceKm || tripDistanceKm)}\nTotal: ${formatPrice(routeBasedTotalPrice ?? livePrice)}`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Finalizar',
-          style: 'destructive',
-          onPress: async () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            const result = await updateTripStatus(activeTrip.id, TRIP_STATUS.COMPLETED);
-            if (result.success) {
-              stopTracking();
-              if (timerRef.current) clearInterval(timerRef.current);
-              setCompletedTrip(result.data);
-              setShowSummary(true);
-            }
-          },
-        },
-      ]
-    );
-  }, [activeTrip, tripDistanceKm, livePrice]);
+    if (!activeTrip || finishingTrip) return;
+    setShowFinishModal(true);
+  }, [activeTrip, finishingTrip]);
+
+  const handleConfirmFinishTrip = useCallback(async () => {
+    if (!activeTrip || finishingTrip) return;
+    try {
+      setFinishingTrip(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      const distanceKm = Number.isFinite(checkoutDistanceKm) ? Math.round(checkoutDistanceKm * 10) / 10 : 0;
+      const totalPrice = Number.isFinite(checkoutTotalPrice) ? Math.round(checkoutTotalPrice) : 0;
+      const commissionAmount = Math.round(totalPrice * (tariffInfo.commission || 10) / 100);
+
+      const result = await updateTripStatus(activeTrip.id, TRIP_STATUS.COMPLETED, {
+        distance_km: distanceKm,
+        price: totalPrice,
+        commission_amount: commissionAmount,
+      });
+
+      if (result.success) {
+        setShowFinishModal(false);
+        stopTracking();
+        if (timerRef.current) clearInterval(timerRef.current);
+        setCompletedTrip(result.data);
+        setShowSummary(true);
+      }
+    } finally {
+      setFinishingTrip(false);
+    }
+  }, [
+    activeTrip,
+    finishingTrip,
+    checkoutDistanceKm,
+    checkoutTotalPrice,
+    tariffInfo.commission,
+    updateTripStatus,
+    stopTracking,
+  ]);
 
   // ============================
   //  STATUS PILL TEXT
@@ -687,8 +1062,6 @@ const ActiveTripScreen = () => {
 
   if (!activeTrip) return null;
 
-  const statusInfo = getStatusInfo();
-  const speedKmh = speed ? Math.round((speed < 0 ? 0 : speed) * 3.6) : 0;
   const isInProgress = flowStep === FLOW_STEP.IN_PROGRESS;
   const { point: pickupPoint, isApproachOnly: isApproachOnlyTrip } = resolvePickupPoint(activeTrip, currentLocation);
   const tripOriginPoint = {
@@ -698,6 +1071,28 @@ const ActiveTripScreen = () => {
   };
   const hasTripOrigin = Number.isFinite(tripOriginPoint.lat) && Number.isFinite(tripOriginPoint.lng);
   const useTripOriginRoute = flowStep === FLOW_STEP.SET_DESTINATION || flowStep === FLOW_STEP.IN_PROGRESS || destinationSet;
+  const maneuverPresentation = getManeuverPresentation(
+    nextStepInfo?.maneuver,
+    remainingDistanceMeters,
+    nextStepInfo?.distanceToStepMeters,
+  );
+  const isArriving = Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters <= 40;
+  const directInstruction = buildDirectNavigationInstruction(nextStepInfo, remainingDistanceMeters);
+  const navigationInstruction = directInstruction.primary || 'Seguí por la ruta marcada';
+  const navigationDistanceText = isArriving
+    ? 'Llegaste'
+    : formatRemainingDistance(nextStepInfo?.distanceToStepMeters);
+  const remainingDistanceText = formatRemainingDistance(remainingDistanceMeters);
+  const etaText = formatEta(remainingDurationSeconds);
+  const maneuverIcon = maneuverPresentation.icon;
+  const totalRouteDistanceMeters = Number(routeInfo?.distanceValue) || 0;
+  const traveledDistanceMeters = Number.isFinite(remainingDistanceMeters) && totalRouteDistanceMeters > 0
+    ? Math.max(0, totalRouteDistanceMeters - remainingDistanceMeters)
+    : 0;
+  const progressRatio = totalRouteDistanceMeters > 0
+    ? Math.max(0, Math.min(1, traveledDistanceMeters / totalRouteDistanceMeters))
+    : 0;
+  const progressPercent = Math.round(progressRatio * 100);
 
   // Map destination target based on step
   const mapOrigin = (useTripOriginRoute && hasTripOrigin) ? tripOriginPoint : pickupPoint;
@@ -713,6 +1108,60 @@ const ActiveTripScreen = () => {
     <View style={s.root}>
       <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
+      <Modal
+        visible={showFinishModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !finishingTrip && setShowFinishModal(false)}
+      >
+        <View style={s.finishModalBackdrop}>
+          <View style={s.finishModalCard}>
+            <View style={s.finishModalHeader}>
+              <View style={s.finishModalIconWrap}>
+                <MaterialCommunityIcons name="cash-check" size={18} color={colors.success} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.finishModalTitle}>Confirmar cobro y finalizar</Text>
+                <Text style={s.finishModalSubtitle}>Verificá el pago antes de cerrar el viaje</Text>
+              </View>
+            </View>
+
+            <View style={s.finishModalInfoRow}>
+              <Text style={s.finishModalInfoLabel}>Distancia total</Text>
+              <Text style={s.finishModalInfoValue}>{formatDistance(checkoutDistanceKm)}</Text>
+            </View>
+
+            <View style={s.finishModalTotalWrap}>
+              <Text style={s.finishModalTotalLabel}>Costo total del viaje</Text>
+              <Text style={s.finishModalTotalValue}>{formatPrice(checkoutTotalPrice)}</Text>
+            </View>
+
+            <View style={s.finishModalActions}>
+              <TouchableOpacity
+                style={[s.finishModalBtn, s.finishModalBtnGhost, finishingTrip && s.finishModalBtnDisabled]}
+                onPress={() => !finishingTrip && setShowFinishModal(false)}
+                activeOpacity={0.8}
+                disabled={finishingTrip}
+              >
+                <Text style={s.finishModalBtnGhostText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.finishModalBtn, s.finishModalBtnPrimary, finishingTrip && s.finishModalBtnDisabled]}
+                onPress={handleConfirmFinishTrip}
+                activeOpacity={0.85}
+                disabled={finishingTrip}
+              >
+                {finishingTrip ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={s.finishModalBtnPrimaryText}>Confirmar pago</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Map */}
       <TripMap
         driverLocation={currentLocation}
@@ -720,43 +1169,33 @@ const ActiveTripScreen = () => {
         destination={mapDestination}
         polyline={routePolyline}
         heading={heading}
+        navigationMode
+        remainingDistanceMeters={remainingDistanceMeters}
         style={StyleSheet.absoluteFillObject}
       />
 
-      {/* Status pill */}
-      <View style={[s.statusPill, { top: insets.top + 12 }]}>
-        <View style={[s.statusDot, { backgroundColor: statusInfo.color }]} />
-        <Text style={s.statusText}>{statusInfo.text}</Text>
-        <View style={s.stepBadge}>
-          <Text style={s.stepBadgeText}>{statusInfo.step}/4</Text>
+      <View style={[
+        s.navigationCard,
+        maneuverPresentation.isCritical ? s.navigationCardCritical : null,
+        { top: insets.top + 8, borderColor: maneuverPresentation.border },
+      ]}>
+        {/* Ícono de maniobra + distancia al próximo paso + instrucción + km restantes */}
+        <View style={s.navMainRow}>
+          <View style={[s.navIconBox, { backgroundColor: maneuverPresentation.background, borderColor: maneuverPresentation.border }]}>
+            <MaterialCommunityIcons name={maneuverIcon} size={32} color={maneuverPresentation.tint} />
+          </View>
+          <View style={s.navDistanceCol}>
+            <Text style={[s.navDistanceText, { color: maneuverPresentation.tint }]} numberOfLines={1}>{navigationDistanceText}</Text>
+            <Text style={s.navInstructionText} numberOfLines={2}>{navigationInstruction}</Text>
+          </View>
+          <Text style={s.navTotalText}>{remainingDistanceText}</Text>
         </View>
-      </View>
-
-      {/* Speed + Timer + KM chips */}
-      <View style={[s.chipRow, { top: insets.top + 52 }]}>
-        <View style={s.chip}>
-          <Text style={s.chipValue}>{speedKmh}</Text>
-          <Text style={s.chipLabel}>km/h</Text>
-        </View>
-        {isInProgress && (
-          <>
-            <View style={s.chip}>
-              <MaterialCommunityIcons name="map-marker-distance" size={12} color={colors.info} />
-              <Text style={[s.chipValue, { marginLeft: 4, fontSize: 16 }]}>
-                {tripDistanceKm.toFixed(1)} km
-              </Text>
-            </View>
-            <View style={s.chip}>
-              <MaterialCommunityIcons name="timer-outline" size={12} color={colors.textMuted} />
-              <Text style={[s.chipValue, { marginLeft: 4, fontSize: 16 }]}>{formatTimerMMSS(tripTimer)}</Text>
-            </View>
-          </>
-        )}
       </View>
 
       {/* Bottom Sheet */}
       <BottomSheet
         ref={bottomSheetRef}
+        index={0}
         snapPoints={snapPoints}
         backgroundStyle={s.sheetBg}
         handleIndicatorStyle={s.handle}
@@ -968,7 +1407,7 @@ const ActiveTripScreen = () => {
                 activeOpacity={0.85}
               >
                 <MaterialCommunityIcons name="flag-checkered" size={22} color="#fff" />
-                <Text style={s.actionBtnText}>Finalizar viaje</Text>
+                <Text style={s.actionBtnText}>Llegué a destino</Text>
               </TouchableOpacity>
 
               <View style={s.addressCard}>
@@ -1102,6 +1541,123 @@ const s = StyleSheet.create({
     position: 'absolute', left: 16, right: 16,
     flexDirection: 'row', justifyContent: 'space-between',
   },
+  navigationCard: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    backgroundColor: 'rgba(255,255,255,0.97)',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+  },
+  navigationCardCritical: {
+    shadowOpacity: 0.18,
+  },
+  navTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  navBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  navBadgeText: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+  },
+  navEtaText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  navMainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  navIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navDistanceCol: {
+    flex: 1,
+  },
+  navDistanceText: {
+    fontSize: 26,
+    fontFamily: 'Inter_700Bold',
+    lineHeight: 30,
+  },
+  navInstructionText: {
+    color: colors.text,
+    fontSize: 16,
+    fontFamily: 'Inter_600SemiBold',
+    lineHeight: 21,
+    marginTop: 2,
+  },
+  navTotalText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  navProgressTrack: {
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: '#E5E7EB',
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  navProgressFill: {
+    height: '100%',
+    borderRadius: 999,
+    minWidth: 4,
+  },
+  navProgressLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  navProgressLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+  },
+  navFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  navFooterItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+  },
+  navFooterText: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    flex: 1,
+  },
   chip: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#FFFFFF', borderRadius: 12,
@@ -1153,6 +1709,76 @@ const s = StyleSheet.create({
     marginBottom: 12, borderWidth: 1, borderColor: `${colors.info}25`,
   },
   routeInfoCardText: { color: colors.info, fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  finishModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(12, 18, 28, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  finishModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.surface,
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  finishModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    gap: 10,
+  },
+  finishModalIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: `${colors.success}15`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  finishModalTitle: { color: colors.text, fontSize: 17, fontFamily: 'Inter_700Bold' },
+  finishModalSubtitle: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    marginTop: 2,
+  },
+  finishModalInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  finishModalInfoLabel: { color: colors.textMuted, fontSize: 13, fontFamily: 'Inter_500Medium' },
+  finishModalInfoValue: { color: colors.text, fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  finishModalTotalWrap: {
+    marginTop: 10,
+    marginBottom: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: `${colors.success}35`,
+    backgroundColor: `${colors.success}12`,
+    padding: 14,
+  },
+  finishModalTotalLabel: { color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_500Medium' },
+  finishModalTotalValue: { color: colors.success, fontSize: 32, fontFamily: 'Inter_700Bold', marginTop: 2 },
+  finishModalActions: { flexDirection: 'row', gap: 10 },
+  finishModalBtn: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 46,
+  },
+  finishModalBtnGhost: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
+  finishModalBtnPrimary: { backgroundColor: colors.success },
+  finishModalBtnGhostText: { color: colors.text, fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  finishModalBtnPrimaryText: { color: '#fff', fontSize: 14, fontFamily: 'Inter_700Bold' },
+  finishModalBtnDisabled: { opacity: 0.7 },
   reRecordBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     paddingVertical: 8,
