@@ -329,7 +329,7 @@ export const useTrips = () => {
         .update({
           status: TRIP_STATUS.CANCELLED,
           cancel_reason: reason,
-          driver_id: null,
+          // driver_id is intentionally kept so the reassignment logic can exclude this driver
         })
         .eq('id', tripId);
 
