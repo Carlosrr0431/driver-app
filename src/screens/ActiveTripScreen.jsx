@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -413,7 +413,7 @@ const ActiveTripScreen = () => {
   const lastRouteKeyRef = useRef('');
   const lastRerouteAtRef = useRef(0);
 
-  const { activeTrip, tripTimer, tripDistanceKm, setTripTimer, addTripDistance } = useTripStore();
+  const { activeTrip, tripTimer, tripDistanceKm, setTripTimer, addTripDistance, clearActiveTrip } = useTripStore();
   const { updateTripStatus } = useTrips();
   const { startTracking, stopTracking } = useLocation();
   const currentLocation = useLocationStore((s) => s.currentLocation);
@@ -459,6 +459,18 @@ const ActiveTripScreen = () => {
       setDestinationSet(false);
     }
   }, [activeTrip?.id, activeTrip?.status]);
+
+  // When the trip is cancelled by the passenger, alert the driver and navigate back
+  useEffect(() => {
+    if (activeTrip?.status !== TRIP_STATUS.CANCELLED) return;
+    const reason = activeTrip.cancel_reason || 'El pasajero canceló el viaje.';
+    Alert.alert(
+      'Viaje cancelado',
+      reason,
+      [{ text: 'Entendido', onPress: () => { clearActiveTrip(); navigation.navigate('Home'); } }],
+      { cancelable: false }
+    );
+  }, [activeTrip?.status]);
 
   useEffect(() => {
     if (!bottomSheetRef.current) return;

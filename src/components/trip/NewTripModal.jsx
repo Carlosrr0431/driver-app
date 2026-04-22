@@ -1,5 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, Modal, Linking, Vibration, TouchableOpacity, Pressable, Dimensions, ActivityIndicator, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  Modal,
+  Linking,
+  Vibration,
+  TouchableOpacity,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -7,7 +18,8 @@ import Animated, {
   Easing,
   FadeIn,
   FadeInDown,
-  FadeOut,
+  SlideInDown,
+  SlideOutDown,
 } from 'react-native-reanimated';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -16,7 +28,25 @@ import { colors } from '../../theme/colors';
 import { formatPrice, formatDistance, formatDuration } from '../../utils/formatters';
 import { TRIP_ACCEPT_TIMEOUT, CANCEL_REASONS } from '../../utils/constants';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// Helpers
+const isApproachOnly = (trip) =>
+  String(trip?.notes || '').toLowerCase().includes('[approach_only]');
+
+// Pickup address = where the driver must go first
+const getPickupAddress = (trip) =>
+  isApproachOnly(trip) ? trip.destination_address : trip.origin_address;
+
+// Clean notes: strip the [APPROACH_ONLY] tag and the boilerplate sentence
+const getCleanNotes = (trip) => {
+  if (!trip?.notes) return null;
+  const cleaned = trip.notes
+    .replace(/\[APPROACH_ONLY\]/gi, '')
+    .replace(/Creado autom[aá]ticamente desde WhatsApp[^.]*\./gi, '')
+    .replace(/chofer\s*->\s*retiro pasajero[^.]*\./gi, '')
+    .replace(/Destino final:[^.]*\./gi, '')
+    .trim();
+  return cleaned || null;
+};
 
 export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const [countdown, setCountdown] = useState(TRIP_ACCEPT_TIMEOUT);
@@ -25,6 +55,9 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const countdownRef = useRef(null);
   const soundRef = useRef(null);
   const progressWidth = useSharedValue(100);
+  // Keep ref so handleTimeout closure always has latest trip
+  const tripRef = useRef(trip);
+  useEffect(() => { tripRef.current = trip; }, [trip]);
 
   useEffect(() => {
     if (visible && trip) {
@@ -39,7 +72,8 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
         setCountdown((prev) => {
           if (prev <= 1) {
             clearInterval(countdownRef.current);
-            handleTimeout();
+            stopSound();
+            if (onReject) onReject(tripRef.current?.id, 'Tiempo agotado');
             return 0;
           }
           return prev - 1;
@@ -53,7 +87,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
       if (countdownRef.current) clearInterval(countdownRef.current);
       stopSound();
     };
-  }, [visible, trip]);
+  }, [visible, trip?.id]);
 
   const playNotificationSound = async () => {
     try {
@@ -68,22 +102,19 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
         { shouldPlay: true, isLooping: true, volume: 1.0 }
       );
       soundRef.current = sound;
-    } catch (error) {
-      console.log('No se pudo reproducir el sonido:', error);
+    } catch {
       Vibration.vibrate([0, 300, 100, 300]);
     }
   };
 
   const stopSound = async () => {
     if (soundRef.current) {
-      try { await soundRef.current.stopAsync(); await soundRef.current.unloadAsync(); } catch (_) {}
+      try {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+      } catch (_) {}
       soundRef.current = null;
     }
-  };
-
-  const handleTimeout = () => {
-    stopSound();
-    if (onReject) onReject(trip?.id, 'Tiempo agotado');
   };
 
   const handleAccept = async () => {
@@ -95,36 +126,21 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     try {
       if (onAccept) {
         const result = await onAccept(trip?.id);
-        // If acceptance failed or timed out, reset the button state and show error
         if (!result?.success) {
           setIsAccepting(false);
-          if (result?.isTimeout) {
-            Alert.alert(
-              'Tiempo agotado',
-              'La confirmación tardó demasiado. Por favor, intenta de nuevo.',
-              [{ text: 'OK' }]
-            );
-          } else {
-            Alert.alert(
-              'Error al aceptar',
-              result?.error || 'No pudimos confirmar tu aceptación. Por favor, intenta de nuevo.',
-              [{ text: 'Reintentar' }]
-            );
-          }
+          Alert.alert(
+            result?.isTimeout ? 'Tiempo agotado' : 'Error al aceptar',
+            result?.isTimeout
+              ? 'La confirmación tardó demasiado. Intentá de nuevo.'
+              : 'No pudimos confirmar la aceptación. Intentá de nuevo.',
+            [{ text: 'OK' }]
+          );
         }
       }
-    } catch (error) {
+    } catch {
       setIsAccepting(false);
-      Alert.alert(
-        'Error',
-        'Ocurrió un error al procesar tu aceptación.',
-        [{ text: 'OK' }]
-      );
+      Alert.alert('Error', 'Ocurrió un error al aceptar el viaje.', [{ text: 'OK' }]);
     }
-  };
-
-  const handleReject = () => {
-    setShowRejectSheet(true);
   };
 
   const handleRejectWithReason = (reason) => {
@@ -135,394 +151,376 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     if (onReject) onReject(trip?.id, reason);
   };
 
-  const callPassenger = () => {
-    if (trip?.passenger_phone) {
-      Linking.openURL(`tel:${trip.passenger_phone}`);
-    }
-  };
-
-  const whatsappPassenger = () => {
-    if (trip?.passenger_phone) {
-      const phone = trip.passenger_phone.replace(/[^0-9]/g, '');
-      Linking.openURL(`whatsapp://send?phone=${phone}`);
-    }
-  };
-
   const progressStyle = useAnimatedStyle(() => ({
     width: `${progressWidth.value}%`,
   }));
 
   const isUrgent = countdown <= 10;
+  const approachOnly = isApproachOnly(trip);
+  const pickupAddress = getPickupAddress(trip);
+  const cleanNotes = getCleanNotes(trip);
 
   if (!visible || !trip) return null;
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent>
-      <Animated.View
-        entering={FadeIn.duration(250)}
-        style={{
-          flex: 1,
-          backgroundColor: 'rgba(0,0,0,0.7)',
-          justifyContent: 'flex-end',
-        }}
-      >
-        {/* Main card — smooth slide, no bounce */}
-        <Animated.View
-          entering={FadeInDown.duration(450).easing(Easing.out(Easing.cubic))}
-          style={{
-            backgroundColor: colors.background,
-            borderTopLeftRadius: 28,
-            borderTopRightRadius: 28,
-            paddingTop: 12,
-            paddingHorizontal: 20,
-            paddingBottom: 36,
-          }}
-        >
-          {/* Handle */}
-          <View style={{ alignItems: 'center', marginBottom: 16 }}>
-            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
-          </View>
+      {/* Dimmed backdrop — tap outside does nothing (driver must decide) */}
+      <Animated.View entering={FadeIn.duration(200)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', justifyContent: 'flex-end' }}>
 
-          {/* Progress bar */}
-          <View
+        {/* ── Reject reason sheet (overlays card) ── */}
+        {showRejectSheet && (
+          <Animated.View
+            entering={SlideInDown.duration(280).easing(Easing.out(Easing.cubic))}
+            exiting={SlideOutDown.duration(200)}
             style={{
-              height: 3,
-              backgroundColor: `${colors.border}60`,
-              borderRadius: 2,
-              marginBottom: 20,
-              overflow: 'hidden',
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              backgroundColor: colors.surface,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              paddingTop: 12,
+              paddingHorizontal: 20,
+              paddingBottom: 40,
+              elevation: 20,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.18,
+              shadowRadius: 12,
             }}
           >
-            <Animated.View
-              style={[
-                {
-                  height: '100%',
-                  borderRadius: 2,
-                  backgroundColor: isUrgent ? colors.danger : colors.primary,
-                },
-                progressStyle,
-              ]}
-            />
-          </View>
-
-          {/* Header: title + timer */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-            <Text style={{ color: colors.text, fontSize: 20, fontFamily: 'Inter_700Bold' }}>
-              Nuevo viaje
-            </Text>
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: isUrgent ? `${colors.danger}18` : `${colors.primary}15`,
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 20,
-              }}
-            >
-              <MaterialCommunityIcons
-                name="timer-outline"
-                size={16}
-                color={isUrgent ? colors.danger : colors.primary}
-                style={{ marginRight: 4 }}
-              />
-              <Text
-                style={{
-                  color: isUrgent ? colors.danger : colors.primary,
-                  fontSize: 14,
-                  fontFamily: 'Inter_700Bold',
-                }}
-              >
-                {countdown}s
-              </Text>
-            </View>
-          </View>
-
-          {/* Passenger */}
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              marginBottom: 18,
-              paddingBottom: 16,
-              borderBottomWidth: 1,
-              borderBottomColor: `${colors.border}50`,
-            }}
-          >
-            <View
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
-                backgroundColor: `${colors.primary}15`,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <MaterialCommunityIcons name="account" size={22} color={colors.primary} />
-            </View>
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium', letterSpacing: 0.5 }}>
-                PASAJERO
-              </Text>
-              <Text style={{ color: colors.text, fontSize: 16, fontFamily: 'Inter_600SemiBold', marginTop: 1 }}>
-                {trip.passenger_name}
-              </Text>
-            </View>
-            {/* Quick contact icons */}
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {trip?.passenger_phone && (
-                <>
-                  <TouchableOpacity
-                    onPress={callPassenger}
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: `${colors.success}15`,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <MaterialCommunityIcons name="phone" size={18} color={colors.success} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={whatsappPassenger}
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: `${colors.success}15`,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <MaterialCommunityIcons name="whatsapp" size={18} color={colors.success} />
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
-          </View>
-
-          {/* Route */}
-          <View style={{ marginBottom: 18 }}>
-            {/* Origin */}
-            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-              <View style={{ alignItems: 'center', width: 24 }}>
-                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.success }} />
-              </View>
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8 }}>
-                  {String(trip?.notes || '').includes('[APPROACH_ONLY]') ? 'RETIRO PASAJERO' : 'ORIGEN'}
-                </Text>
-                <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium', marginTop: 2 }}>
-                  {String(trip?.notes || '').includes('[APPROACH_ONLY]') ? trip.destination_address : trip.origin_address}
-                </Text>
-              </View>
+            {/* Handle */}
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
             </View>
 
-            {/* Dotted connector */}
-            <View style={{ marginLeft: 11, paddingVertical: 4 }}>
-              {[1, 2, 3].map((i) => (
-                <View
-                  key={i}
-                  style={{
-                    width: 2,
-                    height: 4,
-                    backgroundColor: `${colors.textMuted}50`,
-                    marginBottom: 2,
-                    borderRadius: 1,
-                  }}
-                />
-              ))}
-            </View>
-
-            {/* Destination */}
-            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-              <View style={{ alignItems: 'center', width: 24 }}>
-                <View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: colors.primary }} />
-              </View>
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8 }}>
-                  DESTINO
-                </Text>
-                <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium', marginTop: 2 }}>
-                  {String(trip?.notes || '').includes('[APPROACH_ONLY]') ? 'A definir al subir el pasajero' : trip.destination_address}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Trip stats pills */}
-          <View
-            style={{
-              flexDirection: 'row',
-              gap: 8,
-              marginBottom: 18,
-            }}
-          >
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: colors.surface,
-                borderRadius: 14,
-                paddingVertical: 12,
-                alignItems: 'center',
-              }}
-            >
-              <MaterialCommunityIcons name="map-marker-distance" size={18} color={colors.textMuted} style={{ marginBottom: 4 }} />
-              <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_700Bold' }}>
-                {formatDistance(trip.distance_km)}
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 1 }}>
-                Distancia
-              </Text>
-            </View>
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: colors.surface,
-                borderRadius: 14,
-                paddingVertical: 12,
-                alignItems: 'center',
-              }}
-            >
-              <MaterialCommunityIcons name="clock-outline" size={18} color={colors.textMuted} style={{ marginBottom: 4 }} />
-              <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_700Bold' }}>
-                {formatDuration(trip.duration_minutes)}
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 1 }}>
-                Duración
-              </Text>
-            </View>
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: `${colors.secondary}12`,
-                borderRadius: 14,
-                paddingVertical: 12,
-                alignItems: 'center',
-                borderWidth: 1,
-                borderColor: `${colors.secondary}25`,
-              }}
-            >
-              <MaterialCommunityIcons name="cash" size={18} color={colors.secondary} style={{ marginBottom: 4 }} />
-              <Text style={{ color: colors.secondary, fontSize: 17, fontFamily: 'Inter_700Bold' }}>
-                {trip.price == null ? 'A definir' : formatPrice(trip.price)}
-              </Text>
-              <Text style={{ color: colors.secondary, fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 1, opacity: 0.7 }}>
-                {trip.price == null ? 'Al iniciar viaje' : 'Precio'}
-              </Text>
-            </View>
-          </View>
-
-          {/* Notes */}
-          {trip.notes && (
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'flex-start',
-                backgroundColor: `${colors.warning}0D`,
-                padding: 12,
-                borderRadius: 12,
-                marginBottom: 18,
-                gap: 8,
-              }}
-            >
-              <MaterialCommunityIcons name="note-text-outline" size={16} color={colors.warning} style={{ marginTop: 1 }} />
-              <Text style={{ color: colors.warning, fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1 }}>
-                {trip.notes}
-              </Text>
-            </View>
-          )}
-
-          {/* Accept button */}
-          <TouchableOpacity
-            onPress={handleAccept}
-            activeOpacity={0.8}
-            disabled={isAccepting}
-            style={{
-              backgroundColor: colors.success,
-              borderRadius: 16,
-              paddingVertical: 16,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 10,
-              opacity: isAccepting ? 0.7 : 1,
-            }}
-          >
-            {isAccepting ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <ActivityIndicator size="small" color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 }}>
-                  Aceptando...
-                </Text>
-              </View>
-            ) : (
-              <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 }}>
-                Aceptar viaje
-              </Text>
-            )}
-          </TouchableOpacity>
-
-          {/* Reject button */}
-          {!showRejectSheet ? (
-            <TouchableOpacity
-              onPress={handleReject}
-              activeOpacity={0.7}
-              disabled={isAccepting}
-              style={{
-                paddingVertical: 12,
-                alignItems: 'center',
-                opacity: isAccepting ? 0.6 : 1,
-              }}
-            >
-              <Text style={{ color: colors.textMuted, fontSize: 14, fontFamily: 'Inter_500Medium' }}>
-                Rechazar
-              </Text>
-            </TouchableOpacity>
-          ) : (
-            <Animated.View
-              entering={FadeIn.duration(200)}
-              style={{
-                marginTop: 8,
-                backgroundColor: colors.surface,
-                borderRadius: 16,
-                padding: 16,
-              }}
-            >
-              <Text
-                style={{
-                  color: colors.text,
-                  fontSize: 14,
-                  fontFamily: 'Inter_600SemiBold',
-                  marginBottom: 12,
-                  textAlign: 'center',
-                }}
-              >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <Text style={{ color: colors.text, fontSize: 16, fontFamily: 'Inter_700Bold' }}>
                 Motivo del rechazo
               </Text>
-              {CANCEL_REASONS.map((reason) => (
-                <Pressable
-                  key={reason}
-                  onPress={() => handleRejectWithReason(reason)}
-                  style={({ pressed }) => ({
-                    paddingVertical: 11,
-                    paddingHorizontal: 14,
-                    borderRadius: 10,
-                    marginBottom: 4,
-                    backgroundColor: pressed ? `${colors.primary}15` : 'transparent',
-                  })}
-                >
-                  <Text style={{ color: colors.textMuted, fontSize: 14, fontFamily: 'Inter_500Medium' }}>
-                    {reason}
+              <TouchableOpacity
+                onPress={() => setShowRejectSheet(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <MaterialCommunityIcons name="close" size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            {CANCEL_REASONS.map((reason) => (
+              <Pressable
+                key={reason}
+                onPress={() => handleRejectWithReason(reason)}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 13,
+                  paddingHorizontal: 14,
+                  borderRadius: 12,
+                  marginBottom: 4,
+                  backgroundColor: pressed ? `${colors.danger}12` : colors.background,
+                })}
+              >
+                <MaterialCommunityIcons name="circle-small" size={20} color={colors.textMuted} />
+                <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_500Medium', marginLeft: 6 }}>
+                  {reason}
+                </Text>
+              </Pressable>
+            ))}
+          </Animated.View>
+        )}
+
+        {/* ── Main card ── */}
+        {!showRejectSheet && (
+          <Animated.View
+            entering={FadeInDown.duration(400).easing(Easing.out(Easing.cubic))}
+            style={{
+              backgroundColor: colors.background,
+              borderTopLeftRadius: 28,
+              borderTopRightRadius: 28,
+              paddingTop: 12,
+              paddingHorizontal: 20,
+              paddingBottom: 36,
+              maxHeight: '92%',
+            }}
+          >
+            {/* Handle */}
+            <View style={{ alignItems: 'center', marginBottom: 14 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+            </View>
+
+            {/* Progress bar */}
+            <View style={{ height: 3, backgroundColor: `${colors.border}60`, borderRadius: 2, marginBottom: 18, overflow: 'hidden' }}>
+              <Animated.View
+                style={[{ height: '100%', borderRadius: 2, backgroundColor: isUrgent ? '#EF4444' : colors.primary }, progressStyle]}
+              />
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+              {/* Header: WhatsApp badge + timer */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ color: colors.text, fontSize: 20, fontFamily: 'Inter_700Bold' }}>
+                    Nuevo viaje
                   </Text>
-                </Pressable>
-              ))}
-            </Animated.View>
-          )}
-        </Animated.View>
+                  {approachOnly && (
+                    <View style={{
+                      backgroundColor: '#25D36620',
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 3,
+                    }}>
+                      <MaterialCommunityIcons name="whatsapp" size={13} color="#25D366" />
+                      <Text style={{ color: '#25D366', fontSize: 11, fontFamily: 'Inter_600SemiBold' }}>WA</Text>
+                    </View>
+                  )}
+                </View>
+                {/* Countdown badge */}
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: isUrgent ? '#EF444418' : `${colors.primary}15`,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: 20,
+                }}>
+                  <MaterialCommunityIcons name="timer-outline" size={16} color={isUrgent ? '#EF4444' : colors.primary} style={{ marginRight: 4 }} />
+                  <Text style={{ color: isUrgent ? '#EF4444' : colors.primary, fontSize: 14, fontFamily: 'Inter_700Bold' }}>
+                    {countdown}s
+                  </Text>
+                </View>
+              </View>
+
+              {/* Passenger row */}
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginBottom: 18,
+                paddingBottom: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: `${colors.border}50`,
+              }}>
+                <View style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 21,
+                  backgroundColor: `${colors.primary}15`,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <MaterialCommunityIcons name="account" size={22} color={colors.primary} />
+                </View>
+                <View style={{ marginLeft: 12, flex: 1 }}>
+                  <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.6 }}>
+                    PASAJERO
+                  </Text>
+                  <Text style={{ color: colors.text, fontSize: 16, fontFamily: 'Inter_600SemiBold', marginTop: 1 }}>
+                    {trip.passenger_name || 'Pasajero'}
+                  </Text>
+                </View>
+                {/* Contact quick-actions */}
+                {trip?.passenger_phone && (
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => Linking.openURL(`tel:${trip.passenger_phone}`)}
+                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: `${colors.success}18`, alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      <MaterialCommunityIcons name="phone" size={18} color={colors.success} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => Linking.openURL(`whatsapp://send?phone=${trip.passenger_phone.replace(/\D/g, '')}`)}
+                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#25D36620', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      <MaterialCommunityIcons name="whatsapp" size={18} color="#25D366" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+
+              {/* Route */}
+              <View style={{
+                backgroundColor: colors.surface,
+                borderRadius: 16,
+                padding: 14,
+                marginBottom: 14,
+                gap: 0,
+              }}>
+                {/* Pickup */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <View style={{ width: 22, alignItems: 'center', paddingTop: 2 }}>
+                    <View style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: colors.success, borderWidth: 2, borderColor: `${colors.success}40` }} />
+                  </View>
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 0.8, marginBottom: 2 }}>
+                      RETIRO
+                    </Text>
+                    <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_500Medium', lineHeight: 19 }}>
+                      {pickupAddress || '—'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Connector */}
+                <View style={{ marginLeft: 10, paddingVertical: 5 }}>
+                  {[0, 1, 2, 3].map((i) => (
+                    <View key={i} style={{ width: 2, height: 4, backgroundColor: `${colors.textMuted}35`, marginBottom: 2, borderRadius: 1, marginLeft: 1 }} />
+                  ))}
+                </View>
+
+                {/* Destination */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <View style={{ width: 22, alignItems: 'center', paddingTop: 2 }}>
+                    {approachOnly
+                      ? <MaterialCommunityIcons name="help-circle-outline" size={13} color={colors.textMuted} />
+                      : <View style={{ width: 11, height: 11, borderRadius: 3, backgroundColor: colors.primary }} />
+                    }
+                  </View>
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 0.8, marginBottom: 2 }}>
+                      DESTINO
+                    </Text>
+                    <Text style={{
+                      color: approachOnly ? colors.textMuted : colors.text,
+                      fontSize: 14,
+                      fontFamily: approachOnly ? 'Inter_400Regular' : 'Inter_500Medium',
+                      fontStyle: approachOnly ? 'italic' : 'normal',
+                      lineHeight: 19,
+                    }}>
+                      {approachOnly ? 'A definir al subir al pasajero' : (trip.destination_address || '—')}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Stats pills */}
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                <StatPill
+                  icon="map-marker-distance"
+                  value={trip.distance_km != null ? formatDistance(trip.distance_km) : '—'}
+                  label="Distancia"
+                />
+                <StatPill
+                  icon="clock-outline"
+                  value={trip.duration_minutes != null ? formatDuration(trip.duration_minutes) : '—'}
+                  label="Duración"
+                />
+                <StatPill
+                  icon="cash"
+                  value={trip.price != null ? formatPrice(trip.price) : 'A definir'}
+                  label={trip.price != null ? 'Precio' : 'Al bajar'}
+                  highlight
+                />
+              </View>
+
+              {/* Clean user notes (no boilerplate) */}
+              {cleanNotes && (
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'flex-start',
+                  backgroundColor: `${colors.warning}12`,
+                  padding: 12,
+                  borderRadius: 12,
+                  marginBottom: 14,
+                  gap: 8,
+                }}>
+                  <MaterialCommunityIcons name="note-text-outline" size={16} color={colors.warning} style={{ marginTop: 1 }} />
+                  <Text style={{ color: colors.warning, fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1, lineHeight: 18 }}>
+                    {cleanNotes}
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* ── CTA buttons ── */}
+            <View style={{ marginTop: 6 }}>
+              <TouchableOpacity
+                onPress={handleAccept}
+                activeOpacity={0.82}
+                disabled={isAccepting}
+                style={{
+                  backgroundColor: colors.success,
+                  borderRadius: 16,
+                  paddingVertical: 16,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 10,
+                  opacity: isAccepting ? 0.75 : 1,
+                  elevation: 2,
+                  shadowColor: colors.success,
+                  shadowOffset: { width: 0, height: 3 },
+                  shadowOpacity: 0.25,
+                  shadowRadius: 6,
+                }}
+              >
+                {isAccepting ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <ActivityIndicator size="small" color="#fff" />
+                    <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold' }}>Confirmando…</Text>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <MaterialCommunityIcons name="check-circle-outline" size={20} color="#fff" />
+                    <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.2 }}>
+                      Aceptar viaje
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setShowRejectSheet(true);
+                }}
+                activeOpacity={0.7}
+                disabled={isAccepting}
+                style={{
+                  paddingVertical: 13,
+                  alignItems: 'center',
+                  borderRadius: 14,
+                  backgroundColor: `${colors.danger}0E`,
+                  opacity: isAccepting ? 0.5 : 1,
+                }}
+              >
+                <Text style={{ color: '#EF4444', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+                  Rechazar viaje
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        )}
       </Animated.View>
     </Modal>
   );
 };
+
+// ── Stat pill sub-component ──
+function StatPill({ icon, value, label, highlight = false }) {
+  return (
+    <View style={{
+      flex: 1,
+      backgroundColor: highlight ? `${colors.primary}10` : colors.surface,
+      borderRadius: 14,
+      paddingVertical: 12,
+      alignItems: 'center',
+      borderWidth: highlight ? 1 : 0,
+      borderColor: highlight ? `${colors.primary}25` : 'transparent',
+    }}>
+      <MaterialCommunityIcons
+        name={icon}
+        size={18}
+        color={highlight ? colors.primary : colors.textMuted}
+        style={{ marginBottom: 4 }}
+      />
+      <Text style={{ color: highlight ? colors.primary : colors.text, fontSize: 14, fontFamily: 'Inter_700Bold' }}>
+        {value}
+      </Text>
+      <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 1 }}>
+        {label}
+      </Text>
+    </View>
+  );
+}

@@ -8,7 +8,7 @@ import { sendLocalNotification } from '../services/notifications';
 
 export const useRealtime = () => {
   const { driver } = useAuthStore();
-  const { setPendingTrip } = useTripStore();
+  const { setPendingTrip, updateActiveTrip, clearActiveTrip } = useTripStore();
   const tripChannelRef = useRef(null);
   const messageChannelRef = useRef(null);
 
@@ -64,10 +64,16 @@ export const useRealtime = () => {
         },
         (payload) => {
           const trip = payload.new;
-          if (trip.status === TRIP_STATUS.CANCELLED && trip.cancel_reason) {
+          if (trip.status === TRIP_STATUS.CANCELLED) {
+            // Update the Zustand store so ActiveTripScreen can react immediately
+            updateActiveTrip({ status: TRIP_STATUS.CANCELLED, cancel_reason: trip.cancel_reason || '' });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
             sendLocalNotification(
-              'Viaje cancelado',
-              `El viaje fue cancelado: ${trip.cancel_reason}`
+              '⚠️ Viaje cancelado',
+              trip.cancel_reason
+                ? `El viaje fue cancelado: ${trip.cancel_reason}`
+                : 'El pasajero canceló el viaje.',
+              { type: 'trip_cancelled', tripId: trip.id }
             );
           }
         }
