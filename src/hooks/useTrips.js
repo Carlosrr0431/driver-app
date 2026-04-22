@@ -7,6 +7,25 @@ import { TRIP_STATUS, PAGINATION_LIMIT } from '../utils/constants';
 import Toast from 'react-native-toast-message';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
+function createTimeoutController(timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timeoutId),
+  };
+}
+
+function parseSettingNumber(rawValue) {
+  const normalized = String(rawValue ?? '')
+    .replace(',', '.')
+    .replace(/[^0-9.-]/g, '');
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function enrichApproachTrip(trip, fallback = null) {
   if (!trip) return trip;
   const notes = String(trip.notes || fallback?.notes || '');
@@ -263,6 +282,7 @@ export const useTrips = () => {
         }
       }
 
+      const timeout = createTimeoutController(12000);
       const { data, error } = await supabase
         .from('trips')
         .update({
@@ -270,8 +290,10 @@ export const useTrips = () => {
           accepted_at: new Date().toISOString(),
         })
         .eq('id', tripId)
+        .abortSignal(timeout.signal)
         .select()
         .single();
+      timeout.cleanup();
 
       if (error) throw error;
 
@@ -288,12 +310,15 @@ export const useTrips = () => {
 
       return { success: true, data };
     } catch (error) {
+      const isTimeout = error?.name === 'AbortError';
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'No se pudo aceptar el viaje',
+        text2: isTimeout
+          ? 'La confirmación tardó demasiado. Revisá conexión e intentá de nuevo.'
+          : 'No se pudo aceptar el viaje',
       });
-      return { success: false, error };
+      return { success: false, error, isTimeout };
     }
   }, [driver?.id, clearPendingTrip, queryClient, setActiveTrip]);
 
@@ -336,30 +361,73 @@ export const useTrips = () => {
       if (status === TRIP_STATUS.IN_PROGRESS) {
         updates.started_at = new Date().toISOString();
       } else if (status === TRIP_STATUS.COMPLETED) {
+        const DEFAULT_TARIFF_PER_KM = 600;
         updates.completed_at = new Date().toISOString();
 
         // Calculate actual distance and price from tariff
         const { tripDistanceKm, tripTimer } = useTripStore.getState();
-        const distKm = Math.round(tripDistanceKm * 10) / 10;
+        const storeDistKm = Math.round(tripDistanceKm * 10) / 10;
+        const providedDistKm = Number(extraFields?.distance_km);
+        const distKm = Number.isFinite(providedDistKm) && providedDistKm > 0 ? providedDistKm : storeDistKm;
         updates.distance_km = distKm;
-        updates.duration_minutes = Math.round(tripTimer / 60);
+
+        const providedDuration = Number(extraFields?.duration_minutes);
+        updates.duration_minutes = Number.isFinite(providedDuration) && providedDuration > 0
+          ? Math.round(providedDuration)
+          : Math.max(1, Math.round(tripTimer / 60));
 
         // Fetch tariff settings for price calculation
         try {
           const { data: settingsData } = await supabase
             .from('settings')
             .select('key, value')
-            .in('key', ['tariff_per_km', 'tariff_base', 'commission_percent']);
+            .in('key', ['tariff_per_km', 'tariff_base', 'commission_percent', 'whatsapp_driver_commission']);
+
+          const rows = Array.isArray(settingsData) ? settingsData : [];
           const settingsMap = {};
-          (settingsData || []).forEach(r => { settingsMap[r.key] = parseFloat(r.value) || 0; });
-          const tariffBase = settingsMap.tariff_base || 0;
-          const tariffPerKm = settingsMap.tariff_per_km || 0;
-          const commissionPercent = settingsMap.commission_percent || 10;
-          const totalPrice = Math.round(tariffBase + tariffPerKm * distKm);
+          rows.forEach((r) => {
+            const key = String(r?.key || '').trim().toLowerCase();
+            if (key) settingsMap[key] = parseSettingNumber(r?.value);
+          });
+
+          if (!Number.isFinite(settingsMap.tariff_per_km) || settingsMap.tariff_per_km <= 0) {
+            const { data: perKmRow } = await supabase
+              .from('settings')
+              .select('key, value')
+              .ilike('key', 'tariff_per_km')
+              .limit(1)
+              .maybeSingle();
+            settingsMap.tariff_per_km = parseSettingNumber(perKmRow?.value);
+          }
+
+          const tariffBase = Number.isFinite(settingsMap.tariff_base) ? settingsMap.tariff_base : 0;
+          const tariffPerKm = Number.isFinite(settingsMap.tariff_per_km) && settingsMap.tariff_per_km > 0
+            ? settingsMap.tariff_per_km
+            : DEFAULT_TARIFF_PER_KM;
+          const commissionPercent = Number.isFinite(settingsMap.whatsapp_driver_commission)
+            && settingsMap.whatsapp_driver_commission > 0
+            ? settingsMap.whatsapp_driver_commission
+            : (Number.isFinite(settingsMap.commission_percent) && settingsMap.commission_percent > 0
+              ? settingsMap.commission_percent
+              : 10);
+
+          const providedPrice = Number(extraFields?.price);
+          const totalPrice = Number.isFinite(providedPrice) && providedPrice > 0
+            ? Math.round(providedPrice)
+            : Math.round(tariffBase + tariffPerKm * distKm);
+
           updates.price = totalPrice;
-          updates.commission_amount = Math.round(totalPrice * commissionPercent / 100);
+
+          const providedCommission = Number(extraFields?.commission_amount);
+          updates.commission_amount = Number.isFinite(providedCommission) && providedCommission >= 0
+            ? Math.round(providedCommission)
+            : Math.round(totalPrice * commissionPercent / 100);
         } catch (e) {
           console.warn('Error fetching tariff settings:', e);
+          const providedPrice = Number(extraFields?.price);
+          if (Number.isFinite(providedPrice) && providedPrice > 0) {
+            updates.price = Math.round(providedPrice);
+          }
         }
       }
 
@@ -373,9 +441,17 @@ export const useTrips = () => {
       if (error) throw error;
 
       if (status === TRIP_STATUS.COMPLETED) {
+        if (driver?.id) {
+          try {
+            await supabase.from('drivers').update({ is_available: true }).eq('id', driver.id);
+          } catch (availabilityError) {
+            console.warn('Error setting driver available:', availabilityError);
+          }
+        }
         clearActiveTrip();
         queryClient.invalidateQueries({ queryKey: ['tripHistory'] });
         queryClient.invalidateQueries({ queryKey: ['todayStats'] });
+        queryClient.invalidateQueries({ queryKey: ['commissionBalance'] });
       } else {
         updateActiveTrip(data);
       }
@@ -384,14 +460,15 @@ export const useTrips = () => {
 
       return { success: true, data };
     } catch (error) {
+      const details = String(error?.message || error?.details || '').trim();
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'No se pudo actualizar el estado del viaje',
+        text2: details ? `No se pudo actualizar el viaje: ${details}` : 'No se pudo actualizar el estado del viaje',
       });
       return { success: false, error };
     }
-  }, []);
+  }, [driver?.id]);
 
   return {
     useActiveTrip,

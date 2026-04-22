@@ -237,6 +237,9 @@ const HistoryTripRow = ({ trip, onPress }) => {
         <Text style={{ color: c, fontSize: 15, fontFamily: 'Inter_700Bold' }}>
           {formatPrice(trip.price)}
         </Text>
+        <Text style={{ color: colors.warning, fontSize: 10, fontFamily: 'Inter_600SemiBold', marginTop: 2 }}>
+          Comisión: {formatPrice(trip.commission_amount || 0)}
+        </Text>
         <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
           {formatDistance(trip.distance_km)}
         </Text>

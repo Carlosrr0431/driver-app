@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, Image, Text } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { useAuthStore } from '../stores/authStore';
 import AuthNavigator from './AuthNavigator';
@@ -14,12 +14,35 @@ const AppNavigator = () => {
       <View
         style={{
           flex: 1,
-          backgroundColor: colors.background,
-          justifyContent: 'center',
+          backgroundColor: '#FFFFFF',
           alignItems: 'center',
+          justifyContent: 'center',
         }}
       >
-        <ActivityIndicator size="large" color={colors.primary} />
+        <Image
+          source={require('../../assets/adaptive-icon.png')}
+          style={{ width: 140, height: 140 }}
+          resizeMode="contain"
+        />
+        <View
+          style={{
+            position: 'absolute',
+            bottom: 80,
+            alignItems: 'center',
+          }}
+        >
+          <Text
+            style={{
+              color: '#8E8E93',
+              fontSize: 13,
+              fontFamily: 'Inter_400Regular',
+              letterSpacing: 1.5,
+              textTransform: 'uppercase',
+            }}
+          >
+            Profesional
+          </Text>
+        </View>
       </View>
     );
   }

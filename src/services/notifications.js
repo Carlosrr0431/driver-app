@@ -36,7 +36,7 @@ export const registerForPushNotifications = async (driverId) => {
         name: 'Viajes',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#DC2626',
+        lightColor: '#282e69',
         sound: 'default',
         enableVibrate: true,
         showBadge: true,

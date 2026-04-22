@@ -104,7 +104,6 @@ const AppContent = () => {
 
 export default function App() {
   const [appReady, setAppReady] = useState(false);
-  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     async function prepare() {
@@ -117,7 +116,6 @@ export default function App() {
         });
       } catch (e) {
         console.warn('Error loading fonts:', e);
-        setLoadError(e);
       } finally {
         setAppReady(true);
         try { SplashScreen.hideAsync(); } catch (_) {}
@@ -128,15 +126,6 @@ export default function App() {
 
   if (!appReady) {
     return null;
-  }
-
-  if (loadError) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#0B1120', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-        <Text style={{ color: '#FF4757', fontSize: 18, fontWeight: 'bold', marginBottom: 8 }}>Error de carga</Text>
-        <Text style={{ color: '#A0AEC0', fontSize: 13, textAlign: 'center' }}>{String(loadError)}</Text>
-      </View>
-    );
   }
 
   return (

@@ -38,7 +38,7 @@ const ProfileScreen = () => {
   const [vehicleYear, setVehicleYear] = useState(driver?.vehicle_year?.toString() || '');
   const [vehiclePlate, setVehiclePlate] = useState(driver?.vehicle_plate || '');
   const [vehicleColor, setVehicleColor] = useState(driver?.vehicle_color || '');
-  const [vehicleType, setVehicleType] = useState(driver?.vehicle_type || 'auto');
+  const vehicleType = 'auto';
   const [saving, setSaving] = useState(false);
 
   const licenseExpiry = driver?.license_expiry ? parseISO(driver.license_expiry) : null;
@@ -205,51 +205,6 @@ const ProfileScreen = () => {
           {/* Vehicle data */}
           <Animated.View entering={FadeInDown.delay(240).duration(400)}>
             <SectionCard title="Mi vehículo" icon="car-sport">
-              {/* Vehicle Type Selector */}
-              <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium', marginBottom: 8, marginLeft: 2 }}>
-                Tipo de vehículo
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-                {[
-                  { key: 'auto', label: 'Auto', icon: 'car' },
-                  { key: 'moto', label: 'Moto', icon: 'motorbike' },
-                ].map((opt) => {
-                  const isActive = vehicleType === opt.key;
-                  return (
-                    <TouchableOpacity
-                      key={opt.key}
-                      onPress={() => setVehicleType(opt.key)}
-                      activeOpacity={0.7}
-                      style={{
-                        flex: 1,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                        paddingVertical: 12,
-                        borderRadius: 12,
-                        borderWidth: 1.5,
-                        borderColor: isActive ? colors.primary : colors.border,
-                        backgroundColor: isActive ? `${colors.primary}15` : colors.surfaceLight,
-                      }}
-                    >
-                      <MaterialCommunityIcons
-                        name={opt.icon}
-                        size={22}
-                        color={isActive ? colors.primary : colors.textMuted}
-                      />
-                      <Text style={{
-                        fontSize: 14,
-                        fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_500Medium',
-                        color: isActive ? colors.primary : colors.textMuted,
-                      }}>
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
               <FormInput label="Marca" value={vehicleBrand} onChangeText={setVehicleBrand} icon="car" />
               <FormInput label="Modelo" value={vehicleModel} onChangeText={setVehicleModel} icon="car-side" />
               <View style={{ flexDirection: 'row', gap: 10 }}>

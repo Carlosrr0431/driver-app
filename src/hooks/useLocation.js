@@ -155,7 +155,7 @@ export const useLocation = () => {
         foregroundService: {
           notificationTitle: 'Viaje en curso',
           notificationBody: 'Rastreando tu ubicacion...',
-          notificationColor: '#DC2626',
+          notificationColor: '#282e69',
         },
         showsBackgroundLocationIndicator: true,
       });

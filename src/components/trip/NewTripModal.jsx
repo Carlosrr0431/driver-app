@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, Modal, Linking, Vibration, TouchableOpacity, Pressable, Dimensions, ActivityIndicator } from 'react-native';
+import { View, Text, Modal, Linking, Vibration, TouchableOpacity, Pressable, Dimensions, ActivityIndicator, Alert } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -93,9 +93,33 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     stopSound();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     try {
-      if (onAccept) await onAccept(trip?.id);
-    } finally {
+      if (onAccept) {
+        const result = await onAccept(trip?.id);
+        // If acceptance failed or timed out, reset the button state and show error
+        if (!result?.success) {
+          setIsAccepting(false);
+          if (result?.isTimeout) {
+            Alert.alert(
+              'Tiempo agotado',
+              'La confirmación tardó demasiado. Por favor, intenta de nuevo.',
+              [{ text: 'OK' }]
+            );
+          } else {
+            Alert.alert(
+              'Error al aceptar',
+              result?.error || 'No pudimos confirmar tu aceptación. Por favor, intenta de nuevo.',
+              [{ text: 'Reintentar' }]
+            );
+          }
+        }
+      }
+    } catch (error) {
       setIsAccepting(false);
+      Alert.alert(
+        'Error',
+        'Ocurrió un error al procesar tu aceptación.',
+        [{ text: 'OK' }]
+      );
     }
   };
 

@@ -19,7 +19,7 @@ export const TRIP_STATUS_LABELS = {
 export const TRIP_STATUS_COLORS = {
   pending: '#FFA502',
   accepted: '#1E90FF',
-  going_to_pickup: '#DC2626',
+  going_to_pickup: '#282e69',
   in_progress: '#2ECC71',
   completed: '#27AE60',
   cancelled: '#FF4757',

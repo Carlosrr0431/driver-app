@@ -9,6 +9,39 @@ import { DEFAULT_REGION } from '../../utils/constants';
 const ROUTE_BLUE = '#2563EB';
 const ROUTE_BLUE_SHADOW = 'rgba(37,99,235,0.24)';
 
+function getBearing(from, to) {
+  if (!from || !to) return 0;
+  const lat1 = (from.latitude * Math.PI) / 180;
+  const lat2 = (to.latitude * Math.PI) / 180;
+  const dLng = ((to.longitude - from.longitude) * Math.PI) / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2)
+    - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+function moveCoordinate(point, bearing, distanceMeters) {
+  const R = 6378137;
+  const lat1 = (point.latitude * Math.PI) / 180;
+  const lng1 = (point.longitude * Math.PI) / 180;
+  const brng = (bearing * Math.PI) / 180;
+  const angDist = distanceMeters / R;
+
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angDist)
+    + Math.cos(lat1) * Math.sin(angDist) * Math.cos(brng)
+  );
+  const lng2 = lng1 + Math.atan2(
+    Math.sin(brng) * Math.sin(angDist) * Math.cos(lat1),
+    Math.cos(angDist) - Math.sin(lat1) * Math.sin(lat2)
+  );
+
+  return {
+    latitude: (lat2 * 180) / Math.PI,
+    longitude: (lng2 * 180) / Math.PI,
+  };
+}
+
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#F0F1F5' }] },
   { elementType: 'labels.text.fill', stylers: [{ color: '#5A6478' }] },
@@ -69,17 +102,106 @@ const PointMarker = React.memo(({ coordinate, type, address }) => {
   );
 });
 
+// Smooth an angle in degrees handling 0/360 wraparound.
+// factor: 0 = no change, 1 = snap to target
+function smoothAngle(current, target, factor) {
+  const diff = ((target - current + 540) % 360) - 180;
+  return (current + diff * factor + 360) % 360;
+}
+
+function coordDistMeters(a, b) {
+  const R = 6378137;
+  const dLat = ((b.latitude - a.latitude) * Math.PI) / 180;
+  const dLng = ((b.longitude - a.longitude) * Math.PI) / 180;
+  const lat1 = (a.latitude * Math.PI) / 180;
+  const lat2 = (b.latitude * Math.PI) / 180;
+  const hav = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(hav), Math.sqrt(1 - hav));
+}
+
+/**
+ * Walk `metersAhead` along `coords` starting from the index nearest to `origin`.
+ * Returns the coordinate that lies that far ahead, or the last coord if the route is shorter.
+ * This gives a very stable bearing because it averages many polyline segments.
+ */
+function getPointAheadOnRoute(origin, coords, metersAhead) {
+  if (!origin || coords.length < 2) return null;
+
+  // Find nearest index
+  let nearestIdx = 0;
+  let nearestDist = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < coords.length; i++) {
+    const d = coordDistMeters(origin, coords[i]);
+    if (d < nearestDist) { nearestDist = d; nearestIdx = i; }
+  }
+
+  // Walk forward metersAhead
+  let remaining = metersAhead;
+  for (let i = nearestIdx; i < coords.length - 1; i++) {
+    const segLen = coordDistMeters(coords[i], coords[i + 1]);
+    if (remaining <= segLen) {
+      const frac = remaining / segLen;
+      return {
+        latitude: coords[i].latitude + frac * (coords[i + 1].latitude - coords[i].latitude),
+        longitude: coords[i].longitude + frac * (coords[i + 1].longitude - coords[i].longitude),
+      };
+    }
+    remaining -= segLen;
+  }
+  return coords[coords.length - 1];
+}
+
+function getRouteFocusPoint(origin, coords, distances) {
+  if (!origin || coords.length < 2) return null;
+
+  const points = distances
+    .map((distance) => getPointAheadOnRoute(origin, coords, distance))
+    .filter(Boolean);
+
+  if (points.length === 0) return null;
+
+  const sum = points.reduce((acc, point) => ({
+    latitude: acc.latitude + point.latitude,
+    longitude: acc.longitude + point.longitude,
+  }), { latitude: 0, longitude: 0 });
+
+  return {
+    latitude: sum.latitude / points.length,
+    longitude: sum.longitude / points.length,
+  };
+}
+
+const ZOOM_TIERS = [
+  { minKmh: 65, zoom: 15.7 },
+  { minKmh: 40, zoom: 16.2 },
+  { minKmh: 20, zoom: 16.8 },
+  { minKmh: 0,  zoom: 17.2 },
+];
+
+function getZoomForSpeed(speedKmh) {
+  for (const tier of ZOOM_TIERS) {
+    if (speedKmh >= tier.minKmh) return tier.zoom;
+  }
+  return 17.2;
+}
+
 export const TripMap = React.memo(({
   driverLocation,
   origin,
   destination,
   polyline,
   heading = 0,
+  navigationMode = false,
+  remainingDistanceMeters = null,
   style,
 }) => {
   const mapRef = useRef(null);
   const hasFitted = useRef(false);
   const lastNearestIdxRef = useRef(0);
+  // Heading smoothing & camera throttle refs
+  const smoothHeadingRef = useRef(null);   // last smoothed heading
+  const lastCameraTimeRef = useRef(0);     // timestamp of last animateCamera call
+  const lastZoomTierRef = useRef(null);    // last zoom value used
   const [routeCoords, setRouteCoords] = useState([]);
 
   useEffect(() => {
@@ -93,6 +215,7 @@ export const TripMap = React.memo(({
 
   // Fit map to full route once
   useEffect(() => {
+    if (navigationMode) return;
     if (routeCoords.length > 0 && mapRef.current && !hasFitted.current) {
       hasFitted.current = true;
       const points = [...routeCoords];
@@ -105,6 +228,54 @@ export const TripMap = React.memo(({
       });
     }
   }, [routeCoords]);
+
+  useEffect(() => {
+    if (!navigationMode || !mapRef.current || !driverCoord) return;
+
+    // ── Reposicionamiento rápido para que el encuadre se acomode al instante.
+    const now = Date.now();
+    if (now - lastCameraTimeRef.current < 250) return;
+    lastCameraTimeRef.current = now;
+
+    const speedMps = Number(driverLocation?.speed) > 0 ? Number(driverLocation.speed) : 0;
+    const speedKmh = speedMps * 3.6;
+
+    // ── Zoom dinámico según velocidad
+    let zoom = getZoomForSpeed(speedKmh);
+    if (Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters < 250) {
+      zoom = Math.max(zoom, 17.8);
+    }
+    if (lastZoomTierRef.current !== null && Math.abs(lastZoomTierRef.current - zoom) < 0.15) {
+      zoom = lastZoomTierRef.current;
+    }
+    lastZoomTierRef.current = zoom;
+
+    // ── Cámara estilo navegación: orientada según la ruta azul, no según el GPS.
+    const lookAheadDistances = speedKmh > 60
+      ? [90, 220, 360]
+      : speedKmh > 30
+        ? [70, 170, 280]
+        : [50, 120, 200];
+    const routeFocusPoint = getRouteFocusPoint(driverCoord, remainingRouteCoords, lookAheadDistances);
+    const targetHeading = routeFocusPoint ? getBearing(driverCoord, routeFocusPoint) : driverMarkerHeading;
+    smoothHeadingRef.current = targetHeading;
+    const cameraHeading = targetHeading;
+    const centerAheadMeters = speedKmh > 60 ? 170 : speedKmh > 30 ? 135 : 105;
+    const cameraCenter = moveCoordinate(driverCoord, cameraHeading, centerAheadMeters);
+
+    const nextCamera = {
+      center: cameraCenter,
+      heading: cameraHeading,
+      pitch: 58,
+      zoom,
+    };
+
+    if (typeof mapRef.current.setCamera === 'function') {
+      mapRef.current.setCamera(nextCamera);
+    } else {
+      mapRef.current.animateCamera(nextCamera, { duration: 0 });
+    }
+  }, [navigationMode, driverCoord, driverLocation?.speed, remainingDistanceMeters, remainingRouteCoords, driverMarkerHeading]);
 
   const driverCoord = useMemo(() => {
     if (!driverLocation) return null;
@@ -160,6 +331,15 @@ export const TripMap = React.memo(({
 
   const remainingRouteCoords = useMemo(() => getRemainingRouteCoords(), [getRemainingRouteCoords]);
 
+  const driverMarkerHeading = useMemo(() => {
+    if (!driverCoord) return 0;
+    const aheadPoint = getPointAheadOnRoute(driverCoord, remainingRouteCoords, 55);
+    if (aheadPoint) {
+      return getBearing(driverCoord, aheadPoint);
+    }
+    return Number.isFinite(heading) ? heading : 0;
+  }, [driverCoord, remainingRouteCoords, heading]);
+
   const fitAll = useCallback(() => {
     if (!mapRef.current) return;
     const points = [...routeCoords];
@@ -174,13 +354,29 @@ export const TripMap = React.memo(({
 
   const centerOnDriver = useCallback(() => {
     if (driverCoord && mapRef.current) {
-      mapRef.current.animateToRegion({
-        ...driverCoord,
-        latitudeDelta: 0.006,
-        longitudeDelta: 0.006,
-      }, 400);
+      const routeFocusPoint = navigationMode
+        ? getRouteFocusPoint(driverCoord, remainingRouteCoords, [50, 120, 200])
+        : null;
+      const targetHeading = routeFocusPoint ? getBearing(driverCoord, routeFocusPoint) : driverMarkerHeading;
+      if (navigationMode) {
+        smoothHeadingRef.current = targetHeading;
+      }
+      const cameraCenter = navigationMode
+        ? moveCoordinate(driverCoord, targetHeading, 105)
+        : driverCoord;
+      const nextCamera = {
+        center: cameraCenter,
+        heading: navigationMode ? targetHeading : 0,
+        pitch: navigationMode ? 58 : 0,
+        zoom: navigationMode ? 17.2 : 16.5,
+      };
+      if (typeof mapRef.current.setCamera === 'function') {
+        mapRef.current.setCamera(nextCamera);
+      } else {
+        mapRef.current.animateCamera(nextCamera, { duration: 0 });
+      }
     }
-  }, [driverCoord]);
+  }, [driverCoord, navigationMode, remainingRouteCoords, driverMarkerHeading]);
 
   const initialRegion = driverLocation
     ? { latitude: driverLocation.lat, longitude: driverLocation.lng, latitudeDelta: 0.02, longitudeDelta: 0.02 }
@@ -196,11 +392,13 @@ export const TripMap = React.memo(({
         customMapStyle={MAP_STYLE}
         showsUserLocation={false}
         showsMyLocationButton={false}
-        showsCompass={false}
+        showsCompass={!navigationMode}
         toolbarEnabled={false}
         showsBuildings={false}
-        showsTraffic={false}
+        showsTraffic={navigationMode}
         moveOnMarkerPress={false}
+        rotateEnabled={!navigationMode}
+        pitchEnabled
       >
         {/* Route shadow */}
         {remainingRouteCoords.length > 1 && (
@@ -226,7 +424,7 @@ export const TripMap = React.memo(({
           <PointMarker coordinate={destCoord} type="dest" address={destination?.address} />
         )}
         {driverCoord && (
-          <DriverDot coordinate={driverCoord} heading={heading} />
+          <DriverDot coordinate={driverCoord} heading={driverMarkerHeading} />
         )}
       </MapView>
 
