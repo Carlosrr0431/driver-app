@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, Alert } from 'react-native';
+import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -427,6 +427,8 @@ const ActiveTripScreen = () => {
   const [completedTrip, setCompletedTrip] = useState(null);
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [finishingTrip, setFinishingTrip] = useState(false);
+  const [showCancelledModal, setShowCancelledModal] = useState(false);
+  const [cancelledReason, setCancelledReason] = useState('');
   const [tariffInfo, setTariffInfo] = useState({ base: 0, perKm: 0, commission: 15 });
   const [tariffLoaded, setTariffLoaded] = useState(false);
   const [remainingDistanceMeters, setRemainingDistanceMeters] = useState(null);
@@ -460,16 +462,12 @@ const ActiveTripScreen = () => {
     }
   }, [activeTrip?.id, activeTrip?.status]);
 
-  // When the trip is cancelled by the passenger, alert the driver and navigate back
+  // When the trip is cancelled by the passenger, show custom modal
   useEffect(() => {
     if (activeTrip?.status !== TRIP_STATUS.CANCELLED) return;
-    const reason = activeTrip.cancel_reason || 'El pasajero canceló el viaje.';
-    Alert.alert(
-      'Viaje cancelado',
-      reason,
-      [{ text: 'Entendido', onPress: () => { clearActiveTrip(); navigation.navigate('Home'); } }],
-      { cancelable: false }
-    );
+    setCancelledReason(activeTrip.cancel_reason || 'El pasajero canceló el viaje.');
+    setShowCancelledModal(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
   }, [activeTrip?.status]);
 
   useEffect(() => {
@@ -1119,6 +1117,95 @@ const ActiveTripScreen = () => {
   return (
     <View style={s.root}>
       <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
+
+      {/* ── Passenger cancelled modal ── */}
+      <Modal
+        visible={showCancelledModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+        statusBarTranslucent
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.72)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: 28,
+        }}>
+          <View style={{
+            backgroundColor: colors.surface,
+            borderRadius: 24,
+            paddingVertical: 32,
+            paddingHorizontal: 28,
+            width: '100%',
+            alignItems: 'center',
+            elevation: 24,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.28,
+            shadowRadius: 16,
+          }}>
+            {/* Icon */}
+            <View style={{
+              width: 72,
+              height: 72,
+              borderRadius: 36,
+              backgroundColor: '#FEE2E2',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 20,
+            }}>
+              <MaterialCommunityIcons name="car-off" size={36} color="#EF4444" />
+            </View>
+
+            <Text style={{
+              color: colors.text,
+              fontSize: 20,
+              fontFamily: 'Inter_700Bold',
+              textAlign: 'center',
+              marginBottom: 10,
+            }}>
+              Viaje cancelado
+            </Text>
+
+            <Text style={{
+              color: colors.textMuted,
+              fontSize: 14,
+              fontFamily: 'Inter_400Regular',
+              textAlign: 'center',
+              lineHeight: 20,
+              marginBottom: 28,
+            }}>
+              {cancelledReason}
+            </Text>
+
+            {/* Divider */}
+            <View style={{ width: '100%', height: 1, backgroundColor: colors.border, marginBottom: 20 }} />
+
+            <TouchableOpacity
+              onPress={() => {
+                setShowCancelledModal(false);
+                clearActiveTrip();
+                navigation.navigate('Home');
+              }}
+              activeOpacity={0.82}
+              style={{
+                backgroundColor: colors.primary,
+                borderRadius: 14,
+                paddingVertical: 14,
+                paddingHorizontal: 32,
+                width: '100%',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 15, fontFamily: 'Inter_700Bold' }}>
+                Volver al inicio
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={showFinishModal}
