@@ -155,12 +155,12 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     width: `${progressWidth.value}%`,
   }));
 
+  if (!visible || !trip) return null;
+
   const isUrgent = countdown <= 10;
   const approachOnly = isApproachOnly(trip);
   const pickupAddress = getPickupAddress(trip);
   const cleanNotes = getCleanNotes(trip);
-
-  if (!visible || !trip) return null;
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent>
