@@ -239,22 +239,28 @@ export const useTrips = () => {
 
       const pendingTripSnapshot = useTripStore.getState().pendingTrip;
 
-      // Check commission balance before accepting
+      // Check commission balance before accepting (5 s timeout per query)
+      const commTimeout = createTimeoutController(5000);
       const { data: commTrips } = await supabase
         .from('trips')
         .select('commission_amount, completed_at')
         .eq('driver_id', driver.id)
         .eq('status', TRIP_STATUS.COMPLETED)
         .gt('commission_amount', 0)
-        .order('completed_at', { ascending: true });
+        .order('completed_at', { ascending: true })
+        .abortSignal(commTimeout.signal);
+      commTimeout.cleanup();
 
       let payments = [];
       try {
+        const payTimeout = createTimeoutController(5000);
         const { data: payData } = await supabase
           .from('commission_payments')
           .select('amount, created_at')
           .eq('driver_id', driver.id)
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: false })
+          .abortSignal(payTimeout.signal);
+        payTimeout.cleanup();
         payments = payData || [];
       } catch (_) {}
 

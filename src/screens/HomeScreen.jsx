@@ -7,6 +7,7 @@ import {
   StatusBar,
   StyleSheet,
   Image,
+  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, SlideInRight } from 'react-native-reanimated';
@@ -91,12 +92,45 @@ const HomeScreen = () => {
     return () => { stopWatching(); };
   }, []);
 
+  // Recover any pending trip that arrived while the app was in the background/killed
+  const checkPendingTripFromDB = useCallback(async () => {
+    if (!driver?.id) return;
+    // Only check if there's no pending trip already showing
+    const { pendingTrip: current } = useTripStore.getState();
+    if (current) return;
+    try {
+      const { data } = await supabase
+        .from('trips')
+        .select('*')
+        .eq('driver_id', driver.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data) {
+        useTripStore.getState().setPendingTrip(data);
+      }
+    } catch (_) {}
+  }, [driver?.id]);
+
   useEffect(() => {
     if (driver?.id) {
       subscribeToNewTrips();
       subscribeToMessages();
+      // Check immediately in case a trip arrived while app was in background
+      checkPendingTripFromDB();
     }
-  }, [driver?.id, subscribeToNewTrips, subscribeToMessages]);
+  }, [driver?.id, subscribeToNewTrips, subscribeToMessages, checkPendingTripFromDB]);
+
+  // Re-check every time the app comes back to foreground
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        checkPendingTripFromDB();
+      }
+    });
+    return () => sub.remove();
+  }, [checkPendingTripFromDB]);
 
   useEffect(() => {
     if (currentLocation && mapRef.current) {

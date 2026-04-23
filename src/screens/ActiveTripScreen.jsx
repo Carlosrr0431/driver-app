@@ -11,7 +11,7 @@ import { useTrips } from '../hooks/useTrips';
 import { useLocation } from '../hooks/useLocation';
 import { useLocationStore } from '../stores/locationStore';
 import { TripMap } from '../components/map/TripMap';
-import { TRIP_STATUS, EMERGENCY_PHONE, DISPATCHER_PHONE } from '../utils/constants';
+import { TRIP_STATUS, EMERGENCY_PHONE, DISPATCHER_PHONE, TRACKING_BASE_URL } from '../utils/constants';
 import { formatTimerMMSS, formatPrice, formatDistance, formatDuration } from '../utils/formatters';
 import {
   decodePolyline,
@@ -727,6 +727,20 @@ const ActiveTripScreen = () => {
     setFlowStep(FLOW_STEP.AT_PICKUP);
   }, []);
 
+  // Share real-time tracking link via WhatsApp
+  const handleShareTracking = useCallback(() => {
+    if (!activeTrip?.tracking_token) return;
+    const url = `${TRACKING_BASE_URL}/seguimiento/${activeTrip.tracking_token}`;
+    const firstName = activeTrip.passenger_name
+      ? ` ${activeTrip.passenger_name.split(' ')[0]}`
+      : '';
+    const msg =
+      `Hola${firstName}! Tu chofer está en camino. Seguí el viaje en tiempo real:\n${url}`;
+    Linking.openURL(`whatsapp://send?text=${encodeURIComponent(msg)}`).catch(() =>
+      Linking.openURL(`https://wa.me/?text=${encodeURIComponent(msg)}`),
+    );
+  }, [activeTrip?.tracking_token, activeTrip?.passenger_name]);
+
   // Step 2 -> Step 3 (or skip to Step 4 if destination already set by dashboard or preloaded from notes)
   const handlePassengerAboard = useCallback(async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -1313,6 +1327,17 @@ const ActiveTripScreen = () => {
                 <Text style={s.actionBtnText}>Llegué al punto de encuentro</Text>
               </TouchableOpacity>
 
+              {activeTrip?.tracking_token ? (
+                <TouchableOpacity
+                  style={s.shareWhatsappBtn}
+                  onPress={handleShareTracking}
+                  activeOpacity={0.82}
+                >
+                  <MaterialCommunityIcons name="whatsapp" size={20} color="#25D366" />
+                  <Text style={s.shareWhatsappBtnText}>Compartir seguimiento por WhatsApp</Text>
+                </TouchableOpacity>
+              ) : null}
+
               <View style={s.addressCard}>
                 <View style={s.addressRow}>
                   <View style={[s.addressDot, { backgroundColor: colors.primary }]} />
@@ -1796,6 +1821,23 @@ const s = StyleSheet.create({
   actionBtnText: { color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold' },
   sosBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10 },
   sosBtnText: { color: colors.danger, fontSize: 13, fontFamily: 'Inter_500Medium' },
+  shareWhatsappBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    marginBottom: 12,
+  },
+  shareWhatsappBtnText: {
+    color: '#16A34A',
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+  },
   stepInfoCard: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: colors.background, borderRadius: 14, padding: 16, marginBottom: 14,

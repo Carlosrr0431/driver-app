@@ -53,3 +53,6 @@ export const PAGINATION_LIMIT = 20;
 
 export const EMERGENCY_PHONE = '911';
 export const DISPATCHER_PHONE = '+5491100000000';
+
+// Base URL for the passenger-facing real-time tracking page
+export const TRACKING_BASE_URL = 'https://profesional-dashboard.vercel.app';

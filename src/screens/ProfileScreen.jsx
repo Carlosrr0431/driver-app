@@ -8,8 +8,10 @@ import {
   Alert,
   Image,
   StatusBar,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -24,11 +26,43 @@ import { Badge } from '../components/ui/Badge';
 import { formatDate } from '../utils/formatters';
 import { differenceInDays, parseISO } from 'date-fns';
 import Toast from 'react-native-toast-message';
+import { useOwner } from '../hooks/useOwner';
 
 const ProfileScreen = () => {
   const insets = useSafeAreaInsets();
-  const { driver } = useAuthStore();
+  const navigation = useNavigation();
+  const { driver, updateDriver } = useAuthStore();
   const { logout, updateProfile } = useAuth();
+  const { becomeOwner, useLinkedDrivers } = useOwner();
+  const [becomingOwner, setBecomingOwner] = useState(false);
+
+  const isOwner = driver?.role === 'owner';
+  const { data: linkedDrivers = [] } = useLinkedDrivers();
+
+  const handleBecomeOwner = () => {
+    Alert.alert(
+      'Activar modo propietario',
+      'Al activar el modo propietario podrás crear y gestionar conductores para tu vehículo.\n\nEsta acción no afecta tu actividad como conductor.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Activar',
+          onPress: async () => {
+            try {
+              setBecomingOwner(true);
+              const updated = await becomeOwner();
+              updateDriver({ role: updated.role });
+              Toast.show({ type: 'success', text1: 'Modo propietario activado', text2: 'Ya podés agregar conductores a tu flota.' });
+            } catch (err) {
+              Toast.show({ type: 'error', text1: 'Error', text2: err.message });
+            } finally {
+              setBecomingOwner(false);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const [fullName, setFullName] = useState(driver?.full_name || '');
   const [phone, setPhone] = useState(driver?.phone || '');
@@ -241,8 +275,79 @@ const ProfileScreen = () => {
             </SectionCard>
           </Animated.View>
 
+          {/* Owner section */}
+          <Animated.View entering={FadeInDown.delay(360).duration(400)}>
+            <SectionCard title="Modo propietario" icon="account-key-outline">
+              {isOwner ? (
+                <>
+                  <View style={{
+                    backgroundColor: `${colors.success}12`, borderRadius: 10, padding: 12,
+                    flexDirection: 'row', alignItems: 'center', marginBottom: 12,
+                  }}>
+                    <MaterialCommunityIcons name="check-circle" size={16} color={colors.success} style={{ marginRight: 8 }} />
+                    <Text style={{ flex: 1, color: colors.success, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
+                      Modo propietario activo · {linkedDrivers.length} conductor{linkedDrivers.length !== 1 ? 'es' : ''} vinculado{linkedDrivers.length !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('OwnerDashboard')}
+                    activeOpacity={0.85}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center',
+                      backgroundColor: `${colors.primary}10`, borderRadius: 12,
+                      borderWidth: 1, borderColor: `${colors.primary}25`,
+                      padding: 14,
+                    }}
+                  >
+                    <View style={{
+                      width: 36, height: 36, borderRadius: 10,
+                      backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+                      marginRight: 12,
+                    }}>
+                      <MaterialCommunityIcons name="account-group" size={18} color="#fff" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+                        Gestionar conductores
+                      </Text>
+                      <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 1 }}>
+                        Ver viajes, comisiones y más
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={{ color: colors.textMuted, fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 20, marginBottom: 12 }}>
+                    ¿Tenés conductores que manejan tu auto? Activá el modo propietario para crear sus cuentas, ver sus viajes y comisiones.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={handleBecomeOwner}
+                    disabled={becomingOwner}
+                    activeOpacity={0.85}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                      borderRadius: 12, borderWidth: 1.5, borderColor: colors.primary,
+                      padding: 12, opacity: becomingOwner ? 0.6 : 1,
+                    }}
+                  >
+                    {becomingOwner ? (
+                      <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
+                    ) : (
+                      <MaterialCommunityIcons name="account-key-outline" size={18} color={colors.primary} style={{ marginRight: 8 }} />
+                    )}
+                    <Text style={{ color: colors.primary, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+                      {becomingOwner ? 'Activando...' : 'Activar modo propietario'}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </SectionCard>
+          </Animated.View>
+
           {/* Actions */}
-          <Animated.View entering={FadeInDown.delay(400).duration(400)} style={{ marginTop: 8, gap: 10 }}>
+          <Animated.View entering={FadeInDown.delay(440).duration(400)} style={{ marginTop: 8, gap: 10 }}>
             <TouchableOpacity onPress={handleSave} disabled={saving} activeOpacity={0.85}>
               <LinearGradient
                 colors={colors.gradient.primary}

@@ -58,9 +58,15 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   // Keep ref so handleTimeout closure always has latest trip
   const tripRef = useRef(trip);
   useEffect(() => { tripRef.current = trip; }, [trip]);
+  // Prevents both timer-timeout and manual-accept from firing simultaneously
+  const decidedRef = useRef(false);
+  // Signals that the interval reached 0 so the effect below can fire onReject
+  const timedOutRef = useRef(false);
 
   useEffect(() => {
     if (visible && trip) {
+      decidedRef.current = false;
+      timedOutRef.current = false;
       setCountdown(TRIP_ACCEPT_TIMEOUT);
       setShowRejectSheet(false);
       setIsAccepting(false);
@@ -72,8 +78,9 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
         setCountdown((prev) => {
           if (prev <= 1) {
             clearInterval(countdownRef.current);
-            stopSound();
-            if (onReject) onReject(tripRef.current?.id, 'Tiempo agotado');
+            // Signal timeout — actual onReject call happens in the effect below
+            // to keep the updater pure and avoid concurrent-mode double-invocation
+            timedOutRef.current = true;
             return 0;
           }
           return prev - 1;
@@ -88,6 +95,16 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
       stopSound();
     };
   }, [visible, trip?.id]);
+
+  // Handles the timeout side-effect outside of the setState updater
+  useEffect(() => {
+    if (countdown === 0 && timedOutRef.current && !decidedRef.current) {
+      decidedRef.current = true;
+      timedOutRef.current = false;
+      stopSound();
+      if (onReject) onReject(tripRef.current?.id, 'Tiempo agotado');
+    }
+  }, [countdown]);
 
   const playNotificationSound = async () => {
     try {
@@ -118,7 +135,8 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   };
 
   const handleAccept = async () => {
-    if (isAccepting) return;
+    if (isAccepting || decidedRef.current) return;
+    decidedRef.current = true;
     if (countdownRef.current) clearInterval(countdownRef.current);
     setIsAccepting(true);
     stopSound();

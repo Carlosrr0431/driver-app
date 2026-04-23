@@ -10,6 +10,9 @@ import HistoryScreen from '../screens/HistoryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import ActiveTripScreen from '../screens/ActiveTripScreen';
 import TripDetailScreen from '../screens/TripDetailScreen';
+import OwnerDashboardScreen from '../screens/OwnerDashboardScreen';
+import OwnerDriverDetailScreen from '../screens/OwnerDriverDetailScreen';
+import CreateLinkedDriverScreen from '../screens/CreateLinkedDriverScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -30,6 +33,15 @@ const HistoryStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="HistoryMain" component={HistoryScreen} />
     <Stack.Screen name="TripDetail" component={TripDetailScreen} />
+  </Stack.Navigator>
+);
+
+const ProfileStack = () => (
+  <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Screen name="ProfileMain" component={ProfileScreen} />
+    <Stack.Screen name="OwnerDashboard" component={OwnerDashboardScreen} />
+    <Stack.Screen name="OwnerDriverDetail" component={OwnerDriverDetailScreen} />
+    <Stack.Screen name="CreateLinkedDriver" component={CreateLinkedDriverScreen} />
   </Stack.Navigator>
 );
 
@@ -108,7 +120,7 @@ const MainNavigator = () => {
       />
       <Tab.Screen
         name="Profile"
-        component={ProfileScreen}
+        component={ProfileStack}
         options={{
           tabBarLabel: 'Perfil',
           tabBarIcon: ({ color, focused }) => (
