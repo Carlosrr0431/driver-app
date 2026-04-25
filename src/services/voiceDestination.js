@@ -278,7 +278,7 @@ export async function extractAddress(rawText) {
       Authorization: `Bearer ${requireOpenAIKey()}`,
     },
     body: JSON.stringify({
-      model: 'gpt-5.4-mini',
+      model: 'gpt-4.1-mini',
       messages: [
         {
           role: 'system',
