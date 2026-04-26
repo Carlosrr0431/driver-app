@@ -8,7 +8,6 @@ import {
   StyleSheet,
   Image,
   AppState,
-  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, SlideInRight } from 'react-native-reanimated';
@@ -29,7 +28,7 @@ import { NewTripModal } from '../components/trip/NewTripModal';
 import { VoiceChatModal } from '../components/VoiceChatModal';
 import { useVoiceAutoPlay } from '../hooks/useVoiceAutoPlay';
 import { formatPrice, formatDistance } from '../utils/formatters';
-import { DEFAULT_REGION, TRACKING_BASE_URL } from '../utils/constants';
+import { DEFAULT_REGION } from '../utils/constants';
 import Toast from 'react-native-toast-message';
 import * as Haptics from 'expo-haptics';
 
@@ -547,24 +546,6 @@ const HomeScreen = () => {
         onAccept={async (id) => {
           const result = await acceptTrip(id);
           if (result?.success) {
-            // Share real-time tracking link via WhatsApp to the passenger
-            const trip = result.data;
-            if (trip?.tracking_token && trip?.passenger_phone) {
-              const url = `${TRACKING_BASE_URL}/seguimiento/${trip.tracking_token}`;
-              const firstName = trip.passenger_name
-                ? ` ${trip.passenger_name.split(' ')[0]}`
-                : '';
-              const msg =
-                `Hola${firstName}! Tu chofer est\u00e1 en camino. Segu\u00ed el viaje en tiempo real:\n${url}`;
-              const phone = String(trip.passenger_phone).replace(/\D/g, '');
-              Linking.openURL(
-                `whatsapp://send?phone=${phone}&text=${encodeURIComponent(msg)}`,
-              ).catch(() =>
-                Linking.openURL(
-                  `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`,
-                ),
-              );
-            }
             navigation.navigate('ActiveTrip');
           }
           return result;
