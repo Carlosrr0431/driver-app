@@ -202,17 +202,28 @@ const TripDetailScreen = () => {
           </Animated.View>
 
           {/* Notes */}
-          {trip.notes && (
-            <Animated.View entering={FadeInDown.delay(260).duration(400)}>
-              <View style={{
-                backgroundColor: colors.surface, borderRadius: 16, padding: 16,
-                borderWidth: 1, borderColor: colors.border, marginBottom: 12,
-              }}>
-                <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium', marginBottom: 6 }}>NOTAS</Text>
-                <Text style={{ color: colors.text, fontSize: 13, fontFamily: 'Inter_400Regular' }}>{trip.notes}</Text>
-              </View>
-            </Animated.View>
-          )}
+          {trip.notes && (() => {
+            // Filtrar tags internos del sistema y formatear para el chofer
+            const cleanNotes = trip.notes
+              .replace(/\[APPROACH_ONLY\]/gi, '')
+              .replace(/\[FINAL_DEST_JSON:[^\]]*\]/g, '')
+              .replace(/\[CATASTRAL\]\s*/g, '📍 Catastral: ')
+              .replace(/\[INDICACIONES_PASAJERO\]\s*/g, '💬 Pasajero: ')
+              .replace(/ {2,}/g, ' ')
+              .trim();
+            if (!cleanNotes) return null;
+            return (
+              <Animated.View entering={FadeInDown.delay(260).duration(400)}>
+                <View style={{
+                  backgroundColor: colors.surface, borderRadius: 16, padding: 16,
+                  borderWidth: 1, borderColor: colors.border, marginBottom: 12,
+                }}>
+                  <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium', marginBottom: 6 }}>INDICACIONES</Text>
+                  <Text style={{ color: colors.text, fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 20 }}>{cleanNotes}</Text>
+                </View>
+              </Animated.View>
+            );
+          })()}
 
           {/* Timestamps */}
           <Animated.View entering={FadeInDown.delay(320).duration(400)}>
