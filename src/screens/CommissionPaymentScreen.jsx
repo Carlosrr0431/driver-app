@@ -38,6 +38,24 @@ export default function CommissionPaymentScreen() {
   // Evita procesar el return_url dos veces (onNavigationStateChange dispara en loading y loaded)
   const returnHandled = useRef(false);
 
+  const handlePayperticMessage = (event) => {
+    if (returnHandled.current) return;
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type !== 'paypertic_result') return;
+      returnHandled.current = true;
+      if (data.status === 'approved') {
+        queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
+        setPhase('approved');
+      } else {
+        setPhase('idle');
+        setFormUrl(null);
+      }
+    } catch {
+      // mensaje no válido, ignorar
+    }
+  };
+
   const handleNavigationChange = (navState) => {
     const url = navState.url || '';
     if (!url.startsWith(RETURN_URL_PREFIX)) return;
@@ -114,6 +132,7 @@ export default function CommissionPaymentScreen() {
         <WebView
           source={{ uri: formUrl }}
           onNavigationStateChange={handleNavigationChange}
+          onMessage={handlePayperticMessage}
           javaScriptEnabled
           domStorageEnabled
           thirdPartyCookiesEnabled
