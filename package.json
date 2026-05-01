@@ -6,7 +6,37 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "node -e \"console.error('driver-app solo soporta Android/iOS. Web deshabilitado.'); process.exit(1);\""
+    "web": "node -e \"console.error('driver-app solo soporta Android/iOS. Web deshabilitado.'); process.exit(1);\"",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "setupFiles": [
+      "<rootDir>/jest.setup.js"
+    ],
+    "testMatch": [
+      "**/__tests__/**/*.{js,jsx}",
+      "**/*.{test,spec}.{js,jsx}"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/__tests__/helpers/"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|zustand|nativewind|date-fns))"
+    ],
+    "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/src/$1"
+    },
+    "verbose": true,
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "src/**/*.{js,jsx}",
+      "!src/**/*.test.{js,jsx}",
+      "!**/node_modules/**"
+    ]
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
@@ -47,6 +77,7 @@
     "react-native-screens": "~4.16.0",
     "react-native-skeleton-placeholder": "^5.2.4",
     "react-native-toast-message": "^2.2.1",
+    "react-native-webview": "13.15.0",
     "react-native-worklets": "0.5.1",
     "tailwindcss": "^3.4.0",
     "zustand": "^5.0.0"
@@ -54,6 +85,10 @@
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@resvg/resvg-js": "^2.6.2",
+    "@testing-library/jest-native": "^5.4.3",
+    "@testing-library/react-native": "^13.3.3",
+    "jest": "^30.3.0",
+    "jest-expo": "^55.0.16",
     "sharp": "^0.34.5"
   },
   "private": true
