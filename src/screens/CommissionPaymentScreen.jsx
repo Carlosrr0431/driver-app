@@ -20,6 +20,30 @@ import { useAuthStore } from '../stores/authStore';
 // URL prefix que usa el dashboard como return_url / back_url
 const RETURN_URL_PREFIX = 'https://profesional-dashboard.vercel.app/api/paypertic/return';
 
+// JS inyectado en el WebView: detecta la URL de retorno desde adentro
+// sin depender de eventos de navegación nativos (más confiable en Android)
+const INJECTED_JS = `
+  (function() {
+    var handled = false;
+    var interval = setInterval(function() {
+      try {
+        var href = window.location.href || '';
+        if (!handled && href.indexOf('${RETURN_URL_PREFIX}') === 0) {
+          handled = true;
+          clearInterval(interval);
+          var search = href.indexOf('?') >= 0 ? href.slice(href.indexOf('?') + 1) : '';
+          var params = new URLSearchParams(search);
+          var status = params.get('status') || 'unknown';
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'paypertic_result', status: status }));
+        }
+      } catch(e) {}
+    }, 300);
+    // Limpiar el intervalo después de 10 minutos
+    setTimeout(function() { clearInterval(interval); }, 600000);
+  })();
+  true;
+`;
+
 export default function CommissionPaymentScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -131,12 +155,12 @@ export default function CommissionPaymentScreen() {
         </View>
         <WebView
           source={{ uri: formUrl }}
-          onNavigationStateChange={handleNavigationChange}
+          injectedJavaScript={INJECTED_JS}
           onMessage={handlePayperticMessage}
+          onNavigationStateChange={handleNavigationChange}
           javaScriptEnabled
           domStorageEnabled
           thirdPartyCookiesEnabled
-          setSupportMultipleWindows={false}
           startInLoadingState
           renderLoading={() => (
             <View style={StyleSheet.absoluteFill}>
