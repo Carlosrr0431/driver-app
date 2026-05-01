@@ -63,6 +63,48 @@ export default function CommissionPaymentScreen() {
   // Evita procesar el return_url dos veces (onNavigationStateChange dispara en loading y loaded)
   const returnHandled = useRef(false);
 
+  const resetToIdle = () => {
+    setPhase('idle');
+    setFormUrl(null);
+  };
+
+  const markAsApproved = () => {
+    if (returnHandled.current) return;
+    returnHandled.current = true;
+    queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
+    setPhase('approved');
+  };
+
+  const verifyPaymentByDriverBalance = async (showPendingToast = false) => {
+    if (!driver?.id) return;
+    try {
+      const { data, error } = await supabase
+        .from('drivers')
+        .select('pending_commission')
+        .eq('id', driver.id)
+        .single();
+
+      if (error) return;
+
+      const pending = Number(data?.pending_commission) || 0;
+      if (pending <= 0) {
+        markAsApproved();
+        return;
+      }
+
+      if (showPendingToast) {
+        Toast.show({
+          type: 'info',
+          text1: 'Pago en verificación',
+          text2: 'Todavía estamos esperando la confirmación del banco.',
+          visibilityTime: 3000,
+        });
+      }
+    } catch {
+      // error de red temporal, ignorar y reintentar en el próximo ciclo
+    }
+  };
+
   // Escuchar Supabase Realtime: cuando el webhook registra el pago en commission_payments,
   // la app lo detecta aunque Paypertic no redirija al return_url
   useEffect(() => {
@@ -90,6 +132,19 @@ export default function CommissionPaymentScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
+  }, [phase, driver?.id, queryClient]);
+
+  // Fallback robusto: verificar periódicamente pending_commission.
+  // Si el webhook ya lo dejó en 0, cerramos el WebView sin depender de return_url ni Realtime.
+  useEffect(() => {
+    if (phase !== 'webview' || !driver?.id) return;
+
+    verifyPaymentByDriverBalance(false);
+    const interval = setInterval(() => {
+      verifyPaymentByDriverBalance(false);
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, [phase, driver?.id]);
 
   const handlePayperticMessage = (event) => {
@@ -97,13 +152,11 @@ export default function CommissionPaymentScreen() {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type !== 'paypertic_result') return;
-      returnHandled.current = true;
       if (data.status === 'approved') {
-        queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
-        setPhase('approved');
+        markAsApproved();
       } else {
-        setPhase('idle');
-        setFormUrl(null);
+        returnHandled.current = true;
+        resetToIdle();
       }
     } catch {
       // mensaje no válido, ignorar
@@ -120,15 +173,12 @@ export default function CommissionPaymentScreen() {
       const urlObj = new URL(url);
       const status = urlObj.searchParams.get('status');
       if (status === 'approved') {
-        queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
-        setPhase('approved');
+        markAsApproved();
       } else {
-        setPhase('idle');
-        setFormUrl(null);
+        resetToIdle();
       }
     } catch {
-      setPhase('idle');
-      setFormUrl(null);
+      resetToIdle();
     }
   };
 
@@ -140,7 +190,7 @@ export default function CommissionPaymentScreen() {
       setFormUrl(form_url);
       setPhase('webview');
     } catch (err) {
-      setPhase('idle');
+      resetToIdle();
       Toast.show({ type: 'error', text1: 'Error al iniciar el pago', text2: err.message, visibilityTime: 4000 });
     }
   };
@@ -175,13 +225,20 @@ export default function CommissionPaymentScreen() {
       <View style={{ flex: 1, backgroundColor: colors.background }}>
         <View style={[styles.header(insets), { flexDirection: 'row', alignItems: 'center' }]}>
           <TouchableOpacity
-            onPress={() => { setPhase('idle'); setFormUrl(null); }}
+            onPress={resetToIdle}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{ marginRight: 14 }}
           >
             <MaterialCommunityIcons name="arrow-left" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Pagar {formatPrice(balance)}</Text>
+          <Text style={[styles.headerTitle, { flex: 1 }]}>Pagar {formatPrice(balance)}</Text>
+          <TouchableOpacity
+            onPress={() => verifyPaymentByDriverBalance(true)}
+            style={styles.verifyButton}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.verifyButtonText}>Ya pague</Text>
+          </TouchableOpacity>
         </View>
         <WebView
           source={{ uri: formUrl }}
@@ -200,11 +257,14 @@ export default function CommissionPaymentScreen() {
           )}
           onError={() => {
             Toast.show({ type: 'error', text1: 'Error al cargar el formulario de pago', visibilityTime: 4000 });
-            setPhase('idle');
-            setFormUrl(null);
+            resetToIdle();
           }}
           style={{ flex: 1 }}
         />
+        <View style={styles.verifyingHint}>
+          <ActivityIndicator color={colors.primary} size="small" />
+          <Text style={styles.verifyingHintText}>Verificando pago automaticamente...</Text>
+        </View>
       </View>
     );
   }
@@ -315,5 +375,33 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontFamily: 'Inter_700Bold',
+  },
+  verifyButton: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  verifyButtonText: {
+    color: '#3730A3',
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  verifyingHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  verifyingHintText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
   },
 });
