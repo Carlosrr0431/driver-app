@@ -48,22 +48,6 @@ export default function CommissionPaymentScreen() {
     }
   };
 
-  // El WebView llama a esto en cada navegación
-  const handleNavigationChange = (navState) => {
-    const url = navState.url || '';
-    if (!url.startsWith(RETURN_URL_PREFIX)) return;
-
-    const urlObj = new URL(url);
-    const status = urlObj.searchParams.get('status');
-    if (status === 'approved') {
-      queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
-      setPhase('approved');
-    } else {
-      // back o cualquier otro valor = canceló
-      setPhase('idle');
-      setFormUrl(null);
-    }
-  };
 
   // ── Pantalla aprobado ──────────────────────────────────────────────────────
   if (phase === 'approved') {
@@ -104,7 +88,26 @@ export default function CommissionPaymentScreen() {
         </View>
         <WebView
           source={{ uri: formUrl }}
-          onNavigationStateChange={handleNavigationChange}
+          onShouldStartLoadWithRequest={(request) => {
+            const url = request.url || '';
+            if (!url.startsWith(RETURN_URL_PREFIX)) return true;
+            // Interceptar ANTES de cargar — no mostrar la página HTML del return
+            try {
+              const urlObj = new URL(url);
+              const status = urlObj.searchParams.get('status');
+              if (status === 'approved') {
+                queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
+                setPhase('approved');
+              } else {
+                setPhase('idle');
+                setFormUrl(null);
+              }
+            } catch {
+              setPhase('idle');
+              setFormUrl(null);
+            }
+            return false; // No cargar la URL de retorno en el WebView
+          }}
           startInLoadingState
           renderLoading={() => (
             <View style={StyleSheet.absoluteFill}>
