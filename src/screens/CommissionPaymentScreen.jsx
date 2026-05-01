@@ -14,7 +14,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import { colors } from '../theme/colors';
 import { formatPrice } from '../utils/formatters';
-import { createPaymentSession } from '../services/paypertic';
+import { createPaymentSession, getPaymentStatus } from '../services/paypertic';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../services/supabase';
 
@@ -60,12 +60,14 @@ export default function CommissionPaymentScreen() {
   // Estados: 'idle' | 'loading' | 'webview' | 'approved' | 'rejected'
   const [phase, setPhase] = useState('idle');
   const [formUrl, setFormUrl] = useState(null);
+  const [paymentId, setPaymentId] = useState(null);
   // Evita procesar el return_url dos veces (onNavigationStateChange dispara en loading y loaded)
   const returnHandled = useRef(false);
 
   const resetToIdle = () => {
     setPhase('idle');
     setFormUrl(null);
+    setPaymentId(null);
   };
 
   const markAsApproved = () => {
@@ -73,6 +75,45 @@ export default function CommissionPaymentScreen() {
     returnHandled.current = true;
     queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
     setPhase('approved');
+  };
+
+  const verifyPaymentByProviderStatus = async (showPendingToast = false) => {
+    if (!paymentId || !driver?.id) return false;
+
+    try {
+      const payment = await getPaymentStatus(paymentId);
+      const status = (payment?.status || '').toLowerCase();
+
+      if (status === 'approved') {
+        markAsApproved();
+        return true;
+      }
+
+      if (status === 'rejected' || status === 'cancelled' || status === 'refunded' || status === 'overdue') {
+        returnHandled.current = true;
+        resetToIdle();
+        Toast.show({
+          type: 'error',
+          text1: 'Pago no acreditado',
+          text2: payment?.status_detail || 'La operacion no fue aprobada.',
+          visibilityTime: 4500,
+        });
+        return true;
+      }
+
+      if (showPendingToast) {
+        Toast.show({
+          type: 'info',
+          text1: 'Pago en proceso',
+          text2: `Estado actual: ${status || 'pending'}`,
+          visibilityTime: 3000,
+        });
+      }
+    } catch {
+      // Puede fallar por red momentaneamente, seguimos con fallback local
+    }
+
+    return false;
   };
 
   const verifyPaymentByDriverBalance = async (showPendingToast = false) => {
@@ -120,12 +161,7 @@ export default function CommissionPaymentScreen() {
           table: 'commission_payments',
           filter: `driver_id=eq.${driver.id}`,
         },
-        () => {
-          if (returnHandled.current) return;
-          returnHandled.current = true;
-          queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver.id] });
-          setPhase('approved');
-        },
+        () => markAsApproved(),
       )
       .subscribe();
 
@@ -139,13 +175,20 @@ export default function CommissionPaymentScreen() {
   useEffect(() => {
     if (phase !== 'webview' || !driver?.id) return;
 
-    verifyPaymentByDriverBalance(false);
+    const runVerification = async (showPendingToast = false) => {
+      const statusHandled = await verifyPaymentByProviderStatus(showPendingToast);
+      if (!statusHandled) {
+        await verifyPaymentByDriverBalance(showPendingToast);
+      }
+    };
+
+    runVerification(false);
     const interval = setInterval(() => {
-      verifyPaymentByDriverBalance(false);
+      runVerification(false);
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [phase, driver?.id]);
+  }, [phase, driver?.id, paymentId]);
 
   const handlePayperticMessage = (event) => {
     if (returnHandled.current) return;
@@ -167,7 +210,6 @@ export default function CommissionPaymentScreen() {
     const url = navState.url || '';
     if (!url.startsWith(RETURN_URL_PREFIX)) return;
     if (returnHandled.current) return;
-    returnHandled.current = true;
 
     try {
       const urlObj = new URL(url);
@@ -175,6 +217,7 @@ export default function CommissionPaymentScreen() {
       if (status === 'approved') {
         markAsApproved();
       } else {
+        returnHandled.current = true;
         resetToIdle();
       }
     } catch {
@@ -186,8 +229,9 @@ export default function CommissionPaymentScreen() {
     returnHandled.current = false;
     setPhase('loading');
     try {
-      const { form_url } = await createPaymentSession(balance);
+      const { form_url, payment_id } = await createPaymentSession(balance);
       setFormUrl(form_url);
+      setPaymentId(payment_id || null);
       setPhase('webview');
     } catch (err) {
       resetToIdle();
@@ -233,7 +277,12 @@ export default function CommissionPaymentScreen() {
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { flex: 1 }]}>Pagar {formatPrice(balance)}</Text>
           <TouchableOpacity
-            onPress={() => verifyPaymentByDriverBalance(true)}
+            onPress={async () => {
+              const statusHandled = await verifyPaymentByProviderStatus(true);
+              if (!statusHandled) {
+                await verifyPaymentByDriverBalance(true);
+              }
+            }}
             style={styles.verifyButton}
             activeOpacity={0.85}
           >

@@ -40,3 +40,41 @@ export async function createPaymentSession(amount) {
   return data;
 }
 
+/**
+ * Consulta estado de una sesión de pago en Paypertic.
+ *
+ * @param {string} paymentId
+ * @returns {{ id: string, status: string, status_detail?: string }}
+ */
+export async function getPaymentStatus(paymentId) {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('No hay sesión activa');
+  }
+
+  if (!paymentId) {
+    throw new Error('payment_id inválido');
+  }
+
+  const response = await fetch(
+    `${DASHBOARD_URL}/api/paypertic?payment_id=${encodeURIComponent(paymentId)}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    },
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.error || 'Error al consultar estado del pago');
+  }
+
+  return data;
+}
+
