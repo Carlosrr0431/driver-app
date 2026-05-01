@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { colors } from '../theme/colors';
 import { formatPrice } from '../utils/formatters';
 import { createPaymentSession } from '../services/paypertic';
 import { useAuthStore } from '../stores/authStore';
+import { supabase } from '../services/supabase';
 
 // URL prefix que usa el dashboard como return_url / back_url
 const RETURN_URL_PREFIX = 'https://profesional-dashboard.vercel.app/api/paypertic/return';
@@ -61,6 +62,35 @@ export default function CommissionPaymentScreen() {
   const [formUrl, setFormUrl] = useState(null);
   // Evita procesar el return_url dos veces (onNavigationStateChange dispara en loading y loaded)
   const returnHandled = useRef(false);
+
+  // Escuchar Supabase Realtime: cuando el webhook registra el pago en commission_payments,
+  // la app lo detecta aunque Paypertic no redirija al return_url
+  useEffect(() => {
+    if (phase !== 'webview' || !driver?.id) return;
+
+    const channel = supabase
+      .channel(`commission-payment-${driver.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'commission_payments',
+          filter: `driver_id=eq.${driver.id}`,
+        },
+        () => {
+          if (returnHandled.current) return;
+          returnHandled.current = true;
+          queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver.id] });
+          setPhase('approved');
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [phase, driver?.id]);
 
   const handlePayperticMessage = (event) => {
     if (returnHandled.current) return;
