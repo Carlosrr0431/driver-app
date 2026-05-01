@@ -3,9 +3,7 @@
     "name": "Profesional Conductor",
     "slug": "driver-app",
     "version": "1.0.0",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "updates": {
       "url": "https://u.expo.dev/21599c2c-8f85-4d49-84d7-71202995c3e5"
     },
