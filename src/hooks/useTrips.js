@@ -177,45 +177,27 @@ export const useTrips = () => {
       queryFn: async () => {
         if (!driver?.id) return null;
 
-        // Fetch all completed trips' commission amounts
-        const { data: trips, error: tripsErr } = await supabase
-          .from('trips')
-          .select('commission_amount, completed_at')
-          .eq('driver_id', driver.id)
-          .eq('status', TRIP_STATUS.COMPLETED)
-          .gt('commission_amount', 0)
-          .order('completed_at', { ascending: true });
+        // Leer pending_commission directamente del driver — es la fuente de verdad.
+        // El trigger lo incrementa al completar viajes y el webhook lo resetea a 0 al pagar.
+        const { data: driverData, error: driverErr } = await supabase
+          .from('drivers')
+          .select('pending_commission, last_commission_payment_at')
+          .eq('id', driver.id)
+          .single();
 
-        if (tripsErr) throw tripsErr;
+        if (driverErr) throw driverErr;
 
-        // Fetch all commission payments
-        let payments = [];
-        try {
-          const { data: payData } = await supabase
-            .from('commission_payments')
-            .select('amount, created_at')
-            .eq('driver_id', driver.id)
-            .order('created_at', { ascending: false });
-          payments = payData || [];
-        } catch (_) {}
+        const balance = Math.round((Number(driverData?.pending_commission) || 0) * 100) / 100;
+        const lastPaymentDate = driverData?.last_commission_payment_at
+          ? new Date(driverData.last_commission_payment_at)
+          : null;
 
-        const totalCommission = (trips || []).reduce((s, t) => s + (Number(t.commission_amount) || 0), 0);
-        const totalPaid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-        const balance = Math.round((totalCommission - totalPaid) * 100) / 100;
-
-        // Check if overdue (3 days)
-        const lastPaymentDate = payments.length > 0 ? new Date(payments[0].created_at) : null;
-        const tripsAfterPayment = lastPaymentDate
-          ? (trips || []).filter((t) => new Date(t.completed_at) > lastPaymentDate)
-          : (trips || []);
-        const oldestUnpaid = tripsAfterPayment.length > 0 ? tripsAfterPayment[0] : null;
+        // isOverdue: tiene saldo y el último pago fue hace más de 3 días (o nunca pagó)
         const threeDaysAgo = new Date();
         threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-        const isOverdue = balance > 0 && oldestUnpaid && new Date(oldestUnpaid.completed_at) < threeDaysAgo;
+        const isOverdue = balance > 0 && (!lastPaymentDate || lastPaymentDate < threeDaysAgo);
 
         return {
-          totalCommission,
-          totalPaid,
           balance,
           isOverdue,
           isBlocked: isOverdue,
