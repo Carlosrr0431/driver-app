@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -35,8 +35,33 @@ export default function CommissionPaymentScreen() {
   // Estados: 'idle' | 'loading' | 'webview' | 'approved' | 'rejected'
   const [phase, setPhase] = useState('idle');
   const [formUrl, setFormUrl] = useState(null);
+  // Evita procesar el return_url dos veces (onNavigationStateChange dispara en loading y loaded)
+  const returnHandled = useRef(false);
+
+  const handleNavigationChange = (navState) => {
+    const url = navState.url || '';
+    if (!url.startsWith(RETURN_URL_PREFIX)) return;
+    if (returnHandled.current) return;
+    returnHandled.current = true;
+
+    try {
+      const urlObj = new URL(url);
+      const status = urlObj.searchParams.get('status');
+      if (status === 'approved') {
+        queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
+        setPhase('approved');
+      } else {
+        setPhase('idle');
+        setFormUrl(null);
+      }
+    } catch {
+      setPhase('idle');
+      setFormUrl(null);
+    }
+  };
 
   const handleStart = async () => {
+    returnHandled.current = false;
     setPhase('loading');
     try {
       const { form_url } = await createPaymentSession(balance);
@@ -88,32 +113,22 @@ export default function CommissionPaymentScreen() {
         </View>
         <WebView
           source={{ uri: formUrl }}
-          onShouldStartLoadWithRequest={(request) => {
-            const url = request.url || '';
-            if (!url.startsWith(RETURN_URL_PREFIX)) return true;
-            // Interceptar ANTES de cargar — no mostrar la página HTML del return
-            try {
-              const urlObj = new URL(url);
-              const status = urlObj.searchParams.get('status');
-              if (status === 'approved') {
-                queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
-                setPhase('approved');
-              } else {
-                setPhase('idle');
-                setFormUrl(null);
-              }
-            } catch {
-              setPhase('idle');
-              setFormUrl(null);
-            }
-            return false; // No cargar la URL de retorno en el WebView
-          }}
+          onNavigationStateChange={handleNavigationChange}
+          javaScriptEnabled
+          domStorageEnabled
+          thirdPartyCookiesEnabled
+          setSupportMultipleWindows={false}
           startInLoadingState
           renderLoading={() => (
             <View style={StyleSheet.absoluteFill}>
               <ActivityIndicator style={{ flex: 1 }} color={colors.primary} size="large" />
             </View>
           )}
+          onError={() => {
+            Toast.show({ type: 'error', text1: 'Error al cargar el formulario de pago', visibilityTime: 4000 });
+            setPhase('idle');
+            setFormUrl(null);
+          }}
           style={{ flex: 1 }}
         />
       </View>
