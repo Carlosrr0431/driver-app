@@ -161,6 +161,7 @@ export default function CommissionPaymentScreen() {
           javaScriptEnabled
           domStorageEnabled
           thirdPartyCookiesEnabled
+          setSupportMultipleWindows={false}
           startInLoadingState
           renderLoading={() => (
             <View style={StyleSheet.absoluteFill}>
