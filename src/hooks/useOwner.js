@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import { supabase } from '../services/supabase';
@@ -122,7 +122,7 @@ export const useOwner = () => {
   // ──────────────────────────────────────────────────────────
   const useOwnerTodayStats = () => {
     const { from, to } = getDateRange('today');
-    return useQuery({
+    const query = useQuery({
       queryKey: ['ownerTodayStats', driver?.id],
       queryFn: async () => {
         if (!driver?.id) return { totalEarnings: 0, totalTrips: 0, activeDrivers: 0 };
@@ -156,8 +156,48 @@ export const useOwner = () => {
       },
       enabled: !!driver?.id && driver?.role === 'owner',
       staleTime: 30_000,
-      refetchInterval: 60_000,
     });
+
+    useEffect(() => {
+      if (!driver?.id || driver?.role !== 'owner') return;
+
+      const channel = supabase
+        .channel(`owner-today-stats-realtime:${driver.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'drivers', filter: `owner_id=eq.${driver.id}` },
+          () => {
+            queryClient.invalidateQueries({ queryKey: ['ownerTodayStats', driver.id] });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'trips' },
+          (payload) => {
+            if (payload?.new?.status === 'completed') {
+              queryClient.invalidateQueries({ queryKey: ['ownerTodayStats', driver.id] });
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'trips' },
+          (payload) => {
+            const nextStatus = payload?.new?.status;
+            const prevStatus = payload?.old?.status;
+            if (nextStatus === 'completed' || prevStatus === 'completed') {
+              queryClient.invalidateQueries({ queryKey: ['ownerTodayStats', driver.id] });
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }, [driver?.id, driver?.role, queryClient]);
+
+    return query;
   };
 
   // ──────────────────────────────────────────────────────────

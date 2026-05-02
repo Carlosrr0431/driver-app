@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
+  AppState,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,21 +27,36 @@ const RETURN_URL_PREFIX = 'https://profesional-dashboard.vercel.app/api/payperti
 const INJECTED_JS = `
   (function() {
     var handled = false;
-    var interval = setInterval(function() {
+    var notifyIfReturnUrl = function() {
       try {
         var href = window.location.href || '';
-        if (!handled && href.indexOf('${RETURN_URL_PREFIX}') === 0) {
+        if (handled) return;
+        if (href.indexOf('${RETURN_URL_PREFIX}') === 0) {
           handled = true;
-          clearInterval(interval);
           var search = href.indexOf('?') >= 0 ? href.slice(href.indexOf('?') + 1) : '';
           var params = new URLSearchParams(search);
           var status = params.get('status') || 'unknown';
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'paypertic_result', status: status }));
         }
       } catch(e) {}
-    }, 300);
-    // Limpiar el intervalo después de 10 minutos
-    setTimeout(function() { clearInterval(interval); }, 600000);
+    };
+
+    var originalPush = history.pushState;
+    history.pushState = function() {
+      originalPush.apply(history, arguments);
+      notifyIfReturnUrl();
+    };
+
+    var originalReplace = history.replaceState;
+    history.replaceState = function() {
+      originalReplace.apply(history, arguments);
+      notifyIfReturnUrl();
+    };
+
+    window.addEventListener('popstate', notifyIfReturnUrl);
+    window.addEventListener('hashchange', notifyIfReturnUrl);
+    document.addEventListener('DOMContentLoaded', notifyIfReturnUrl);
+    notifyIfReturnUrl();
   })();
   true;
 `;
@@ -163,6 +179,21 @@ export default function CommissionPaymentScreen() {
         },
         () => markAsApproved(),
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'drivers',
+          filter: `id=eq.${driver.id}`,
+        },
+        (payload) => {
+          const pending = Number(payload?.new?.pending_commission) || 0;
+          if (pending <= 0) {
+            markAsApproved();
+          }
+        },
+      )
       .subscribe();
 
     return () => {
@@ -170,8 +201,7 @@ export default function CommissionPaymentScreen() {
     };
   }, [phase, driver?.id, queryClient]);
 
-  // Fallback robusto: verificar periódicamente pending_commission.
-  // Si el webhook ya lo dejó en 0, cerramos el WebView sin depender de return_url ni Realtime.
+  // Validación puntual al abrir y al volver de background, sin polling.
   useEffect(() => {
     if (phase !== 'webview' || !driver?.id) return;
 
@@ -183,11 +213,16 @@ export default function CommissionPaymentScreen() {
     };
 
     runVerification(false);
-    const interval = setInterval(() => {
-      runVerification(false);
-    }, 3000);
 
-    return () => clearInterval(interval);
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        runVerification(false);
+      }
+    });
+
+    return () => {
+      appStateSub.remove();
+    };
   }, [phase, driver?.id, paymentId]);
 
   const handlePayperticMessage = (event) => {

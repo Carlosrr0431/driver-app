@@ -1,5 +1,5 @@
-import { useCallback } from 'react';
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect } from 'react';
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { useTripStore } from '../stores/tripStore';
@@ -54,7 +54,6 @@ export const useTrips = () => {
   const { driver } = useAuthStore();
   const {
     setActiveTrip,
-    setPendingTrip,
     clearActiveTrip,
     clearPendingTrip,
     updateActiveTrip,
@@ -62,7 +61,7 @@ export const useTrips = () => {
   const queryClient = useQueryClient();
 
   const useActiveTrip = () => {
-    return useQuery({
+    const query = useQuery({
       queryKey: ['activeTrip', driver?.id],
       queryFn: async () => {
         if (!driver?.id) return null;
@@ -88,8 +87,52 @@ export const useTrips = () => {
         return data;
       },
       enabled: !!driver?.id,
-      refetchInterval: 30000,
     });
+
+    useEffect(() => {
+      if (!driver?.id) return;
+
+      const channel = supabase
+        .channel(`active-trip-realtime:${driver.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'trips', filter: `driver_id=eq.${driver.id}` },
+          (payload) => {
+            const trip = payload?.new;
+            if (trip) {
+              const currentActiveTrip = useTripStore.getState().activeTrip;
+
+              if (
+                trip.status === TRIP_STATUS.ACCEPTED
+                || trip.status === TRIP_STATUS.GOING_TO_PICKUP
+                || trip.status === TRIP_STATUS.IN_PROGRESS
+              ) {
+                const enriched = enrichApproachTrip(
+                  trip,
+                  currentActiveTrip?.id === trip.id ? currentActiveTrip : null
+                );
+                setActiveTrip(enriched);
+              }
+
+              if (
+                (trip.status === TRIP_STATUS.COMPLETED || trip.status === TRIP_STATUS.CANCELLED)
+                && currentActiveTrip?.id === trip.id
+              ) {
+                clearActiveTrip();
+              }
+            }
+
+            queryClient.invalidateQueries({ queryKey: ['activeTrip', driver.id] });
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }, [driver?.id, queryClient]);
+
+    return query;
   };
 
   const useTripHistory = (filter = 'today') => {
@@ -135,7 +178,7 @@ export const useTrips = () => {
   };
 
   const useTodayStats = () => {
-    return useQuery({
+    const query = useQuery({
       queryKey: ['todayStats', driver?.id],
       queryFn: async () => {
         if (!driver?.id) return null;
@@ -167,12 +210,32 @@ export const useTrips = () => {
         };
       },
       enabled: !!driver?.id,
-      refetchInterval: 60000,
     });
+
+    useEffect(() => {
+      if (!driver?.id) return;
+
+      const channel = supabase
+        .channel(`today-stats-realtime:${driver.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'trips', filter: `driver_id=eq.${driver.id}` },
+          () => {
+            queryClient.invalidateQueries({ queryKey: ['todayStats', driver.id] });
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }, [driver?.id, queryClient]);
+
+    return query;
   };
 
   const useCommissionBalance = () => {
-    return useQuery({
+    const query = useQuery({
       queryKey: ['commissionBalance', driver?.id],
       queryFn: async () => {
         if (!driver?.id) return null;
@@ -204,8 +267,35 @@ export const useTrips = () => {
         };
       },
       enabled: !!driver?.id,
-      refetchInterval: 60000,
     });
+
+    useEffect(() => {
+      if (!driver?.id) return;
+
+      const channel = supabase
+        .channel(`commission-balance-realtime:${driver.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'drivers', filter: `id=eq.${driver.id}` },
+          () => {
+            queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver.id] });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'commission_payments', filter: `driver_id=eq.${driver.id}` },
+          () => {
+            queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver.id] });
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }, [driver?.id, queryClient]);
+
+    return query;
   };
 
   const acceptTrip = useCallback(async (tripId) => {
