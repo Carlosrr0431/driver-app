@@ -13,6 +13,7 @@ import TripDetailScreen from '../screens/TripDetailScreen';
 import OwnerDashboardScreen from '../screens/OwnerDashboardScreen';
 import OwnerDriverDetailScreen from '../screens/OwnerDriverDetailScreen';
 import CreateLinkedDriverScreen from '../screens/CreateLinkedDriverScreen';
+import CommissionPaymentScreen from '../screens/CommissionPaymentScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -26,6 +27,7 @@ const HomeStack = () => (
       options={{ gestureEnabled: false }}
     />
     <Stack.Screen name="TripDetail" component={TripDetailScreen} />
+    <Stack.Screen name="CommissionPayment" component={CommissionPaymentScreen} />
   </Stack.Navigator>
 );
 

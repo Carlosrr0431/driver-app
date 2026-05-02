@@ -11,6 +11,7 @@ export const useRealtime = () => {
   const { setPendingTrip, updateActiveTrip, clearActiveTrip } = useTripStore();
   const tripChannelRef = useRef(null);
   const messageChannelRef = useRef(null);
+  const commissionChannelRef = useRef(null);
 
   const subscribeToNewTrips = useCallback((onNewTrip) => {
     if (!driver?.id) {
@@ -128,6 +129,32 @@ export const useRealtime = () => {
     messageChannelRef.current = channel;
   }, [driver?.id]);
 
+  const subscribeToCommissionPayments = useCallback((onPayment) => {
+    if (!driver?.id) return;
+
+    if (commissionChannelRef.current) {
+      supabase.removeChannel(commissionChannelRef.current);
+    }
+
+    const channel = supabase
+      .channel(`commission_payments:driver:${driver.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'commission_payments',
+          filter: `driver_id=eq.${driver.id}`,
+        },
+        (payload) => {
+          if (onPayment) onPayment(payload.new);
+        }
+      )
+      .subscribe();
+
+    commissionChannelRef.current = channel;
+  }, [driver?.id]);
+
   const unsubscribeAll = useCallback(() => {
     if (tripChannelRef.current) {
       supabase.removeChannel(tripChannelRef.current);
@@ -136,6 +163,10 @@ export const useRealtime = () => {
     if (messageChannelRef.current) {
       supabase.removeChannel(messageChannelRef.current);
       messageChannelRef.current = null;
+    }
+    if (commissionChannelRef.current) {
+      supabase.removeChannel(commissionChannelRef.current);
+      commissionChannelRef.current = null;
     }
   }, []);
 
@@ -146,6 +177,7 @@ export const useRealtime = () => {
   return {
     subscribeToNewTrips,
     subscribeToMessages,
+    subscribeToCommissionPayments,
     unsubscribeAll,
   };
 };

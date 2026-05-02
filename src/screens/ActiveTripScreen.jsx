@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -7,6 +7,7 @@ import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../theme/colors';
 import { useTripStore } from '../stores/tripStore';
+import { useAuthStore } from '../stores/authStore';
 import { useTrips } from '../hooks/useTrips';
 import { useLocation } from '../hooks/useLocation';
 import { useLocationStore } from '../stores/locationStore';
@@ -14,6 +15,7 @@ import { TripMap } from '../components/map/TripMap';
 import { TRIP_STATUS, EMERGENCY_PHONE, DISPATCHER_PHONE, TRACKING_BASE_URL } from '../utils/constants';
 import { formatTimerMMSS, formatPrice, formatDistance, formatDuration } from '../utils/formatters';
 import {
+  autocompleteAddressSalta,
   decodePolyline,
   getCurrentNavigationStep,
   getDirections,
@@ -21,11 +23,11 @@ import {
   getPlaceDetails,
   getRouteRemainingMeters,
 } from '../services/googleMaps';
-import { startDestinationRecording, stopDestinationRecording, voiceToDestination } from '../services/voiceDestination';
 import { supabase } from '../services/supabase';
 import Toast from 'react-native-toast-message';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const NOTIFY_PASSENGER_URL = `${TRACKING_BASE_URL}/api/driver/notify-passenger`;
 
 // Local flow steps (independent from DB status)
 // STEP 1: going_to_pickup  -> En camino al pasajero
@@ -37,6 +39,7 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const FLOW_STEP = {
   GOING_TO_PICKUP: 'going_to_pickup',
   AT_PICKUP: 'at_pickup',
+  CHOOSE_DEST_MODE: 'choose_dest_mode',
   SET_DESTINATION: 'set_destination',
   IN_PROGRESS: 'in_progress',
 };
@@ -414,6 +417,7 @@ const ActiveTripScreen = () => {
   const lastRerouteAtRef = useRef(0);
 
   const { activeTrip, tripTimer, tripDistanceKm, setTripTimer, addTripDistance, clearActiveTrip } = useTripStore();
+  const session = useAuthStore((s) => s.session);
   const { updateTripStatus } = useTrips();
   const { startTracking, stopTracking } = useLocation();
   const currentLocation = useLocationStore((s) => s.currentLocation);
@@ -438,15 +442,12 @@ const ActiveTripScreen = () => {
   // Local flow step
   const [flowStep, setFlowStep] = useState(FLOW_STEP.GOING_TO_PICKUP);
 
-  // Voice destination state
-  const [voiceRecording, setVoiceRecording] = useState(false);
-  const [voiceProcessing, setVoiceProcessing] = useState(false);
-  const [voiceRecordingTime, setVoiceRecordingTime] = useState(0);
+  // Destination state
   const [destinationSet, setDestinationSet] = useState(false);
   const [destinationOptions, setDestinationOptions] = useState([]);
-  const [voiceTranscription, setVoiceTranscription] = useState('');
-  const voiceRecordingRef = useRef(null);
-  const voiceTimerRef = useRef(null);
+  const [isFreeRide, setIsFreeRide] = useState(false);
+  const [textDestInput, setTextDestInput] = useState('');
+  const [textDestProcessing, setTextDestProcessing] = useState(false);
 
   const snapPoints = useMemo(() => ['18%', '68%'], []);
 
@@ -808,73 +809,47 @@ const ActiveTripScreen = () => {
       }
     }
 
-    // If the dashboard already set a destination, skip voice step
+    // If the dashboard already set a destination, skip to in progress
     if (!isApproachOnlyTrip && activeTrip?.destination_lat && activeTrip?.destination_lng) {
       setDestinationSet(true);
       setFlowStep(FLOW_STEP.IN_PROGRESS);
       updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS);
     } else {
-      setFlowStep(FLOW_STEP.SET_DESTINATION);
+      setFlowStep(FLOW_STEP.CHOOSE_DEST_MODE);
     }
   }, [activeTrip, currentLocation]);
 
-  // Step 3: Voice recording
-  const handleStartVoiceRecording = useCallback(async () => {
+  // Step 3: Text destination search
+  const handleTextDestSearch = useCallback(async () => {
+    if (!textDestInput.trim()) return;
+    Keyboard.dismiss();
+    setTextDestProcessing(true);
+    setDestinationOptions([]);
     try {
-      const rec = await startDestinationRecording();
-      voiceRecordingRef.current = rec;
-      setVoiceRecording(true);
-      setVoiceRecordingTime(0);
-      voiceTimerRef.current = setInterval(() => setVoiceRecordingTime((t) => t + 1), 1000);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch (err) {
-      Toast.show({ type: 'error', text1: 'Error', text2: err.message });
-    }
-  }, []);
-
-  const handleCancelVoiceRecording = useCallback(async () => {
-    if (voiceRecordingRef.current) {
-      try { await voiceRecordingRef.current.stopAndUnloadAsync(); } catch {}
-      voiceRecordingRef.current = null;
-    }
-    setVoiceRecording(false);
-    clearInterval(voiceTimerRef.current);
-    setVoiceRecordingTime(0);
-  }, []);
-
-  const handleSendVoiceDestination = useCallback(async () => {
-    if (!voiceRecordingRef.current || !activeTrip) return;
-
-    clearInterval(voiceTimerRef.current);
-    setVoiceRecording(false);
-    setVoiceProcessing(true);
-
-    try {
-      const uri = await stopDestinationRecording(voiceRecordingRef.current);
-      voiceRecordingRef.current = null;
-
-      Toast.show({ type: 'info', text1: 'Procesando...', text2: 'Buscando destino', visibilityTime: 2000 });
-
-      const result = await voiceToDestination(uri);
-      setVoiceTranscription(result.transcription);
-
-      if (result.candidates.length === 1) {
-        // Only one result → auto-select
-        await selectDestination(result.candidates[0]);
+      const results = await autocompleteAddressSalta(textDestInput.trim(), 5);
+      if (results.length === 0) {
+        Toast.show({ type: 'error', text1: 'Sin resultados', text2: 'Probá con otra dirección', visibilityTime: 3000 });
+      } else if (results.length === 1) {
+        await selectDestination(results[0]);
       } else {
-        // Multiple results → show picker
-        setDestinationOptions(result.candidates);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        setDestinationOptions(results);
       }
     } catch (err) {
-      console.error('Voice destination error:', err);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Toast.show({ type: 'error', text1: 'Error', text2: err.message || 'No se pudo procesar el destino', visibilityTime: 4000 });
+      Toast.show({ type: 'error', text1: 'Error', text2: 'No se pudo buscar la dirección', visibilityTime: 3000 });
     } finally {
-      setVoiceProcessing(false);
-      setVoiceRecordingTime(0);
+      setTextDestProcessing(false);
     }
-  }, [activeTrip, currentLocation]);
+  }, [textDestInput, selectDestination]);
+
+  // Free ride: start without a preset destination, calculate fare by GPS km
+  const handleChooseFreeRide = useCallback(async () => {
+    if (!activeTrip) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setIsFreeRide(true);
+    setDestinationSet(true);
+    setFlowStep(FLOW_STEP.IN_PROGRESS);
+    await updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS);
+  }, [activeTrip, updateTripStatus]);
 
   // Select a destination from the options
   const selectDestination = useCallback(async (option) => {
@@ -955,6 +930,29 @@ const ActiveTripScreen = () => {
         if (timerRef.current) clearInterval(timerRef.current);
         setCompletedTrip(result.data);
         setShowSummary(true);
+
+        // Enviar resumen de tarifa por WhatsApp al pasajero vía WaSender
+        const passengerPhone = String(activeTrip.passenger_phone || '').replace(/\D/g, '');
+        const jwt = session?.access_token || '';
+        if (passengerPhone && jwt) {
+          const passengerFirst = activeTrip.passenger_name
+            ? ` ${activeTrip.passenger_name.split(' ')[0]}`
+            : '';
+          const waMsg =
+            `¡Hola${passengerFirst}! Gracias por viajar con nosotros 🚗\n\n` +
+            `*Resumen de tu viaje:*\n` +
+            `📍 Distancia: *${formatDistance(distanceKm)}*\n` +
+            `💰 Total a abonar: *${formatPrice(totalPrice)}*\n\n` +
+            `¡Que tengas un excelente día!`;
+          fetch(NOTIFY_PASSENGER_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${jwt}`,
+            },
+            body: JSON.stringify({ phone: passengerPhone, message: waMsg }),
+          }).catch((err) => console.warn('Error enviando WhatsApp al pasajero:', err));
+        }
       }
     } finally {
       setFinishingTrip(false);
@@ -976,6 +974,7 @@ const ActiveTripScreen = () => {
     switch (flowStep) {
       case FLOW_STEP.GOING_TO_PICKUP: return { text: 'En camino al pasajero', color: colors.primary, step: 1 };
       case FLOW_STEP.AT_PICKUP: return { text: 'Confirmá pasajero a bordo', color: colors.warning, step: 2 };
+      case FLOW_STEP.CHOOSE_DEST_MODE: return { text: 'Elegí el modo de destino', color: colors.info, step: 2 };
       case FLOW_STEP.SET_DESTINATION: return { text: 'Indicá el destino', color: colors.info, step: 3 };
       case FLOW_STEP.IN_PROGRESS: return { text: 'Viaje en curso', color: colors.success, step: 4 };
       default: return { text: 'Viaje activo', color: colors.primary, step: 0 };
@@ -1120,7 +1119,7 @@ const ActiveTripScreen = () => {
 
   // Map destination target based on step
   const mapOrigin = (useTripOriginRoute && hasTripOrigin) ? tripOriginPoint : pickupPoint;
-  const mapDestination = (flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.AT_PICKUP)
+  const mapDestination = (flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.AT_PICKUP || flowStep === FLOW_STEP.CHOOSE_DEST_MODE)
     ? pickupPoint
     : {
       lat: parseFloat(activeTrip.destination_lat),
@@ -1387,24 +1386,81 @@ const ActiveTripScreen = () => {
             </>
           )}
 
-          {/* STEP 3: Set destination by voice */}
+          {/* STEP CHOOSE_DEST_MODE: Elegir cómo ingresar el destino */}
+          {flowStep === FLOW_STEP.CHOOSE_DEST_MODE && (
+            <>
+              <Text style={s.chooseModeTitle}>¿Cómo ingresás el destino?</Text>
+
+              <TouchableOpacity
+                style={[s.chooseModeBtn, { borderColor: colors.primary }]}
+                onPress={() => setFlowStep(FLOW_STEP.SET_DESTINATION)}
+                activeOpacity={0.85}
+              >
+                <View style={[s.chooseModeBtnIcon, { backgroundColor: `${colors.primary}15` }]}>
+                  <MaterialCommunityIcons name="map-search" size={24} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={[s.chooseModeBtnTitle, { color: colors.primary }]}>Ingresar destino por texto</Text>
+                  <Text style={s.chooseModeBtnSubtitle}>Escribí la dirección y seleccioná</Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={colors.primary} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[s.chooseModeBtn, { borderColor: colors.warning }]}
+                onPress={handleChooseFreeRide}
+                activeOpacity={0.85}
+              >
+                <View style={[s.chooseModeBtnIcon, { backgroundColor: `${colors.warning}15` }]}>
+                  <MaterialCommunityIcons name="car-cruise-control" size={24} color={colors.warning} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={[s.chooseModeBtnTitle, { color: colors.warning }]}>Ir sin destino</Text>
+                  <Text style={s.chooseModeBtnSubtitle}>La tarifa se calcula por km recorridos</Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={colors.warning} />
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* STEP 3: Set destination by text */}
           {flowStep === FLOW_STEP.SET_DESTINATION && (
             <>
               {!destinationSet ? (
                 <>
-                  <View style={s.voiceDestSection}>
-                    {destinationOptions.length > 0 ? (
-                      <View>
-                        {voiceTranscription ? (
-                          <View style={s.transcriptionCard}>
-                            <MaterialCommunityIcons name="ear-hearing" size={14} color={colors.textMuted} />
-                            <Text style={s.transcriptionText}>Escuché: "{voiceTranscription}"</Text>
-                          </View>
-                        ) : null}
+                  <View style={s.textDestSection}>
+                    <View style={s.textDestInputRow}>
+                      <TextInput
+                        style={s.textDestInput}
+                        value={textDestInput}
+                        onChangeText={setTextDestInput}
+                        placeholder="Ej: Belgrano 500, Salta"
+                        placeholderTextColor={colors.textMuted}
+                        returnKeyType="search"
+                        onSubmitEditing={handleTextDestSearch}
+                        editable={!textDestProcessing}
+                        autoFocus
+                      />
+                      <TouchableOpacity
+                        style={[s.textDestSearchBtn, (!textDestInput.trim() || textDestProcessing) && { opacity: 0.5 }]}
+                        onPress={handleTextDestSearch}
+                        disabled={textDestProcessing || !textDestInput.trim()}
+                        activeOpacity={0.8}
+                      >
+                        {textDestProcessing ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <MaterialCommunityIcons name="magnify" size={22} color="#fff" />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+
+                    {destinationOptions.length > 0 && (
+                      <>
                         <Text style={s.optionsTitle}>Seleccioná el destino correcto:</Text>
                         {destinationOptions.map((opt, idx) => (
                           <TouchableOpacity
-                            key={opt.placeId || `${opt.lat}-${opt.lng}-${idx}`}
+                            key={opt.placeId || `opt-${idx}`}
                             style={s.optionCard}
                             onPress={() => selectDestination(opt)}
                             activeOpacity={0.7}
@@ -1416,52 +1472,18 @@ const ActiveTripScreen = () => {
                             <MaterialCommunityIcons name="chevron-right" size={20} color={colors.textMuted} />
                           </TouchableOpacity>
                         ))}
-                        <TouchableOpacity
-                          style={s.reRecordBtn}
-                          onPress={() => { setDestinationOptions([]); setVoiceTranscription(''); }}
-                          activeOpacity={0.7}
-                        >
-                          <MaterialCommunityIcons name="microphone" size={14} color={colors.textMuted} />
-                          <Text style={s.reRecordText}>Grabar de nuevo</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : voiceProcessing ? (
-                      <View style={s.voiceProcessingCard}>
-                        <ActivityIndicator size="small" color={colors.primary} />
-                        <Text style={s.voiceProcessingText}>Buscando destino...</Text>
-                      </View>
-                    ) : voiceRecording ? (
-                      <View style={s.voiceRecordingCard}>
-                        <View style={s.voiceRecDotWrap}>
-                          <View style={s.voiceRecDot} />
-                        </View>
-                        <Text style={s.voiceRecTime}>
-                          {Math.floor(voiceRecordingTime / 60)}:{(voiceRecordingTime % 60).toString().padStart(2, '0')}
-                        </Text>
-                        <Text style={s.voiceRecLabel}>Decí el destino...</Text>
-                        <View style={{ flex: 1 }} />
-                        <TouchableOpacity style={s.voiceCancelBtn} onPress={handleCancelVoiceRecording}>
-                          <MaterialCommunityIcons name="close" size={18} color={colors.danger} />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={s.voiceSendBtn} onPress={handleSendVoiceDestination}>
-                          <MaterialCommunityIcons name="send" size={18} color="#fff" />
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <TouchableOpacity style={s.voiceDestBtn} onPress={handleStartVoiceRecording} activeOpacity={0.85}>
-                        <MaterialCommunityIcons name="microphone" size={24} color={colors.primary} />
-                        <Text style={s.voiceDestBtnText}>Grabar destino por voz</Text>
-                      </TouchableOpacity>
+                      </>
                     )}
                   </View>
 
-                  <View style={s.stepInfoCard}>
-                    <MaterialCommunityIcons name="microphone" size={28} color={colors.info} />
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={s.stepInfoTitle}>¿A dónde van?</Text>
-                      <Text style={s.stepInfoSubtitle}>Grabá un audio diciendo la dirección de destino</Text>
-                    </View>
-                  </View>
+                  <TouchableOpacity
+                    style={s.backToChooseBtn}
+                    onPress={() => { setDestinationOptions([]); setTextDestInput(''); setFlowStep(FLOW_STEP.CHOOSE_DEST_MODE); }}
+                    activeOpacity={0.7}
+                  >
+                    <MaterialCommunityIcons name="arrow-left" size={14} color={colors.textMuted} />
+                    <Text style={s.reRecordText}>Volver</Text>
+                  </TouchableOpacity>
                 </>
               ) : (
                 <>
@@ -1474,7 +1496,6 @@ const ActiveTripScreen = () => {
                     <Text style={s.actionBtnText}>Empezar viaje</Text>
                   </TouchableOpacity>
 
-                  {/* Destination confirmed - show address and start button */}
                   <View style={s.addressCard}>
                     <View style={s.addressRow}>
                       <View style={[s.addressDot, { backgroundColor: colors.success }]} />
@@ -1495,7 +1516,7 @@ const ActiveTripScreen = () => {
                   <View style={s.livePriceCard}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                       <View>
-                        <Text style={s.livePriceLabel}>Costo total</Text>
+                        <Text style={s.livePriceLabel}>Costo estimado</Text>
                         <Text style={s.livePriceSubLabel}>
                           {Number.isFinite(routeDistanceKm)
                             ? `${formatDistance(routeDistanceKm)} x ${formatPrice(effectiveTariffPerKm)}/km`
@@ -1508,13 +1529,12 @@ const ActiveTripScreen = () => {
                     </View>
                   </View>
 
-                  {/* Allow re-recording */}
                   <TouchableOpacity
                     style={s.reRecordBtn}
-                    onPress={() => { setDestinationSet(false); setDestinationOptions([]); setVoiceTranscription(''); }}
+                    onPress={() => { setDestinationSet(false); setDestinationOptions([]); setTextDestInput(''); }}
                     activeOpacity={0.7}
                   >
-                    <MaterialCommunityIcons name="microphone" size={14} color={colors.textMuted} />
+                    <MaterialCommunityIcons name="pencil" size={14} color={colors.textMuted} />
                     <Text style={s.reRecordText}>Cambiar destino</Text>
                   </TouchableOpacity>
                 </>
@@ -1925,6 +1945,46 @@ const s = StyleSheet.create({
     paddingVertical: 8,
   },
   reRecordText: { color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_500Medium' },
+  // Choose destination mode
+  chooseModeTitle: {
+    color: colors.text, fontSize: 15, fontFamily: 'Inter_700Bold',
+    marginBottom: 14, textAlign: 'center',
+  },
+  chooseModeBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    borderRadius: 16, borderWidth: 1.5, padding: 16, marginBottom: 12,
+    backgroundColor: colors.background,
+  },
+  chooseModeBtnIcon: {
+    width: 48, height: 48, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  chooseModeBtnTitle: { fontSize: 15, fontFamily: 'Inter_700Bold' },
+  chooseModeBtnSubtitle: { color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  // Text destination
+  textDestSection: { marginBottom: 10 },
+  textDestInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  textDestInput: {
+    flex: 1,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    color: colors.text,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+  },
+  textDestSearchBtn: {
+    width: 46, height: 46, borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  backToChooseBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 8,
+  },
   voiceDestSection: { marginBottom: 10 },
   voiceDestBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

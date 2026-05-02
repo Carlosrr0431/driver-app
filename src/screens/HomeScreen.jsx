@@ -22,6 +22,7 @@ import { useTripStore } from '../stores/tripStore';
 import { useLocationStore } from '../stores/locationStore';
 import { useTrips } from '../hooks/useTrips';
 import { useRealtime } from '../hooks/useRealtime';
+import { useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '../hooks/useLocation';
 import { supabase } from '../services/supabase';
 import { NewTripModal } from '../components/trip/NewTripModal';
@@ -65,7 +66,8 @@ const HomeScreen = () => {
   const { pendingTrip, showNewTripModal, activeTrip } = useTripStore();
   const currentLocation = useLocationStore((s) => s.currentLocation);
   const { useTodayStats, useActiveTrip, useCommissionBalance, acceptTrip, rejectTrip, useTripHistory } = useTrips();
-  const { subscribeToNewTrips, subscribeToMessages } = useRealtime();
+  const { subscribeToNewTrips, subscribeToMessages, subscribeToCommissionPayments } = useRealtime();
+  const queryClient = useQueryClient();
   const { requestPermissions, getCurrentPosition, startWatching, stopWatching } = useLocation();
   const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
@@ -117,10 +119,13 @@ const HomeScreen = () => {
     if (driver?.id) {
       subscribeToNewTrips();
       subscribeToMessages();
+      subscribeToCommissionPayments(() => {
+        queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver.id] });
+      });
       // Check immediately in case a trip arrived while app was in background
       checkPendingTripFromDB();
     }
-  }, [driver?.id, subscribeToNewTrips, subscribeToMessages, checkPendingTripFromDB]);
+  }, [driver?.id, subscribeToNewTrips, subscribeToMessages, subscribeToCommissionPayments, checkPendingTripFromDB]);
 
   // Re-check every time the app comes back to foreground
   useEffect(() => {
@@ -461,6 +466,21 @@ const HomeScreen = () => {
                     {formatPrice(commissionData.balance)}
                   </Text>
                 </View>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('CommissionPayment', { commissionData })}
+                  activeOpacity={0.85}
+                  style={{
+                    marginTop: 10,
+                    backgroundColor: commissionData.isOverdue ? '#282e69' : '#D97706',
+                    borderRadius: 10, paddingVertical: 9,
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}
+                >
+                  <MaterialCommunityIcons name="credit-card-outline" size={15} color="#FFFFFF" />
+                  <Text style={{ color: '#FFFFFF', fontSize: 13, fontFamily: 'Inter_700Bold' }}>
+                    Pagar comisión
+                  </Text>
+                </TouchableOpacity>
               </View>
             </Animated.View>
           )}
