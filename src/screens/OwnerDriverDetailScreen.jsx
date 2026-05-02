@@ -4,7 +4,7 @@ import {
   Text,
   ScrollView,
   FlatList,
-  TouchableOpacity,
+  Pressable,
   TextInput,
   RefreshControl,
   StatusBar,
@@ -171,7 +171,7 @@ const OwnerDriverDetailScreen = () => {
                 </Text>
               </View>
             )}
-            {item.distance_km && (
+            {item.distance_km != null && (
               <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
                 {formatDistance(item.distance_km)}
               </Text>
@@ -213,23 +213,24 @@ const OwnerDriverDetailScreen = () => {
             >
               {/* Back + actions */}
               <Animated.View entering={FadeIn.duration(400)} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 12 }}>
+                <Pressable onPress={() => navigation.goBack()} style={{ marginRight: 12 }}>
                   <Ionicons name="arrow-back" size={22} color={colors.text} />
-                </TouchableOpacity>
+                </Pressable>
                 <Text style={{ flex: 1, color: colors.text, fontSize: 18, fontFamily: 'Inter_700Bold' }}>
                   {driverName}
                 </Text>
-                <TouchableOpacity
+                <Pressable
                   onPress={() => setEditModalVisible(true)}
-                  style={{
+                  style={({ pressed }) => ({
                     width: 36, height: 36, borderRadius: 10,
                     backgroundColor: `${colors.primary}15`,
                     alignItems: 'center', justifyContent: 'center',
                     marginLeft: 8,
-                  }}
+                    opacity: pressed ? 0.7 : 1,
+                  })}
                 >
                   <MaterialCommunityIcons name="pencil-outline" size={17} color={colors.primary} />
-                </TouchableOpacity>
+                </Pressable>
               </Animated.View>
 
               {/* Driver card */}
@@ -270,7 +271,7 @@ const OwnerDriverDetailScreen = () => {
                             </Text>
                           </View>
                         )}
-                        {linkedDriver.driver_number && (
+                        {linkedDriver.driver_number != null && (
                           <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
                             Móvil #{linkedDriver.driver_number}
                           </Text>
@@ -278,14 +279,14 @@ const OwnerDriverDetailScreen = () => {
                       </View>
                     </View>
                     {/* Status toggle */}
-                    <TouchableOpacity
+                    <Pressable
                       onPress={handleToggleStatus}
-                      activeOpacity={0.7}
-                      style={{
+                      style={({ pressed }) => ({
                         backgroundColor: linkedDriver.is_available ? `${colors.success}18` : `${colors.textMuted}18`,
                         borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
                         flexDirection: 'row', alignItems: 'center',
-                      }}
+                        opacity: pressed ? 0.7 : 1,
+                      })}
                     >
                       <View style={{
                         width: 8, height: 8, borderRadius: 4,
@@ -298,7 +299,7 @@ const OwnerDriverDetailScreen = () => {
                       }}>
                         {linkedDriver.is_available ? 'Activo' : 'Inactivo'}
                       </Text>
-                    </TouchableOpacity>
+                    </Pressable>
                   </View>
                 </Animated.View>
               )}
@@ -339,15 +340,16 @@ const OwnerDriverDetailScreen = () => {
                 {FILTERS.map(f => {
                   const active = f.key === activeFilter;
                   return (
-                    <TouchableOpacity
+                    <Pressable
                       key={f.key}
                       onPress={() => setActiveFilter(f.key)}
-                      style={{
+                      style={({ pressed }) => ({
                         flex: 1, paddingVertical: 8, borderRadius: 10,
                         backgroundColor: active ? colors.primary : colors.surface,
                         borderWidth: 1, borderColor: active ? colors.primary : colors.border,
                         alignItems: 'center',
-                      }}
+                        opacity: pressed ? 0.8 : 1,
+                      })}
                     >
                       <Text style={{
                         fontSize: 12, fontFamily: active ? 'Inter_600SemiBold' : 'Inter_400Regular',
@@ -355,7 +357,7 @@ const OwnerDriverDetailScreen = () => {
                       }}>
                         {f.label}
                       </Text>
-                    </TouchableOpacity>
+                    </Pressable>
                   );
                 })}
               </View>
@@ -462,17 +464,17 @@ const EditDriverModal = ({ driver, visible, onClose, onSave, saving }) => {
             borderBottomWidth: 1, borderBottomColor: colors.border,
             backgroundColor: colors.surface,
           }}>
-            <TouchableOpacity onPress={onClose} style={{ marginRight: 12 }}>
+            <Pressable onPress={onClose} style={{ marginRight: 12 }}>
               <Ionicons name="close" size={22} color={colors.text} />
-            </TouchableOpacity>
+            </Pressable>
             <Text style={{ flex: 1, color: colors.text, fontSize: 17, fontFamily: 'Inter_700Bold' }}>
               Editar conductor
             </Text>
-            <TouchableOpacity onPress={handleSave} disabled={saving} activeOpacity={0.8}>
+            <Pressable onPress={handleSave} disabled={saving} style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}>
               <Text style={{ color: saving ? colors.textMuted : colors.primary, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
                 {saving ? 'Guardando...' : 'Guardar'}
               </Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
 
           <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">

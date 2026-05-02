@@ -44,7 +44,16 @@ export async function createPaymentSession(amount) {
  * Consulta estado de una sesión de pago en Paypertic.
  *
  * @param {string} paymentId
- * @returns {{ id: string, status: string, status_detail?: string }}
+ * @returns {{
+ *   id: string,
+ *   status: string,
+ *   status_detail?: string,
+ *   final_amount?: number,
+ *   process_date?: string,
+ *   paid_date?: string,
+ *   external_transaction_id?: string,
+ *   receipt_url?: string | null
+ * }}
  */
 export async function getPaymentStatus(paymentId) {
   const {

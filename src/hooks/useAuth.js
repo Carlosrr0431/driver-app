@@ -1,7 +1,7 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
-import { registerForPushNotifications } from '../services/notifications';
+import { registerForPushNotifications, subscribeToTokenRefresh } from '../services/notifications';
 import Toast from 'react-native-toast-message';
 
 export const useAuth = () => {
@@ -19,6 +19,8 @@ export const useAuth = () => {
     logout: logoutStore,
     updateDriver,
   } = useAuthStore();
+
+  const tokenRefreshSub = useRef(null);
 
   const isInvalidRefreshTokenError = (error) => {
     const message = error?.message || '';
@@ -63,6 +65,10 @@ export const useAuth = () => {
 
     return () => {
       subscription?.unsubscribe();
+      if (tokenRefreshSub.current) {
+        tokenRefreshSub.current.remove();
+        tokenRefreshSub.current = null;
+      }
     };
   }, []);
 
@@ -93,6 +99,11 @@ export const useAuth = () => {
       setDriver(data);
       // Register push notifications after we have the driver profile
       registerForPushNotifications(data.id).catch(console.warn);
+      // Subscribe to token refresh to keep push_token in sync
+      if (tokenRefreshSub.current) {
+        tokenRefreshSub.current.remove();
+      }
+      tokenRefreshSub.current = subscribeToTokenRefresh(data.id);
       return data;
     } catch (error) {
       console.error('Error obteniendo perfil del chofer:', error);

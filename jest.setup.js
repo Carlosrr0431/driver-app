@@ -21,13 +21,19 @@ jest.mock('expo-location', () => ({
 }));
 
 jest.mock('expo-notifications', () => ({
+  getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
   requestPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
   getExpoPushTokenAsync: jest.fn().mockResolvedValue({ data: 'ExponentPushToken[test]' }),
   setNotificationHandler: jest.fn(),
+  setNotificationChannelAsync: jest.fn().mockResolvedValue(undefined),
+  setBadgeCountAsync: jest.fn().mockResolvedValue(true),
+  dismissAllNotificationsAsync: jest.fn().mockResolvedValue(undefined),
   addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
   addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  addPushTokenListener: jest.fn(() => ({ remove: jest.fn() })),
   scheduleNotificationAsync: jest.fn().mockResolvedValue('notif-id'),
-  AndroidImportance: { MAX: 5 },
+  AndroidImportance: { HIGH: 4, MAX: 5 },
+  AndroidNotificationPriority: { HIGH: 'high', MAX: 'max' },
 }));
 
 jest.mock('expo-task-manager', () => ({

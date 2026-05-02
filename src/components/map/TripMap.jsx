@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Pressable, StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
@@ -429,12 +429,12 @@ export const TripMap = React.memo(({
       </MapView>
 
       <View style={styles.btnCol}>
-        <TouchableOpacity onPress={fitAll} style={styles.mapBtn}>
+        <Pressable onPress={fitAll} style={({ pressed }) => [styles.mapBtn, pressed && { opacity: 0.7 }]}>
           <Ionicons name="expand-outline" size={18} color={colors.secondary} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={centerOnDriver} style={styles.mapBtn}>
+        </Pressable>
+        <Pressable onPress={centerOnDriver} style={({ pressed }) => [styles.mapBtn, pressed && { opacity: 0.7 }]}>
           <Ionicons name="locate" size={18} color={colors.secondary} />
-        </TouchableOpacity>
+        </Pressable>
       </View>
     </View>
   );

@@ -4,7 +4,7 @@ import {
   Text,
   ScrollView,
   FlatList,
-  TouchableOpacity,
+  Pressable,
   RefreshControl,
   StatusBar,
   ActivityIndicator,
@@ -61,10 +61,9 @@ const OwnerDashboardScreen = () => {
 
   const renderDriver = useCallback(({ item, index }) => (
     <Animated.View entering={FadeInDown.delay(index * 60).duration(350)}>
-      <TouchableOpacity
-        activeOpacity={0.85}
+      <Pressable
         onPress={() => navigation.navigate('OwnerDriverDetail', { driverId: item.id, driverName: item.full_name })}
-        style={{
+        style={({ pressed }) => ({
           backgroundColor: colors.surface,
           borderRadius: 16,
           padding: 14,
@@ -73,7 +72,8 @@ const OwnerDashboardScreen = () => {
           borderColor: colors.border,
           flexDirection: 'row',
           alignItems: 'center',
-        }}
+          opacity: pressed ? 0.85 : 1,
+        })}
       >
         {/* Avatar */}
         <View style={{
@@ -91,7 +91,7 @@ const OwnerDashboardScreen = () => {
             {item.full_name}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
-            {item.driver_number && (
+            {item.driver_number != null && (
               <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginRight: 8 }}>
                 Móvil #{item.driver_number}
               </Text>
@@ -117,17 +117,17 @@ const OwnerDashboardScreen = () => {
 
         {/* Status + chevron */}
         <View style={{ alignItems: 'flex-end', gap: 8 }}>
-          <TouchableOpacity
+          <Pressable
             onPress={() => handleToggleStatus(item)}
-            activeOpacity={0.7}
-            style={{
+            style={({ pressed }) => ({
               flexDirection: 'row',
               alignItems: 'center',
               backgroundColor: item.is_available ? `${colors.success}18` : `${colors.textMuted}18`,
               borderRadius: 20,
               paddingHorizontal: 10,
               paddingVertical: 4,
-            }}
+              opacity: pressed ? 0.7 : 1,
+            })}
           >
             <View style={{
               width: 7, height: 7, borderRadius: 4,
@@ -140,10 +140,10 @@ const OwnerDashboardScreen = () => {
             }}>
               {item.is_available ? 'Activo' : 'Inactivo'}
             </Text>
-          </TouchableOpacity>
+          </Pressable>
           <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
         </View>
-      </TouchableOpacity>
+      </Pressable>
     </Animated.View>
   ), [navigation, handleToggleStatus]);
 
@@ -157,9 +157,9 @@ const OwnerDashboardScreen = () => {
         style={{ paddingTop: insets.top + 12, paddingBottom: 20, paddingHorizontal: 20 }}
       >
         <Animated.View entering={FadeIn.duration(400)} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 12 }}>
+          <Pressable onPress={() => navigation.goBack()} style={{ marginRight: 12 }}>
             <Ionicons name="arrow-back" size={22} color={colors.text} />
-          </TouchableOpacity>
+          </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={{ color: colors.text, fontSize: 20, fontFamily: 'Inter_700Bold' }}>
               Mis conductores
@@ -168,17 +168,17 @@ const OwnerDashboardScreen = () => {
               {linkedDrivers.length} conductor{linkedDrivers.length !== 1 ? 'es' : ''} vinculado{linkedDrivers.length !== 1 ? 's' : ''}
             </Text>
           </View>
-          <TouchableOpacity
+          <Pressable
             onPress={() => navigation.navigate('CreateLinkedDriver')}
-            activeOpacity={0.8}
-            style={{
+            style={({ pressed }) => ({
               width: 38, height: 38, borderRadius: 12,
               backgroundColor: colors.primary,
               alignItems: 'center', justifyContent: 'center',
-            }}
+              opacity: pressed ? 0.8 : 1,
+            })}
           >
             <Ionicons name="add" size={22} color="#fff" />
-          </TouchableOpacity>
+          </Pressable>
         </Animated.View>
 
         {/* Today Stats */}
@@ -254,9 +254,8 @@ const OwnerDashboardScreen = () => {
               <Text style={{ color: colors.textMuted, fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingHorizontal: 40, lineHeight: 20 }}>
                 Agregá conductores para gestionar sus viajes y comisiones desde acá.
               </Text>
-              <TouchableOpacity
+              <Pressable
                 onPress={() => navigation.navigate('CreateLinkedDriver')}
-                activeOpacity={0.85}
                 style={{ marginTop: 20 }}
               >
                 <LinearGradient
@@ -272,7 +271,7 @@ const OwnerDashboardScreen = () => {
                     Agregar conductor
                   </Text>
                 </LinearGradient>
-              </TouchableOpacity>
+              </Pressable>
             </Animated.View>
           }
         />

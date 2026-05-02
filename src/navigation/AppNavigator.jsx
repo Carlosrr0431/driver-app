@@ -1,10 +1,12 @@
 import React from 'react';
-import { View, Image, Text } from 'react-native';
+import { View, Text } from 'react-native';
+import { Image } from 'expo-image';
 import { NavigationContainer } from '@react-navigation/native';
 import { useAuthStore } from '../stores/authStore';
 import AuthNavigator from './AuthNavigator';
 import MainNavigator from './MainNavigator';
 import { colors } from '../theme/colors';
+import { navigationRef } from './navigationRef';
 
 const AppNavigator = () => {
   const { isAuthenticated, isLoading } = useAuthStore();
@@ -22,7 +24,7 @@ const AppNavigator = () => {
         <Image
           source={require('../../assets/adaptive-icon.png')}
           style={{ width: 140, height: 140 }}
-          resizeMode="contain"
+          contentFit="contain"
         />
         <View
           style={{
@@ -49,6 +51,7 @@ const AppNavigator = () => {
 
   return (
     <NavigationContainer
+      ref={navigationRef}
       theme={{
         dark: false,
         colors: {

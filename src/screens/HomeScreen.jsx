@@ -2,11 +2,10 @@ import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react'
 import {
   View,
   Text,
-  TouchableOpacity,
+  Pressable,
   RefreshControl,
   StatusBar,
   StyleSheet,
-  Image,
   AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +14,7 @@ import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import MapView, { Marker, Circle, PROVIDER_GOOGLE } from 'react-native-maps';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { colors } from '../theme/colors';
 import { useAuthStore } from '../stores/authStore';
@@ -49,8 +49,7 @@ const DriverLocationMarker = React.memo(({ location }) => {
           width: 34, height: 34, borderRadius: 17,
           backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
           borderWidth: 2, borderColor: '#fff',
-          elevation: 4, shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4,
+          boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
         }}>
           <MaterialCommunityIcons name="car" size={18} color="#fff" />
         </View>
@@ -293,28 +292,28 @@ const HomeScreen = () => {
           </View>
         </View>
 
-        <TouchableOpacity style={{
+        <Pressable style={({ pressed }) => ({
           width: 40, height: 40, borderRadius: 20,
           backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
           borderWidth: 1, borderColor: colors.border,
-          elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.08, shadowRadius: 4,
-        }}>
+          boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+          opacity: pressed ? 0.7 : 1,
+        })}>
           <Ionicons name="notifications-outline" size={20} color={colors.secondary} />
-        </TouchableOpacity>
+        </Pressable>
       </View>
 
       {/* Botón recentrar */}
-      <TouchableOpacity onPress={recenter} style={{
+      <Pressable onPress={recenter} style={({ pressed }) => ({
         position: 'absolute', right: 16, top: insets.top + 70,
         width: 42, height: 42, borderRadius: 21,
         backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
         borderWidth: 1, borderColor: colors.border,
-        elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08, shadowRadius: 4,
-      }}>
+        boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+        opacity: pressed ? 0.7 : 1,
+      })}>
         <Ionicons name="locate" size={20} color={colors.secondary} />
-      </TouchableOpacity>
+      </Pressable>
 
       {/* ========== BOTTOM SHEET ========== */}
       <BottomSheet
@@ -325,11 +324,7 @@ const HomeScreen = () => {
           backgroundColor: '#FFFFFF',
           borderTopLeftRadius: 28,
           borderTopRightRadius: 28,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: -6 },
-          shadowOpacity: 0.08,
-          shadowRadius: 16,
-          elevation: 12,
+          boxShadow: '0 -6px 16px rgba(0,0,0,0.08)',
         }}
         handleIndicatorStyle={{
           backgroundColor: '#D1D5DB',
@@ -343,18 +338,15 @@ const HomeScreen = () => {
         <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 10 }}>
 
           {/* Toggle estado */}
-          <TouchableOpacity onPress={handleToggleStatus} activeOpacity={0.82}
-            style={{
+          <Pressable onPress={handleToggleStatus}
+            style={({ pressed }) => ({
               flexDirection: 'row', alignItems: 'center',
               backgroundColor: '#FFFFFF',
               borderRadius: 24, paddingVertical: 16, paddingHorizontal: 16,
               borderWidth: 1, borderColor: isOnline ? '#BBF7D0' : '#E5E7EB',
-              shadowColor: '#0F172A',
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: isOnline ? 0.08 : 0.05,
-              shadowRadius: 18,
-              elevation: 5,
-            }}>
+              boxShadow: `0 10px 18px rgba(15,23,42,${isOnline ? 0.08 : 0.05})`,
+              opacity: pressed ? 0.95 : 1,
+            })}>
             <View style={{
               width: 50, height: 50, borderRadius: 25,
               backgroundColor: isOnline ? '#E8FFF1' : '#F3F4F6',
@@ -399,7 +391,7 @@ const HomeScreen = () => {
                 width: 34, height: 34, borderRadius: 17, backgroundColor: '#fff',
                 alignSelf: isOnline ? 'flex-end' : 'flex-start',
                 alignItems: 'center', justifyContent: 'center',
-                elevation: 2, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 3,
+                boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
               }} />
               <Text style={{
                 position: 'absolute',
@@ -411,7 +403,7 @@ const HomeScreen = () => {
                 {isOnline ? 'ON' : 'OFF'}
               </Text>
             </View>
-          </TouchableOpacity>
+          </Pressable>
 
         </View>
 
@@ -466,21 +458,21 @@ const HomeScreen = () => {
                     {formatPrice(commissionData.balance)}
                   </Text>
                 </View>
-                <TouchableOpacity
-                  onPress={() => navigation.navigate('CommissionPayment', { commissionData })}
-                  activeOpacity={0.85}
-                  style={{
+                <Pressable
+                  onPress={() => navigation.navigate('CommissionPayment', { commissionData, autoStart: true })}
+                  style={({ pressed }) => ({
                     marginTop: 10,
                     backgroundColor: commissionData.isOverdue ? '#282e69' : '#D97706',
                     borderRadius: 10, paddingVertical: 9,
                     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  }}
+                    opacity: pressed ? 0.85 : 1,
+                  })}
                 >
                   <MaterialCommunityIcons name="credit-card-outline" size={15} color="#FFFFFF" />
                   <Text style={{ color: '#FFFFFF', fontSize: 13, fontFamily: 'Inter_700Bold' }}>
                     Pagar comisión
                   </Text>
-                </TouchableOpacity>
+                </Pressable>
               </View>
             </Animated.View>
           )}
@@ -498,12 +490,13 @@ const HomeScreen = () => {
           {/* Viaje activo */}
           {activeTrip && (
             <Animated.View entering={SlideInRight.delay(100).springify()} style={{ marginTop: 12 }}>
-              <TouchableOpacity onPress={() => navigation.navigate('ActiveTrip')} activeOpacity={0.8}
-                style={{
+              <Pressable onPress={() => navigation.navigate('ActiveTrip')}
+                style={({ pressed }) => ({
                   backgroundColor: '#EFF6FF', borderRadius: 16, padding: 14,
                   borderWidth: 1, borderColor: '#BFDBFE',
                   flexDirection: 'row', alignItems: 'center',
-                }}>
+                  opacity: pressed ? 0.8 : 1,
+                })}>
                 <View style={{
                   width: 40, height: 40, borderRadius: 20,
                   backgroundColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center',
@@ -517,7 +510,7 @@ const HomeScreen = () => {
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={colors.primary} />
-              </TouchableOpacity>
+              </Pressable>
             </Animated.View>
           )}
 
@@ -528,9 +521,9 @@ const HomeScreen = () => {
                 Actividad reciente
               </Text>
               {allTrips.length > 0 && (
-                <TouchableOpacity onPress={() => navigation.navigate('History')}>
+                <Pressable onPress={() => navigation.navigate('History')}>
                   <Text style={{ color: colors.primary, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>Ver todo →</Text>
-                </TouchableOpacity>
+                </Pressable>
               )}
             </View>
 
@@ -574,10 +567,9 @@ const HomeScreen = () => {
       />
 
       {/* Floating radio button */}
-      <TouchableOpacity
+      <Pressable
         onPress={() => setShowVoice(true)}
-        activeOpacity={0.8}
-        style={{
+        style={({ pressed }) => ({
           position: 'absolute',
           left: 16,
           top: insets.top + 70,
@@ -589,15 +581,12 @@ const HomeScreen = () => {
           justifyContent: 'center',
           borderWidth: 1,
           borderColor: colors.border,
-          elevation: 3,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.08,
-          shadowRadius: 4,
-        }}
+          boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+          opacity: pressed ? 0.7 : 1,
+        })}
       >
         <MaterialCommunityIcons name="radio-tower" size={20} color={colors.primary} />
-      </TouchableOpacity>
+      </Pressable>
 
       <VoiceChatModal visible={showVoice} onClose={() => setShowVoice(false)} />
     </View>
@@ -628,12 +617,13 @@ const TripRow = ({ trip, onPress }) => {
     : '';
 
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={{
+    <Pressable onPress={onPress} style={({ pressed }) => ({
       flexDirection: 'row', alignItems: 'center',
       backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, marginBottom: 8,
       borderWidth: 1, borderColor: '#F3F4F6',
-      elevation: 1, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4,
-    }}>
+      boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+      opacity: pressed ? 0.7 : 1,
+    })}>
       <View style={{
         width: 38, height: 38, borderRadius: 12,
         backgroundColor: `${c}15`, alignItems: 'center', justifyContent: 'center',
@@ -657,7 +647,7 @@ const TripRow = ({ trip, onPress }) => {
       <Text style={{ color: c, fontSize: 14, fontFamily: 'Inter_700Bold' }}>
         {formatPrice(trip.price)}
       </Text>
-    </TouchableOpacity>
+    </Pressable>
   );
 };
 

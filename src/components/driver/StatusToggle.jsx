@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -85,7 +85,7 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
   }, [driver, isOnline]);
 
   return (
-    <TouchableOpacity onPress={handleToggle} activeOpacity={0.8}>
+    <Pressable onPress={handleToggle}>
       <Animated.View
         style={[
           {
@@ -153,6 +153,6 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
           {isOnline ? 'Toca para desconectarte' : 'Toca para conectarte'}
         </Text>
       </Animated.View>
-    </TouchableOpacity>
+    </Pressable>
   );
 };

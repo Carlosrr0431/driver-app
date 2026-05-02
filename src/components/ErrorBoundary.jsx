@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, Pressable, ScrollView } from 'react-native';
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -35,19 +35,20 @@ export class ErrorBoundary extends React.Component {
               {this.state.error?.message || 'Error desconocido'}
             </Text>
           </ScrollView>
-          <TouchableOpacity
+          <Pressable
             onPress={() => this.setState({ hasError: false, error: null })}
-            style={{
+            style={({ pressed }) => ({
               backgroundColor: '#282e69',
               paddingHorizontal: 32,
               paddingVertical: 14,
               borderRadius: 12,
-            }}
+              opacity: pressed ? 0.8 : 1,
+            })}
           >
             <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
               Reintentar
             </Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       );
     }

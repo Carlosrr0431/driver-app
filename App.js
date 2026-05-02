@@ -18,6 +18,7 @@ import AppNavigator from './src/navigation/AppNavigator';
 import { useAuth } from './src/hooks/useAuth';
 import { useTripStore } from './src/stores/tripStore';
 import { colors } from './src/theme/colors';
+import { navigateTo } from './src/navigation/navigationRef';
 
 try {
   SplashScreen.preventAutoHideAsync();
@@ -85,8 +86,18 @@ const AppContent = () => {
     // Handle user tapping on a notification
     responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data;
-      if (data && Object.keys(data).length > 0) {
-        console.log('Notification tapped, data:', data);
+      if (!data) return;
+
+      // Limpiar badge al responder a cualquier notificación
+      Notifications.setBadgeCountAsync(0).catch(() => {});
+
+      if (data.type === 'new_trip') {
+        if (data.trip) {
+          useTripStore.getState().setPendingTrip(data.trip);
+        }
+        navigateTo('Home');
+      } else if (data.type === 'dispatcher_message' || data.type === 'message') {
+        navigateTo('Home');
       }
     });
 

@@ -238,7 +238,7 @@ const ProfileScreen = () => {
 
           {/* Vehicle data */}
           <Animated.View entering={FadeInDown.delay(240).duration(400)}>
-            <SectionCard title="Mi vehículo" icon="car-sport">
+            <SectionCard title="Mi vehículo" icon="car-cog">
               <FormInput label="Marca" value={vehicleBrand} onChangeText={setVehicleBrand} icon="car" />
               <FormInput label="Modelo" value={vehicleModel} onChangeText={setVehicleModel} icon="car-side" />
               <View style={{ flexDirection: 'row', gap: 10 }}>

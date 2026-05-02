@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Image, Text } from 'react-native';
+import { View, Text } from 'react-native';
+import { Image } from 'expo-image';
 import { colors } from '../../theme/colors';
 
 export const Avatar = ({ uri, name, size = 48, showOnline, isOnline }) => {
@@ -24,6 +25,8 @@ export const Avatar = ({ uri, name, size = 48, showOnline, isOnline }) => {
             borderWidth: 2,
             borderColor: colors.primary,
           }}
+          contentFit="cover"
+          transition={200}
         />
       ) : (
         <View

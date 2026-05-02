@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
+  Pressable,
   FlatList,
   ActivityIndicator,
   Modal,
@@ -104,9 +104,9 @@ export function VoiceChatModal({ visible, onClose }) {
               </Text>
             </View>
           </View>
-          <TouchableOpacity
+          <Pressable
             onPress={onClose}
-            style={{
+            style={({ pressed }) => ({
               width: 36,
               height: 36,
               borderRadius: 18,
@@ -115,10 +115,11 @@ export function VoiceChatModal({ visible, onClose }) {
               justifyContent: 'center',
               borderWidth: 1,
               borderColor: colors.border,
-            }}
+              opacity: pressed ? 0.7 : 1,
+            })}
           >
             <MaterialCommunityIcons name="close" size={20} color={colors.textMuted} />
-          </TouchableOpacity>
+          </Pressable>
         </View>
 
         {/* Messages */}
@@ -198,9 +199,9 @@ export function VoiceChatModal({ visible, onClose }) {
                   Grabando...
                 </Text>
               </View>
-              <TouchableOpacity
+              <Pressable
                 onPress={cancelRecording}
-                style={{
+                style={({ pressed }) => ({
                   width: 44,
                   height: 44,
                   borderRadius: 22,
@@ -209,40 +210,36 @@ export function VoiceChatModal({ visible, onClose }) {
                   justifyContent: 'center',
                   borderWidth: 1,
                   borderColor: colors.border,
-                }}
+                  opacity: pressed ? 0.7 : 1,
+                })}
               >
                 <MaterialCommunityIcons name="close" size={20} color={colors.danger} />
-              </TouchableOpacity>
-              <TouchableOpacity
+              </Pressable>
+              <Pressable
                 onPress={sendRecording}
                 disabled={sending}
-                style={{
+                style={({ pressed }) => ({
                   width: 44,
                   height: 44,
                   borderRadius: 22,
                   backgroundColor: colors.primary,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  elevation: 4,
-                  shadowColor: colors.primary,
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  opacity: sending ? 0.6 : 1,
-                }}
+                  boxShadow: `0 2px 4px ${colors.primary}4D`,
+                  opacity: sending ? 0.6 : pressed ? 0.85 : 1,
+                })}
               >
                 {sending ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
                   <MaterialCommunityIcons name="send" size={20} color="#fff" />
                 )}
-              </TouchableOpacity>
+              </Pressable>
             </View>
           ) : (
-            <TouchableOpacity
+            <Pressable
               onPress={startRecording}
-              activeOpacity={0.8}
-              style={{
+              style={({ pressed }) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -250,12 +247,9 @@ export function VoiceChatModal({ visible, onClose }) {
                 borderRadius: 16,
                 paddingVertical: 14,
                 gap: 8,
-                elevation: 4,
-                shadowColor: colors.primary,
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.3,
-                shadowRadius: 6,
-              }}
+                boxShadow: `0 2px 6px ${colors.primary}4D`,
+                opacity: pressed ? 0.8 : 1,
+              })}
             >
               <MaterialCommunityIcons name="microphone" size={22} color="#fff" />
               <Text style={{
@@ -265,7 +259,7 @@ export function VoiceChatModal({ visible, onClose }) {
               }}>
                 Presioná para grabar mensaje
               </Text>
-            </TouchableOpacity>
+            </Pressable>
           )}
         </View>
       </View>
@@ -286,10 +280,9 @@ function VoiceMessageBubble({ isBase, time, duration, onPlay }) {
   };
 
   return (
-    <TouchableOpacity
+    <Pressable
       onPress={handlePress}
-      activeOpacity={0.7}
-      style={{
+      style={({ pressed }) => ({
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: isBase ? `${colors.secondary}10` : `${colors.primary}10`,
@@ -302,7 +295,8 @@ function VoiceMessageBubble({ isBase, time, duration, onPlay }) {
         borderWidth: 1,
         borderColor: isBase ? `${colors.secondary}20` : `${colors.primary}20`,
         minWidth: 160,
-      }}
+        opacity: pressed ? 0.7 : 1,
+      })}
     >
       <View style={{
         width: 36,
@@ -364,7 +358,7 @@ function VoiceMessageBubble({ isBase, time, duration, onPlay }) {
           />
         ))}
       </View>
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 

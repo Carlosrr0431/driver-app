@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, Dimensions, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Text, ScrollView, Dimensions, Pressable, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
@@ -62,10 +62,10 @@ const TripDetailScreen = () => {
   }
 
   const mapPoints = [];
-  if (trip.origin_lat && trip.origin_lng) {
+  if (trip.origin_lat != null && trip.origin_lng != null) {
     mapPoints.push({ latitude: Number(trip.origin_lat), longitude: Number(trip.origin_lng) });
   }
-  if (trip.destination_lat && trip.destination_lng) {
+  if (trip.destination_lat != null && trip.destination_lng != null) {
     mapPoints.push({ latitude: Number(trip.destination_lat), longitude: Number(trip.destination_lng) });
   }
   const region = getRegionForCoordinates(mapPoints.length > 0 ? mapPoints : undefined);
@@ -128,7 +128,7 @@ const TripDetailScreen = () => {
           />
 
           {/* Back button */}
-          <TouchableOpacity onPress={() => navigation.goBack()} style={{
+          <Pressable onPress={() => navigation.goBack()} style={{
             position: 'absolute', top: insets.top + 8, left: 16,
             width: 38, height: 38, borderRadius: 19,
             backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
@@ -137,7 +137,7 @@ const TripDetailScreen = () => {
             shadowOpacity: 0.08, shadowRadius: 4,
           }}>
             <Ionicons name="arrow-back" size={20} color={colors.secondary} />
-          </TouchableOpacity>
+          </Pressable>
         </View>
 
         <View style={{ paddingHorizontal: 16 }}>
