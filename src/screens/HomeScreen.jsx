@@ -72,6 +72,7 @@ const HomeScreen = () => {
   const bottomSheetRef = useRef(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
+  const [sheetIndex, setSheetIndex] = useState(0);
   const snapPoints = useMemo(() => ['25%', '70%'], []);
 
   useVoiceAutoPlay();
@@ -96,20 +97,27 @@ const HomeScreen = () => {
   // Recover any pending trip that arrived while the app was in the background/killed
   const checkPendingTripFromDB = useCallback(async () => {
     if (!driver?.id) return;
-    // Only check if there's no pending trip already showing
-    const { pendingTrip: current } = useTripStore.getState();
-    if (current) return;
+    const { pendingTrip: current, showNewTripModal, setPendingTrip, clearPendingTrip } = useTripStore.getState();
+
     try {
       const { data } = await supabase
         .from('trips')
         .select('*')
         .eq('driver_id', driver.id)
         .eq('status', 'pending')
+        .order('assigned_at', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+
       if (data) {
-        useTripStore.getState().setPendingTrip(data);
+        // Si cambió el pending o el modal no está visible, refrescar estado para mostrarlo.
+        if (current?.id !== data.id || !showNewTripModal) {
+          setPendingTrip(data);
+        }
+      } else if (current) {
+        // Evita quedar con pending stale cuando Realtime/push fallan.
+        clearPendingTrip();
       }
     } catch (_) {}
   }, [driver?.id]);
@@ -135,6 +143,15 @@ const HomeScreen = () => {
     });
     return () => sub.remove();
   }, [checkPendingTripFromDB]);
+
+  // Fallback liviano: si Realtime/push fallan, revalidar pending asignado periódicamente.
+  useEffect(() => {
+    if (!driver?.id) return;
+    const intervalId = setInterval(() => {
+      checkPendingTripFromDB();
+    }, 20000);
+    return () => clearInterval(intervalId);
+  }, [driver?.id, checkPendingTripFromDB]);
 
   useEffect(() => {
     if (currentLocation && mapRef.current) {
@@ -315,6 +332,28 @@ const HomeScreen = () => {
         <Ionicons name="locate" size={20} color={colors.secondary} />
       </Pressable>
 
+      {/* Floating radio button — declarado ANTES del BottomSheet para que el sheet lo tape al expandirse */}
+      <Pressable
+        onPress={() => setShowVoice(true)}
+        style={({ pressed }) => ({
+          position: 'absolute',
+          left: 16,
+          top: insets.top + 70,
+          width: 42,
+          height: 42,
+          borderRadius: 21,
+          backgroundColor: '#FFFFFF',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1,
+          borderColor: colors.border,
+          boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+          opacity: pressed ? 0.7 : 1,
+        })}
+      >
+        <MaterialCommunityIcons name="radio-tower" size={20} color={colors.primary} />
+      </Pressable>
+
       {/* ========== BOTTOM SHEET ========== */}
       <BottomSheet
         ref={bottomSheetRef}
@@ -333,11 +372,13 @@ const HomeScreen = () => {
           borderRadius: 2,
         }}
         enablePanDownToClose={false}
+        onChange={(index) => setSheetIndex(index)}
       >
         {/* ── ZONA FIJA: siempre visible aunque el sheet esté en el snap mínimo ── */}
         <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 10 }}>
 
-          {/* Toggle estado */}
+          {/* Toggle estado — se oculta si hay un viaje activo */}
+          {!activeTrip && (
           <Pressable onPress={handleToggleStatus}
             style={({ pressed }) => ({
               flexDirection: 'row', alignItems: 'center',
@@ -404,6 +445,7 @@ const HomeScreen = () => {
               </Text>
             </View>
           </Pressable>
+          )}
 
         </View>
 
@@ -566,28 +608,6 @@ const HomeScreen = () => {
         onReject={handleRejectTrip}
       />
 
-      {/* Floating radio button */}
-      <Pressable
-        onPress={() => setShowVoice(true)}
-        style={({ pressed }) => ({
-          position: 'absolute',
-          left: 16,
-          top: insets.top + 70,
-          width: 42,
-          height: 42,
-          borderRadius: 21,
-          backgroundColor: '#FFFFFF',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderWidth: 1,
-          borderColor: colors.border,
-          boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
-          opacity: pressed ? 0.7 : 1,
-        })}
-      >
-        <MaterialCommunityIcons name="radio-tower" size={20} color={colors.primary} />
-      </Pressable>
-
       <VoiceChatModal visible={showVoice} onClose={() => setShowVoice(false)} />
     </View>
   );
@@ -597,12 +617,20 @@ const HomeScreen = () => {
 
 const MiniStat = ({ icon, label, value, color }) => (
   <View style={{
-    flex: 1, backgroundColor: '#F9FAFB', borderRadius: 14, paddingVertical: 12,
+    flex: 1, backgroundColor: '#F9FAFB', borderRadius: 14,
+    paddingVertical: 10, paddingHorizontal: 6,
     alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6',
   }}>
-    <MaterialCommunityIcons name={icon} size={18} color={color} style={{ marginBottom: 4 }} />
-    <Text style={{ color: '#111827', fontSize: 14, fontFamily: 'Inter_700Bold' }}>{value}</Text>
-    <Text style={{ color: '#9CA3AF', fontSize: 9, fontFamily: 'Inter_500Medium', marginTop: 2 }}>{label}</Text>
+    <MaterialCommunityIcons name={icon} size={16} color={color} style={{ marginBottom: 5 }} />
+    <Text
+      style={{ color: '#111827', fontSize: 13, fontFamily: 'Inter_700Bold', width: '100%', textAlign: 'center' }}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.55}
+    >
+      {value}
+    </Text>
+    <Text style={{ color: '#9CA3AF', fontSize: 9, fontFamily: 'Inter_500Medium', marginTop: 3 }}>{label}</Text>
   </View>
 );
 

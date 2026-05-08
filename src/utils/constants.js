@@ -37,10 +37,19 @@ export const CANCEL_REASONS = [
 export const GPS_CONFIG = {
   TRACKING_INTERVAL: 5000,
   ACCURACY: 6,
-  DISTANCE_FILTER: 10,
+  // Mínimo desplazamiento real (metros) para disparar una actualización
+  // de background. Aumentado a 15 m para ignorar jitter de GPS parado
+  // y evitar que el origen de la ruta "salte" a la vereda.
+  DISTANCE_FILTER: 15,
 };
 
-export const TRIP_ACCEPT_TIMEOUT = 30;
+const DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS = 180;
+const configuredTripAcceptTimeout = Number(
+  process.env.EXPO_PUBLIC_TRIP_ACCEPT_TIMEOUT_SECONDS || DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS
+);
+export const TRIP_ACCEPT_TIMEOUT = Number.isFinite(configuredTripAcceptTimeout)
+  ? Math.max(15, Math.round(configuredTripAcceptTimeout))
+  : DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS;
 
 export const DEFAULT_REGION = {
   latitude: -24.7821,

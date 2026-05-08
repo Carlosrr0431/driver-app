@@ -3,7 +3,7 @@ import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-quer
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { useTripStore } from '../stores/tripStore';
-import { TRIP_STATUS, PAGINATION_LIMIT } from '../utils/constants';
+import { TRIP_STATUS, PAGINATION_LIMIT, TRIP_ACCEPT_TIMEOUT } from '../utils/constants';
 import Toast from 'react-native-toast-message';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
@@ -311,6 +311,32 @@ export const useTrips = () => {
 
       const pendingTripSnapshot = useTripStore.getState().pendingTrip;
 
+      const verifyTimeout = createTimeoutController(6000);
+      const { data: tripToAccept, error: verifyError } = await supabase
+        .from('trips')
+        .select('id, driver_id, status, assigned_at')
+        .eq('id', tripId)
+        .maybeSingle()
+        .abortSignal(verifyTimeout.signal);
+      verifyTimeout.cleanup();
+
+      if (verifyError) throw verifyError;
+
+      const belongsToDriver = tripToAccept?.driver_id === driver.id;
+      const isPending = tripToAccept?.status === TRIP_STATUS.PENDING;
+      if (!tripToAccept || !belongsToDriver || !isPending) {
+        clearPendingTrip();
+        Toast.show({
+          type: 'error',
+          text1: 'Viaje no disponible',
+          text2: 'El viaje ya no está pendiente para vos.',
+        });
+        return { success: false, unavailable: true };
+      }
+
+      // Evitar desincronización entre timeout local y timeout del backend.
+      // La validez real se decide en DB con el UPDATE condicional por status/driver.
+
       // Check commission balance before accepting (5 s timeout per query)
       const commTimeout = createTimeoutController(5000);
       const { data: commTrips } = await supabase
@@ -368,12 +394,24 @@ export const useTrips = () => {
           accepted_at: new Date().toISOString(),
         })
         .eq('id', tripId)
+        .eq('driver_id', driver.id)
+        .eq('status', TRIP_STATUS.PENDING)
         .abortSignal(timeout.signal)
         .select()
-        .single();
+        .maybeSingle();
       timeout.cleanup();
 
       if (error) throw error;
+
+      if (!data) {
+        clearPendingTrip();
+        Toast.show({
+          type: 'error',
+          text1: 'Tiempo agotado',
+          text2: 'El viaje ya no está disponible para aceptar.',
+        });
+        return { success: false, isTimeout: true };
+      }
 
       const enrichedActiveTrip = enrichApproachTrip(data, pendingTripSnapshot?.id === tripId ? pendingTripSnapshot : null);
       setActiveTrip(enrichedActiveTrip);
@@ -402,16 +440,34 @@ export const useTrips = () => {
 
   const rejectTrip = useCallback(async (tripId, reason) => {
     try {
-      const { error } = await supabase
+      if (!driver?.id) {
+        return { success: false, error: new Error('driver_not_ready') };
+      }
+
+      const { data, error } = await supabase
         .from('trips')
         .update({
           status: TRIP_STATUS.CANCELLED,
           cancel_reason: reason,
           // driver_id is intentionally kept so the reassignment logic can exclude this driver
         })
-        .eq('id', tripId);
+        .eq('id', tripId)
+        .eq('driver_id', driver.id)
+        .eq('status', TRIP_STATUS.PENDING)
+        .select('id')
+        .maybeSingle();
 
       if (error) throw error;
+
+      if (!data) {
+        clearPendingTrip();
+        Toast.show({
+          type: 'info',
+          text1: 'Viaje no disponible',
+          text2: 'El viaje ya no estaba pendiente para rechazar.',
+        });
+        return { success: false, unavailable: true };
+      }
 
       clearPendingTrip();
 
@@ -430,7 +486,7 @@ export const useTrips = () => {
       });
       return { success: false, error };
     }
-  }, []);
+  }, [driver?.id, clearPendingTrip]);
 
   const updateTripStatus = useCallback(async (tripId, status, extraFields = {}) => {
     try {
