@@ -1,3 +1,9 @@
+/**
+ * Componente: RoutePolyline
+ * Que hace: Obtiene direcciones entre origen y destino, decodifica la polyline y la pinta en el mapa.
+ * Usado por:
+ * - Sin imports directos detectados en driver-app (componente disponible para reutilizacion).
+ */
 import React, { useEffect, useState } from 'react';
 import { Polyline } from 'react-native-maps';
 import { decodePolyline, getDirections } from '../../services/googleMaps';

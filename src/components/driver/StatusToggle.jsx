@@ -1,3 +1,9 @@
+/**
+ * Componente: StatusToggle
+ * Que hace: Permite alternar el estado en linea/fuera de linea del chofer y sincroniza ese estado en Supabase.
+ * Usado por:
+ * - driver-app/src/screens/HomeScreen.old.jsx -> import { StatusToggle } from '../components/driver/StatusToggle';
+ */
 import React, { useCallback } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import Animated, {

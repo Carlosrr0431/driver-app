@@ -1,3 +1,12 @@
+/**
+ * Componente: Avatar
+ * Que hace: Renderiza avatar con imagen o iniciales y puede mostrar indicador de estado online/offline.
+ * Usado por:
+ * - driver-app/src/screens/HomeScreen.old.jsx -> import { Avatar } from '../components/ui/Avatar';
+ * - driver-app/src/screens/OwnerDashboardScreen.jsx -> import { Avatar } from '../components/ui/Avatar';
+ * - driver-app/src/screens/OwnerDriverDetailScreen.jsx -> import { Avatar } from '../components/ui/Avatar';
+ * - driver-app/src/screens/ProfileScreen.jsx -> import { Avatar } from '../components/ui/Avatar';
+ */
 import React from 'react';
 import { View, Text } from 'react-native';
 import { Image } from 'expo-image';

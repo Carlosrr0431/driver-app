@@ -20,12 +20,16 @@ try {
       const { locations } = data;
       const location = locations[0];
       if (location) {
+        // Descartar lecturas con mala precisión en background también
+        const accuracy = location.coords.accuracy ?? 99;
+        if (accuracy > 30) return;
         const { setCurrentLocation } = useLocationStore.getState();
         setCurrentLocation({
           lat: location.coords.latitude,
           lng: location.coords.longitude,
-          speed: location.coords.speed,
-          heading: location.coords.heading,
+          speed: location.coords.speed ?? 0,
+          heading: location.coords.heading ?? 0,
+          accuracy,
         });
       }
     }
@@ -85,15 +89,39 @@ export const useLocation = () => {
       }
 
       const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
+        accuracy: Location.Accuracy.BestForNavigation,
       });
+
+      // Descartar lecturas con precisión GPS muy pobre (> 30 m)
+      const accuracy = location.coords.accuracy ?? 99;
+      if (accuracy > 30) return null;
 
       const pos = {
         lat: location.coords.latitude,
         lng: location.coords.longitude,
-        speed: location.coords.speed,
-        heading: location.coords.heading,
+        speed: location.coords.speed ?? 0,
+        heading: location.coords.heading ?? 0,
+        accuracy,
       };
+
+      // Filtro de movimiento: evita actualizar currentLocation cuando el auto está
+      // detenido y el GPS jittea entre la calle y la vereda.
+      // Haversine inline porque getDistanceMeters está definido más abajo en el hook.
+      const last = lastLocationRef.current;
+      if (last) {
+        const R = 6378137;
+        const dLat = (pos.lat - last.lat) * Math.PI / 180;
+        const dLng = (pos.lng - last.lng) * Math.PI / 180;
+        const sinDLat = Math.sin(dLat / 2);
+        const sinDLng = Math.sin(dLng / 2);
+        const a = sinDLat ** 2 + Math.cos(last.lat * Math.PI / 180) * Math.cos(pos.lat * Math.PI / 180) * sinDLng ** 2;
+        const distMeters = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const isMoving = pos.speed > 1.5; // m/s ≈ 5.4 km/h
+        // Parado: requiere ≥ 12 m de desplazamiento antes de aceptar el nuevo punto.
+        // En movimiento: cualquier cambio ≥ 4 m es relevante para la navegación.
+        if (distMeters < (isMoving ? 4 : 12)) return null;
+      }
+      lastLocationRef.current = pos;
 
       setCurrentLocation(pos);
       return pos;
@@ -280,22 +308,32 @@ export const useLocation = () => {
 
     watchSubscriptionRef.current = await Location.watchPositionAsync(
       {
-        accuracy: Location.Accuracy.High,
-        distanceInterval: 5,
+        accuracy: Location.Accuracy.BestForNavigation,
+        distanceInterval: 8,
         timeInterval: 3000,
       },
       (location) => {
+        // Descartar lecturas con mala precisión GPS (> 25 m)
+        // — estas son las que "caen" en la vereda y desvían la ruta.
+        const accuracy = location.coords.accuracy ?? 99;
+        if (accuracy > 25) return;
+
         const pos = {
           lat: location.coords.latitude,
           lng: location.coords.longitude,
-          speed: location.coords.speed,
-          heading: location.coords.heading,
+          speed: location.coords.speed ?? 0,
+          heading: location.coords.heading ?? 0,
+          accuracy,
         };
 
         const last = lastLocationRef.current;
         if (last) {
           const dist = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
-          if (dist < 5) return;
+          const isMoving = pos.speed > 1.5; // m/s ≈ 5.4 km/h
+          // Cuando el auto está detenido exigimos más desplazamiento real
+          // para evitar que el jitter de GPS lleve el origen a la vereda.
+          const minDist = isMoving ? 8 : 15;
+          if (dist < minDist) return;
         }
 
         lastLocationRef.current = pos;

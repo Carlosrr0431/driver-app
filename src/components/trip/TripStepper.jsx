@@ -1,3 +1,9 @@
+/**
+ * Componente: TripStepper
+ * Que hace: Muestra visualmente las etapas del flujo del viaje y marca el paso actual/completado.
+ * Usado por:
+ * - Sin imports directos detectados en driver-app (componente disponible para reutilizacion).
+ */
 import React from 'react';
 import { View, Text } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';

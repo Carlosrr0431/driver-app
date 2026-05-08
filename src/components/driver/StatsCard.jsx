@@ -1,3 +1,9 @@
+/**
+ * Componente: StatsCard
+ * Que hace: Renderiza una tarjeta estadistica animada para mostrar metricas rapidas del conductor.
+ * Usado por:
+ * - driver-app/src/screens/HomeScreen.old.jsx -> import { StatsCard } from '../components/driver/StatsCard';
+ */
 import React from 'react';
 import { View, Text } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';

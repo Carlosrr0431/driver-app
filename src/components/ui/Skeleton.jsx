@@ -1,3 +1,9 @@
+/**
+ * Componente: Skeleton
+ * Que hace: Muestra placeholders animados para estados de carga en formato tarjeta, estadisticas o lista.
+ * Usado por:
+ * - driver-app/src/screens/HomeScreen.old.jsx -> import { Skeleton } from '../components/ui/Skeleton';
+ */
 import React, { useEffect } from 'react';
 import { View } from 'react-native';
 import Animated, {

@@ -1,3 +1,10 @@
+/**
+ * Componente: ErrorBoundary
+ * Que hace: Captura errores de render en el arbol de React y muestra una pantalla de recuperacion para reintentar.
+ * Usado por:
+ * - driver-app/App.js -> import { ErrorBoundary } from './src/components/ErrorBoundary';
+ * - driver-app/App.full.js -> import { ErrorBoundary } from './src/components/ErrorBoundary';
+ */
 import React from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
 

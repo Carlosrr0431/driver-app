@@ -8,6 +8,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:29570606227:android:756263953786b9430d9966",
+        "android_client_info": {
+          "package_name": "com.remises.driverapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAHM7un7V67bPzYyR2bLhV2GKprd9H9gWQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:29570606227:android:f1e48c98e0c1c2130d9966",
         "android_client_info": {
           "package_name": "profesional.app"

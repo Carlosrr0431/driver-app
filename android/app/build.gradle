@@ -90,7 +90,7 @@ android {
 
     namespace 'com.remises.driverapp'
     defaultConfig {
-        applicationId 'profesional.app'
+        applicationId 'com.remises.driverapp'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

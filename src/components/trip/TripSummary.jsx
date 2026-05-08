@@ -1,3 +1,9 @@
+/**
+ * Componente: TripSummary
+ * Que hace: Presenta un resumen animado del viaje completado con ruta y estadisticas finales.
+ * Usado por:
+ * - Sin imports directos detectados en driver-app (componente disponible para reutilizacion).
+ */
 import React from 'react';
 import { View, Text } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';

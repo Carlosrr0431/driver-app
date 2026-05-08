@@ -1,9 +1,9 @@
 ﻿import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard } from 'react-native';
+import { View, Text, Linking, Platform, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard, PanResponder, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetScrollView, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../theme/colors';
 import { useTripStore } from '../stores/tripStore';
@@ -206,10 +206,11 @@ function extractRoadNameFromInstruction(instruction) {
     .trim();
 
   const patterns = [
-    /(?:por|direcci[oó]n a|hacia)\s+([A-Z0-9ÁÉÍÓÚÑ][^,.]+)/i,
-    /en\s+([A-Z0-9ÁÉÍÓÚÑ][^,.]+?)(?:\s+hacia|\s+con\s+direcci[oó]n|\s*,|$)/i,
-    /(?:continua|continuá|sigue|seguí)\s+por\s+([A-Z0-9ÁÉÍÓÚÑ][^,.]+)/i,
-    /(?:incorp[oó]rate|incorporate)\s+a\s+([A-Z0-9ÁÉÍÓÚÑ][^,.]+)/i,
+    // Allow dots so abbreviations like "C. Tadeo Tadía" are captured whole
+    /(?:por|direcci[oó]n a|hacia)\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+)/i,
+    /en\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+?)(?:\s+hacia|\s+con\s+direcci[oó]n|\s*,|$)/i,
+    /(?:continua|continuá|sigue|seguí)\s+por\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+)/i,
+    /(?:incorp[oó]rate|incorporate)\s+a\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+)/i,
   ];
 
   for (const pattern of patterns) {
@@ -235,11 +236,11 @@ function formatDistanceForSpeech(distanceMeters) {
   const meters = Math.max(0, Math.round(Number(distanceMeters) || 0));
   if (meters <= 35) return 'ahora';
   if (meters < 80) return 'en unos metros';
-  if (meters <= 650) {
-    const blocks = Math.max(1, Math.round(meters / 100));
-    return blocks === 1 ? 'en 1 cuadra' : `en ${blocks} cuadras`;
+  if (meters < 1000) {
+    // Round to nearest 50 m for cleaner display
+    const rounded = Math.round(meters / 50) * 50;
+    return `en ${rounded} m`;
   }
-  if (meters < 1000) return `en ${meters} metros`;
   const km = meters / 1000;
   return `en ${km >= 10 ? Math.round(km) : km.toFixed(1)} km`;
 }
@@ -272,7 +273,11 @@ const MANEUVER_TEXT_MAP = [
 
 function getDirectActionText(maneuver, roadName) {
   const normalized = String(maneuver || '').toLowerCase();
-  const roadSuffix = roadName ? ` por ${roadName}` : '';
+  // Use "en" for turns/maneuvers, "por" for continuing on a road
+  const isTurnLike = normalized.includes('turn') || normalized.includes('roundabout')
+    || normalized.includes('uturn') || normalized.includes('u-turn')
+    || normalized.includes('fork') || normalized.includes('ramp');
+  const roadSuffix = roadName ? (isTurnLike ? ` en ${roadName}` : ` por ${roadName}`) : '';
 
   // Buscar en tabla de equivalencias (orden importa: más específico primero)
   for (const [key, text] of MANEUVER_TEXT_MAP) {
@@ -298,13 +303,18 @@ function buildDirectNavigationInstruction(step, remainingDistanceMeters) {
   const roadName = extractRoadNameFromInstruction(step?.instruction);
   const maneuverOrText = step?.maneuver || step?.instruction || '';
   const actionText = getDirectActionText(maneuverOrText, roadName);
-  const distanceText = formatDistanceForSpeech(step?.distanceToStepMeters);
-  const prefix = distanceText === 'ahora'
-    ? 'Ahora'
-    : `${distanceText.charAt(0).toUpperCase()}${distanceText.slice(1)}`;
+  const distToStep = step?.distanceToStepMeters;
+  const distanceText = formatDistanceForSpeech(distToStep);
+
+  // When very close to the maneuver (< 80 m), lead with "Ahora" + action.
+  // Otherwise just show the action — the distance is already displayed as the large number.
+  if (distanceText === 'ahora' || distanceText === 'en unos metros') {
+    const prefix = distanceText === 'ahora' ? 'Ahora' : 'En unos metros';
+    return { primary: `${prefix}, ${actionText}`, roadName };
+  }
 
   return {
-    primary: `${prefix}, ${actionText}`,
+    primary: `${actionText.charAt(0).toUpperCase()}${actionText.slice(1)}`,
     roadName,
   };
 }
@@ -406,15 +416,191 @@ function resolvePickupPoint(trip, currentLocation) {
   };
 }
 
+/**
+ * Snaps a raw GPS origin to the nearest point on the active route polyline.
+ * Returns the snapped {lat, lng} if the GPS is within 30 m of the road,
+ * otherwise returns the raw coordinates unchanged.
+ * This keeps the route and navigation calculations road-aligned even when
+ * the GPS drifts onto a sidewalk.
+ */
+function snapOriginToRoute(lat, lng, routeCoords) {
+  if (!routeCoords || routeCoords.length < 2) return { lat, lng };
+  let nearest = null;
+  let nearestDist = Infinity;
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const a = routeCoords[i];
+    const b = routeCoords[i + 1];
+    const dx = b.longitude - a.longitude;
+    const dy = b.latitude - a.latitude;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1,
+      ((lng - a.longitude) * dx + (lat - a.latitude) * dy) / lenSq,
+    ));
+    const sLat = a.latitude + t * dy;
+    const sLng = a.longitude + t * dx;
+    const dLat = (sLat - lat) * Math.PI / 180;
+    const dLng = (sLng - lng) * Math.PI / 180;
+    const sinDLat = Math.sin(dLat / 2);
+    const sinDLng = Math.sin(dLng / 2);
+    const a2 = sinDLat ** 2 + Math.cos(lat * Math.PI / 180) * Math.cos(sLat * Math.PI / 180) * sinDLng ** 2;
+    const d = 6378137 * 2 * Math.atan2(Math.sqrt(a2), Math.sqrt(1 - a2));
+    if (d < nearestDist) { nearestDist = d; nearest = { lat: sLat, lng: sLng }; }
+  }
+  return nearest && nearestDist < 30 ? nearest : { lat, lng };
+}
+
+// ─── SliderButton ─────────────────────────────────────────────────────────────
+// 100% native driver: fill usa translateX en vez de width (layout props no son native).
+// translateX desplaza un view de ancho completo desde -trackW (oculto) hasta 0 (lleno).
+const SLIDER_THUMB = 52;
+const SLIDER_PAD   = 4;
+
+const sliderS = StyleSheet.create({
+  track: {
+    height: 60, borderRadius: 30, borderWidth: 1.5, marginBottom: 12,
+    justifyContent: 'center', overflow: 'hidden',
+  },
+  fill: {
+    position: 'absolute', top: 0, bottom: 0, left: 0,
+    borderRadius: 30,
+  },
+  labelRow: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  labelText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  thumb: {
+    width: SLIDER_THUMB, height: SLIDER_THUMB, borderRadius: SLIDER_THUMB / 2,
+    alignItems: 'center', justifyContent: 'center',
+    position: 'absolute', left: SLIDER_PAD,
+  },
+});
+
+const SliderButton = React.memo(React.forwardRef(({ onConfirm, label = 'Deslizá para confirmar', color, disabled = false }, ref) => {
+  const tx           = useRef(new Animated.Value(0)).current;
+  const trackWRef    = useRef(0);
+  const disabledRef  = useRef(disabled);
+  const confirmedRef = useRef(false);
+  const [trackW, setTrackW] = useState(0);
+
+  useEffect(() => { disabledRef.current = disabled; }, [disabled]);
+
+  // Expone reset() para que el padre pueda reiniciar el slider (ej: cancelar modal)
+  React.useImperativeHandle(ref, () => ({
+    reset: () => {
+      confirmedRef.current = false;
+      Animated.spring(tx, { toValue: 0, useNativeDriver: true, friction: 7, tension: 80 }).start();
+    },
+  }));
+
+  // maxTravel: distancia máxima que puede recorrer el thumb
+  const maxTravel = Math.max(1, trackW - SLIDER_THUMB - SLIDER_PAD * 2);
+
+  // Fill: view de ancho total que se desliza desde la izquierda (native driver ✅)
+  // tx=0 → translateX=-trackW (completamente oculto a la izquierda)
+  // tx=maxTravel → translateX=0 (completamente visible)
+  const fillTranslateX = tx.interpolate({
+    inputRange:  [0, maxTravel],
+    outputRange: [-Math.max(1, trackW), 0],
+    extrapolate: 'clamp',
+  });
+
+  // Texto se desvanece al 40% del recorrido (native driver ✅)
+  const labelOpacity = tx.interpolate({
+    inputRange:  [0, maxTravel * 0.4],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
+  const pan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => !disabledRef.current,
+      // Solo robar el gesto si el movimiento es más horizontal que vertical
+      onMoveShouldSetPanResponder: (_, g) =>
+        !disabledRef.current && Math.abs(g.dx) > Math.abs(g.dy) + 3,
+      onPanResponderGrant: () => {
+        if (confirmedRef.current) return; // ya confirmado, ignorar nuevos gestos
+        tx.stopAnimation();
+      },
+      onPanResponderMove: (_, g) => {
+        if (confirmedRef.current) return;
+        const max = trackWRef.current - SLIDER_THUMB - SLIDER_PAD * 2;
+        if (max <= 0) return;
+        tx.setValue(Math.max(0, Math.min(g.dx, max)));
+      },
+      onPanResponderRelease: (_, g) => {
+        if (confirmedRef.current) return;
+        const max = trackWRef.current - SLIDER_THUMB - SLIDER_PAD * 2;
+        if (max > 0 && g.dx >= max * 0.78) {
+          // Llega al final → queda ahí y llama onConfirm
+          confirmedRef.current = true;
+          Animated.timing(tx, { toValue: max, duration: 90, useNativeDriver: true }).start(() => {
+            onConfirm?.();
+          });
+        } else {
+          // No llegó al umbral → vuelve al inicio
+          Animated.spring(tx, { toValue: 0, useNativeDriver: true, friction: 7, tension: 80 }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        if (confirmedRef.current) return;
+        Animated.spring(tx, { toValue: 0, useNativeDriver: true, friction: 7, tension: 80 }).start();
+      },
+    })
+  ).current;
+
+  const btnColor = color || colors.danger;
+
+  return (
+    <View
+      onLayout={e => {
+        const w = e.nativeEvent.layout.width;
+        setTrackW(w);
+        trackWRef.current = w;
+      }}
+      style={[sliderS.track, { backgroundColor: `${btnColor}18`, borderColor: `${btnColor}45` }]}
+    >
+      {/* Relleno progresivo — translateX en vez de width → native driver */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          sliderS.fill,
+          { width: trackW, backgroundColor: btnColor, opacity: 0.30,
+            transform: [{ translateX: fillTranslateX }] },
+        ]}
+      />
+      {/* Texto centrado que se desvanece */}
+      <Animated.View style={[sliderS.labelRow, { opacity: labelOpacity }]} pointerEvents="none">
+        <MaterialCommunityIcons name="chevron-double-right" size={16} color={btnColor} />
+        <Text style={[sliderS.labelText, { color: btnColor }]}>{label}</Text>
+        <MaterialCommunityIcons name="chevron-double-right" size={16} color={`${btnColor}55`} />
+      </Animated.View>
+      {/* Thumb deslizable */}
+      <Animated.View
+        style={[sliderS.thumb, { backgroundColor: btnColor, transform: [{ translateX: tx }] }]}
+        {...pan.panHandlers}
+      >
+        <MaterialCommunityIcons name="flag-checkered" size={22} color="#fff" />
+      </Animated.View>
+    </View>
+  );
+}));
+
 const ActiveTripScreen = () => {
   const DEFAULT_TARIFF_PER_KM = 600;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const bottomSheetRef = useRef(null);
   const timerRef = useRef(null);
+  const sliderRef = useRef(null);
   const routeFetched = useRef(false);
   const lastRouteKeyRef = useRef('');
   const lastRerouteAtRef = useRef(0);
+  const fareRouteKeyRef = useRef('');
+  // Ref que mantiene las routeCoords actuales para que fetchNavigationRoute
+  // pueda leerlas sin agregarlas como dependencia del useCallback.
+  const routeCoordsRef = useRef([]);
+  const autocompleteTimerRef = useRef(null);
 
   const { activeTrip, tripTimer, tripDistanceKm, setTripTimer, addTripDistance, clearActiveTrip } = useTripStore();
   const session = useAuthStore((s) => s.session);
@@ -438,6 +624,7 @@ const ActiveTripScreen = () => {
   const [remainingDistanceMeters, setRemainingDistanceMeters] = useState(null);
   const [remainingDurationSeconds, setRemainingDurationSeconds] = useState(null);
   const [nextStepInfo, setNextStepInfo] = useState(null);
+  const [fareRouteDistanceKm, setFareRouteDistanceKm] = useState(null);
 
   // Local flow step
   const [flowStep, setFlowStep] = useState(FLOW_STEP.GOING_TO_PICKUP);
@@ -446,10 +633,14 @@ const ActiveTripScreen = () => {
   const [destinationSet, setDestinationSet] = useState(false);
   const [destinationOptions, setDestinationOptions] = useState([]);
   const [isFreeRide, setIsFreeRide] = useState(false);
+  const [isNorth3DEnabled, setIsNorth3DEnabled] = useState(true);
   const [textDestInput, setTextDestInput] = useState('');
   const [textDestProcessing, setTextDestProcessing] = useState(false);
+  const [sheetIndex, setSheetIndex] = useState(0);
+  const [accumulatedLegs, setAccumulatedLegs] = useState([]);
 
-  const snapPoints = useMemo(() => ['18%', '68%'], []);
+  const snapPoints = useMemo(() => ['18%', '68%', '90%'], []);
+  const mapControlsBottomOffset = useMemo(() => Math.max(136, Math.round(SCREEN_HEIGHT * 0.2)), []);
 
   // Derive initial flow step from DB status
   useEffect(() => {
@@ -473,8 +664,20 @@ const ActiveTripScreen = () => {
 
   useEffect(() => {
     if (!bottomSheetRef.current) return;
-    bottomSheetRef.current.snapToIndex(0);
-  }, [flowStep, activeTrip?.id]);
+    if (flowStep === FLOW_STEP.SET_DESTINATION && !destinationSet) {
+      // Abrir bien arriba para que el teclado no tape el input
+      bottomSheetRef.current.snapToIndex(2);
+    } else if (flowStep === FLOW_STEP.CHOOSE_DEST_MODE) {
+      bottomSheetRef.current.snapToIndex(1);
+    } else {
+      bottomSheetRef.current.snapToIndex(0);
+    }
+  }, [flowStep, destinationSet, activeTrip?.id]);
+
+  useEffect(() => {
+    // Cada viaje inicia con modo 3D Norte-arriba activo por defecto.
+    setIsNorth3DEnabled(true);
+  }, [activeTrip?.id]);
 
   // Fetch tariff
   useEffect(() => {
@@ -543,6 +746,8 @@ const ActiveTripScreen = () => {
     setRemainingDistanceMeters(null);
     setRemainingDurationSeconds(null);
     setNextStepInfo(null);
+    setFareRouteDistanceKm(null);
+    fareRouteKeyRef.current = '';
   }, [
     activeTrip?.id,
     activeTrip?.origin_lat,
@@ -559,7 +764,9 @@ const ActiveTripScreen = () => {
 
     try {
       const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
-      const origin = { lat: currentLocation.lat, lng: currentLocation.lng };
+      // Snap the origin to the existing polyline (if loaded) so the new route
+      // always departs from the road, not from a sidewalk GPS position.
+      const origin = snapOriginToRoute(currentLocation.lat, currentLocation.lng, routeCoordsRef.current);
       const destination = (flowStep === FLOW_STEP.IN_PROGRESS || destinationSet)
         ? {
           lat: parseFloat(activeTrip.destination_lat),
@@ -633,50 +840,144 @@ const ActiveTripScreen = () => {
     return Math.round(tariffInfo.base + tariffInfo.perKm * tripDistanceKm);
   }, [tripDistanceKm, tariffInfo]);
 
-  // Estimated total using full route distance (when available)
-  const routeDistanceKm = useMemo(() => parseRouteDistanceKm(routeInfo), [routeInfo]);
   const routeCoords = useMemo(
     () => (routePolyline ? decodePolyline(routePolyline) : []),
     [routePolyline]
   );
+
+  const shouldUseFixedRouteFare = useMemo(() => {
+    if (!destinationSet || isFreeRide) return false;
+    const originLat = parseFloat(activeTrip?.origin_lat);
+    const originLng = parseFloat(activeTrip?.origin_lng);
+    const destLat = parseFloat(activeTrip?.destination_lat);
+    const destLng = parseFloat(activeTrip?.destination_lng);
+    return Number.isFinite(originLat)
+      && Number.isFinite(originLng)
+      && Number.isFinite(destLat)
+      && Number.isFinite(destLng);
+  }, [
+    activeTrip?.origin_lat,
+    activeTrip?.origin_lng,
+    activeTrip?.destination_lat,
+    activeTrip?.destination_lng,
+    destinationSet,
+    isFreeRide,
+  ]);
+
+  useEffect(() => {
+    if (!activeTrip || !shouldUseFixedRouteFare) {
+      setFareRouteDistanceKm(null);
+      fareRouteKeyRef.current = '';
+      return;
+    }
+
+    const origin = {
+      lat: parseFloat(activeTrip.origin_lat),
+      lng: parseFloat(activeTrip.origin_lng),
+    };
+    const destination = {
+      lat: parseFloat(activeTrip.destination_lat),
+      lng: parseFloat(activeTrip.destination_lng),
+    };
+
+    const fareKey = [
+      activeTrip.id,
+      Number(origin.lat).toFixed(6),
+      Number(origin.lng).toFixed(6),
+      Number(destination.lat).toFixed(6),
+      Number(destination.lng).toFixed(6),
+    ].join('|');
+
+    if (fareRouteKeyRef.current === fareKey) return;
+    fareRouteKeyRef.current = fareKey;
+
+    let cancelled = false;
+
+    const fetchFareRouteDistance = async () => {
+      try {
+        const result = await getDirections(origin, destination);
+        if (cancelled) return;
+
+        const parsedKm = parseRouteDistanceKm({
+          distanceValue: result?.distanceValue,
+          distance: result?.distance,
+        });
+
+        setFareRouteDistanceKm(Number.isFinite(parsedKm) && parsedKm > 0 ? parsedKm : null);
+      } catch (error) {
+        if (cancelled) return;
+        console.warn('Error fetching fare route:', error);
+        setFareRouteDistanceKm(null);
+        fareRouteKeyRef.current = '';
+      }
+    };
+
+    fetchFareRouteDistance();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTrip?.id,
+    activeTrip?.origin_lat,
+    activeTrip?.origin_lng,
+    activeTrip?.destination_lat,
+    activeTrip?.destination_lng,
+    shouldUseFixedRouteFare,
+  ]);
+
+  // Keep ref in sync so fetchNavigationRoute can read routeCoords without
+  // adding it to the useCallback dependency array.
+  useEffect(() => { routeCoordsRef.current = routeCoords; }, [routeCoords]);
+
+  // Snap raw GPS to the nearest point on the active polyline.
+  // Used for remaining distance, step detection and reroute checks so that
+  // sidewalk GPS drift doesn't corrupt navigation state.
+  const snappedNavPoint = useMemo(() => {
+    if (!currentLocation) return null;
+    const { lat, lng } = snapOriginToRoute(currentLocation.lat, currentLocation.lng, routeCoords);
+    return { latitude: lat, longitude: lng };
+  }, [currentLocation, routeCoords]);
 
   const effectiveTariffPerKm = useMemo(() => {
     const kmRate = Number(tariffInfo.perKm);
     return Number.isFinite(kmRate) && kmRate > 0 ? kmRate : DEFAULT_TARIFF_PER_KM;
   }, [tariffInfo.perKm]);
 
-  const estimatedTotalPrice = useMemo(() => {
-    if (!Number.isFinite(routeDistanceKm)) return livePrice;
-    return Math.round(tariffInfo.base + tariffInfo.perKm * routeDistanceKm);
-  }, [routeDistanceKm, tariffInfo, livePrice]);
-
-  const routeBasedTotalPrice = useMemo(() => {
-    if (!tariffLoaded || !Number.isFinite(routeDistanceKm)) return null;
-    return Math.round(effectiveTariffPerKm * routeDistanceKm);
-  }, [tariffLoaded, effectiveTariffPerKm, routeDistanceKm]);
+  const fixedRouteTotalPrice = useMemo(() => {
+    if (!tariffLoaded || !shouldUseFixedRouteFare || !Number.isFinite(fareRouteDistanceKm)) return null;
+    return Math.round(effectiveTariffPerKm * fareRouteDistanceKm);
+  }, [tariffLoaded, shouldUseFixedRouteFare, effectiveTariffPerKm, fareRouteDistanceKm]);
 
   const checkoutDistanceKm = useMemo(() => {
-    if (Number.isFinite(routeDistanceKm) && routeDistanceKm > 0) return routeDistanceKm;
+    if (shouldUseFixedRouteFare && Number.isFinite(fareRouteDistanceKm) && fareRouteDistanceKm > 0) {
+      return fareRouteDistanceKm;
+    }
     return tripDistanceKm;
-  }, [routeDistanceKm, tripDistanceKm]);
+  }, [shouldUseFixedRouteFare, fareRouteDistanceKm, tripDistanceKm]);
 
   const checkoutTotalPrice = useMemo(() => {
-    if (Number.isFinite(routeBasedTotalPrice) && routeBasedTotalPrice > 0) return routeBasedTotalPrice;
+    if (Number.isFinite(fixedRouteTotalPrice) && fixedRouteTotalPrice > 0) return fixedRouteTotalPrice;
     if (Number.isFinite(checkoutDistanceKm) && checkoutDistanceKm > 0) {
       return Math.round(effectiveTariffPerKm * checkoutDistanceKm);
     }
     return livePrice;
-  }, [routeBasedTotalPrice, checkoutDistanceKm, effectiveTariffPerKm, livePrice]);
+  }, [fixedRouteTotalPrice, checkoutDistanceKm, effectiveTariffPerKm, livePrice]);
+
+  const grandTotalDistanceKm = useMemo(() =>
+    accumulatedLegs.reduce((s, l) => s + (l.distanceKm || 0), 0) + (checkoutDistanceKm || 0),
+    [accumulatedLegs, checkoutDistanceKm]
+  );
+
+  const grandTotalPrice = useMemo(() =>
+    accumulatedLegs.reduce((s, l) => s + (l.price || 0), 0) + (checkoutTotalPrice || 0),
+    [accumulatedLegs, checkoutTotalPrice]
+  );
 
   useEffect(() => {
-    if (!currentLocation || routeCoords.length === 0) return;
+    if (!snappedNavPoint || routeCoords.length === 0) return;
 
-    const currentPoint = {
-      latitude: currentLocation.lat,
-      longitude: currentLocation.lng,
-    };
-
-    const remainingMeters = getRouteRemainingMeters(currentPoint, routeCoords);
+    const remainingMeters = getRouteRemainingMeters(snappedNavPoint, routeCoords);
     setRemainingDistanceMeters(remainingMeters);
 
     const totalDistanceMeters = Number(routeInfo?.distanceValue) || 0;
@@ -686,20 +987,23 @@ const ActiveTripScreen = () => {
       : null;
     setRemainingDurationSeconds(estimatedRemainingSeconds);
 
-    const step = getCurrentNavigationStep(currentPoint, routeSteps);
+    const step = getCurrentNavigationStep(snappedNavPoint, routeSteps);
     setNextStepInfo(step);
-  }, [currentLocation, routeCoords, routeInfo?.distanceValue, routeInfo?.durationValue, routeSteps]);
+  }, [snappedNavPoint, routeCoords, routeInfo?.distanceValue, routeInfo?.durationValue, routeSteps]);
 
   useEffect(() => {
     if (!currentLocation || routeCoords.length < 2) return;
 
+    // Usa la posición GPS raw (no snapped) para detectar desvíos reales.
+    // Umbral subido a 100 m y cooldown a 15 s para evitar re-ruteos por
+    // jitter de GPS cerca de edificios o en zonas de señal débil.
     const currentPoint = {
       latitude: currentLocation.lat,
       longitude: currentLocation.lng,
     };
     const deviationMeters = getDistanceToPolylineMeters(currentPoint, routeCoords);
     const now = Date.now();
-    if (deviationMeters > 80 && now - lastRerouteAtRef.current > 4000) {
+    if (deviationMeters > 100 && now - lastRerouteAtRef.current > 15000) {
       lastRerouteAtRef.current = now;
       fetchNavigationRoute(true);
     }
@@ -727,6 +1031,37 @@ const ActiveTripScreen = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setFlowStep(FLOW_STEP.AT_PICKUP);
   }, []);
+
+  // Abre Google Maps externo con navegación turn-by-turn.
+  // - Android: google.navigation arranca directo sin pantalla de overview (entry=fnls)
+  // - iOS: comgooglemaps con modo driving
+  // - Fallback: web con destino y nombre
+  const handleOpenGoogleMapsNav = useCallback((destLat, destLng, destAddress) => {
+    if (!Number.isFinite(destLat) || !Number.isFinite(destLng)) return;
+    const label = destAddress ? encodeURIComponent(destAddress) : `${destLat},${destLng}`;
+    const coordDest = `${destLat},${destLng}`;
+    const oLat = currentLocation?.latitude;
+    const oLng = currentLocation?.longitude;
+    const hasOrigin = Number.isFinite(oLat) && Number.isFinite(oLng);
+    let url;
+    if (Platform.OS === 'android') {
+      // entry=fnls = salta overview y arranca navegación inmediatamente
+      url = `google.navigation:q=${coordDest}&mode=d&entry=fnls`;
+    } else {
+      const origin = hasOrigin ? `saddr=${oLat},${oLng}&` : '';
+      url = `comgooglemaps://?${origin}daddr=${coordDest}&directionsmode=driving`;
+    }
+    Linking.canOpenURL(url).then((supported) => {
+      if (supported) {
+        Linking.openURL(url);
+      } else {
+        const originParam = hasOrigin ? `&origin=${oLat},${oLng}` : '';
+        Linking.openURL(
+          `https://www.google.com/maps/dir/?api=1${originParam}&destination=${coordDest}&destination_place_id=&travelmode=driving`,
+        );
+      }
+    });
+  }, [currentLocation]);
 
   // Share real-time tracking link via WhatsApp
   const handleShareTracking = useCallback(() => {
@@ -819,27 +1154,39 @@ const ActiveTripScreen = () => {
     }
   }, [activeTrip, currentLocation]);
 
-  // Step 3: Text destination search
-  const handleTextDestSearch = useCallback(async () => {
-    if (!textDestInput.trim()) return;
-    Keyboard.dismiss();
-    setTextDestProcessing(true);
-    setDestinationOptions([]);
-    try {
-      const results = await autocompleteAddressSalta(textDestInput.trim(), 5);
-      if (results.length === 0) {
-        Toast.show({ type: 'error', text1: 'Sin resultados', text2: 'Probá con otra dirección', visibilityTime: 3000 });
-      } else if (results.length === 1) {
-        await selectDestination(results[0]);
-      } else {
-        setDestinationOptions(results);
-      }
-    } catch (err) {
-      Toast.show({ type: 'error', text1: 'Error', text2: 'No se pudo buscar la dirección', visibilityTime: 3000 });
-    } finally {
+  // Autocomplete en tiempo real: se dispara cada vez que el usuario escribe,
+  // con un debounce de 350 ms para no saturar la API.
+  useEffect(() => {
+    if (flowStep !== FLOW_STEP.SET_DESTINATION || destinationSet) return;
+    const query = textDestInput.trim();
+    if (autocompleteTimerRef.current) clearTimeout(autocompleteTimerRef.current);
+    if (query.length < 3) {
+      setDestinationOptions([]);
       setTextDestProcessing(false);
+      return;
     }
-  }, [textDestInput, selectDestination]);
+    setTextDestProcessing(true);
+    autocompleteTimerRef.current = setTimeout(async () => {
+      try {
+        const results = await autocompleteAddressSalta(query, 6);
+        setDestinationOptions(results);
+      } catch {
+        setDestinationOptions([]);
+      } finally {
+        setTextDestProcessing(false);
+      }
+    }, 350);
+    return () => { if (autocompleteTimerRef.current) clearTimeout(autocompleteTimerRef.current); };
+  }, [textDestInput, flowStep, destinationSet]);
+
+  // Step 3: Text destination search (manual fallback via teclado)
+  const handleTextDestSearch = useCallback(async () => {
+    if (!textDestInput.trim() || textDestProcessing) return;
+    // Seleccionar automáticamente el primer resultado si ya hay opciones
+    if (destinationOptions.length > 0) {
+      await selectDestination(destinationOptions[0]);
+    }
+  }, [textDestInput, textDestProcessing, destinationOptions, selectDestination]);
 
   // Free ride: start without a preset destination, calculate fare by GPS km
   const handleChooseFreeRide = useCallback(async () => {
@@ -908,14 +1255,33 @@ const ActiveTripScreen = () => {
     setShowFinishModal(true);
   }, [activeTrip, finishingTrip]);
 
+  // Agregar otro destino: guarda el tramo actual y vuelve al selector de destino
+  const handleAddAnotherDestination = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setAccumulatedLegs(prev => [...prev, {
+      distanceKm: checkoutDistanceKm || 0,
+      price: checkoutTotalPrice || 0,
+      address: activeTrip?.destination_address || 'Destino',
+    }]);
+    setDestinationSet(false);
+    setTextDestInput('');
+    setDestinationOptions([]);
+    setRoutePolyline(null);
+    setRouteInfo(null);
+    setRouteSteps([]);
+    routeFetched.current = false;
+    lastRouteKeyRef.current = '';
+    setFlowStep(FLOW_STEP.CHOOSE_DEST_MODE);
+  }, [activeTrip, checkoutDistanceKm, checkoutTotalPrice]);
+
   const handleConfirmFinishTrip = useCallback(async () => {
     if (!activeTrip || finishingTrip) return;
     try {
       setFinishingTrip(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      const distanceKm = Number.isFinite(checkoutDistanceKm) ? Math.round(checkoutDistanceKm * 10) / 10 : 0;
-      const totalPrice = Number.isFinite(checkoutTotalPrice) ? Math.round(checkoutTotalPrice) : 0;
+      const distanceKm = Number.isFinite(grandTotalDistanceKm) ? Math.round(grandTotalDistanceKm * 10) / 10 : 0;
+      const totalPrice = Number.isFinite(grandTotalPrice) ? Math.round(grandTotalPrice) : 0;
       const commissionAmount = Math.round(totalPrice * (tariffInfo.commission || 10) / 100);
 
       const result = await updateTripStatus(activeTrip.id, TRIP_STATUS.COMPLETED, {
@@ -960,8 +1326,8 @@ const ActiveTripScreen = () => {
   }, [
     activeTrip,
     finishingTrip,
-    checkoutDistanceKm,
-    checkoutTotalPrice,
+    grandTotalDistanceKm,
+    grandTotalPrice,
     tariffInfo.commission,
     updateTripStatus,
     stopTracking,
@@ -1116,16 +1482,23 @@ const ActiveTripScreen = () => {
     ? Math.max(0, Math.min(1, traveledDistanceMeters / totalRouteDistanceMeters))
     : 0;
   const progressPercent = Math.round(progressRatio * 100);
+  const destinationPoint = {
+    lat: parseFloat(activeTrip.destination_lat),
+    lng: parseFloat(activeTrip.destination_lng),
+    address: activeTrip.destination_address,
+  };
+  const hasDestinationPoint = Number.isFinite(destinationPoint.lat) && Number.isFinite(destinationPoint.lng);
+  const shouldKeepPickupAsDestination =
+    flowStep === FLOW_STEP.GOING_TO_PICKUP
+    || flowStep === FLOW_STEP.AT_PICKUP
+    || flowStep === FLOW_STEP.CHOOSE_DEST_MODE
+    || (flowStep === FLOW_STEP.SET_DESTINATION && !hasDestinationPoint);
 
   // Map destination target based on step
   const mapOrigin = (useTripOriginRoute && hasTripOrigin) ? tripOriginPoint : pickupPoint;
-  const mapDestination = (flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.AT_PICKUP || flowStep === FLOW_STEP.CHOOSE_DEST_MODE)
+  const mapDestination = shouldKeepPickupAsDestination
     ? pickupPoint
-    : {
-      lat: parseFloat(activeTrip.destination_lat),
-      lng: parseFloat(activeTrip.destination_lng),
-      address: activeTrip.destination_address,
-    };
+    : (hasDestinationPoint ? destinationPoint : null);
 
   return (
     <View style={s.root}>
@@ -1224,7 +1597,7 @@ const ActiveTripScreen = () => {
         visible={showFinishModal}
         transparent
         animationType="fade"
-        onRequestClose={() => !finishingTrip && setShowFinishModal(false)}
+        onRequestClose={() => { if (!finishingTrip) { setShowFinishModal(false); sliderRef.current?.reset(); } }}
       >
         <View style={s.finishModalBackdrop}>
           <View style={s.finishModalCard}>
@@ -1238,20 +1611,29 @@ const ActiveTripScreen = () => {
               </View>
             </View>
 
+            {accumulatedLegs.length > 0 && (
+              <View style={s.finishModalLegsRow}>
+                <MaterialCommunityIcons name="layers-triple-outline" size={14} color={colors.info} />
+                <Text style={s.finishModalLegsText}>
+                  {accumulatedLegs.length} tramo{accumulatedLegs.length !== 1 ? 's' : ''} acumulado{accumulatedLegs.length !== 1 ? 's' : ''} incluido{accumulatedLegs.length !== 1 ? 's' : ''}
+                </Text>
+              </View>
+            )}
+
             <View style={s.finishModalInfoRow}>
               <Text style={s.finishModalInfoLabel}>Distancia total</Text>
-              <Text style={s.finishModalInfoValue}>{formatDistance(checkoutDistanceKm)}</Text>
+              <Text style={s.finishModalInfoValue}>{formatDistance(grandTotalDistanceKm)}</Text>
             </View>
 
             <View style={s.finishModalTotalWrap}>
               <Text style={s.finishModalTotalLabel}>Costo total del viaje</Text>
-              <Text style={s.finishModalTotalValue}>{formatPrice(checkoutTotalPrice)}</Text>
+              <Text style={s.finishModalTotalValue}>{formatPrice(grandTotalPrice)}</Text>
             </View>
 
             <View style={s.finishModalActions}>
               <TouchableOpacity
                 style={[s.finishModalBtn, s.finishModalBtnGhost, finishingTrip && s.finishModalBtnDisabled]}
-                onPress={() => !finishingTrip && setShowFinishModal(false)}
+                onPress={() => { if (!finishingTrip) { setShowFinishModal(false); sliderRef.current?.reset(); } }}
                 activeOpacity={0.8}
                 disabled={finishingTrip}
               >
@@ -1281,7 +1663,17 @@ const ActiveTripScreen = () => {
         destination={mapDestination}
         polyline={routePolyline}
         heading={heading}
-        navigationMode
+        navigationMode={isInProgress || flowStep === FLOW_STEP.GOING_TO_PICKUP}
+        threeDEnabled={(isInProgress || flowStep === FLOW_STEP.GOING_TO_PICKUP) && isNorth3DEnabled}
+        onToggleThreeD={() => setIsNorth3DEnabled((prev) => !prev)}
+        onOpenGoogleMaps={() => {
+          const dest =
+            flowStep === FLOW_STEP.GOING_TO_PICKUP
+              ? pickupPoint
+              : (hasDestinationPoint ? destinationPoint : pickupPoint);
+          if (dest?.lat != null) handleOpenGoogleMapsNav(dest.lat, dest.lng, dest.address);
+        }}
+        controlsBottomOffset={mapControlsBottomOffset}
         remainingDistanceMeters={remainingDistanceMeters}
         style={StyleSheet.absoluteFillObject}
       />
@@ -1304,6 +1696,8 @@ const ActiveTripScreen = () => {
         </View>
       </View>
 
+      {/* Floating map toggle button */}
+
       {/* Bottom Sheet */}
       <BottomSheet
         ref={bottomSheetRef}
@@ -1311,6 +1705,9 @@ const ActiveTripScreen = () => {
         snapPoints={snapPoints}
         backgroundStyle={s.sheetBg}
         handleIndicatorStyle={s.handle}
+        onChange={(index) => setSheetIndex(index)}
+        keyboardBehavior="extend"
+        keyboardBlurBehavior="restore"
       >
         <BottomSheetScrollView contentContainerStyle={s.sheetContent} showsVerticalScrollIndicator={false}>
 
@@ -1325,17 +1722,6 @@ const ActiveTripScreen = () => {
                 <MaterialCommunityIcons name="map-marker-check" size={22} color="#fff" />
                 <Text style={s.actionBtnText}>Llegué al punto de encuentro</Text>
               </TouchableOpacity>
-
-              {activeTrip?.tracking_token ? (
-                <TouchableOpacity
-                  style={s.shareWhatsappBtn}
-                  onPress={handleShareTracking}
-                  activeOpacity={0.82}
-                >
-                  <MaterialCommunityIcons name="whatsapp" size={20} color="#25D366" />
-                  <Text style={s.shareWhatsappBtnText}>Compartir seguimiento por WhatsApp</Text>
-                </TouchableOpacity>
-              ) : null}
 
               <View style={s.addressCard}>
                 <View style={s.addressRow}>
@@ -1428,53 +1814,67 @@ const ActiveTripScreen = () => {
             <>
               {!destinationSet ? (
                 <>
-                  <View style={s.textDestSection}>
-                    <View style={s.textDestInputRow}>
-                      <TextInput
+                  {/* Input con BottomSheetTextInput para que el sheet suba con el teclado */}
+                  <View style={s.textDestInputRow}>
+                    <View style={s.textDestInputWrap}>
+                      <MaterialCommunityIcons
+                        name={textDestProcessing ? 'loading' : 'magnify'}
+                        size={20}
+                        color={colors.textMuted}
+                        style={s.textDestIcon}
+                      />
+                      <BottomSheetTextInput
                         style={s.textDestInput}
                         value={textDestInput}
                         onChangeText={setTextDestInput}
-                        placeholder="Ej: Belgrano 500, Salta"
+                        placeholder="Buscar dirección..."
                         placeholderTextColor={colors.textMuted}
                         returnKeyType="search"
                         onSubmitEditing={handleTextDestSearch}
-                        editable={!textDestProcessing}
                         autoFocus
+                        autoCorrect={false}
+                        autoCapitalize="words"
                       />
-                      <TouchableOpacity
-                        style={[s.textDestSearchBtn, (!textDestInput.trim() || textDestProcessing) && { opacity: 0.5 }]}
-                        onPress={handleTextDestSearch}
-                        disabled={textDestProcessing || !textDestInput.trim()}
-                        activeOpacity={0.8}
-                      >
-                        {textDestProcessing ? (
-                          <ActivityIndicator size="small" color="#fff" />
-                        ) : (
-                          <MaterialCommunityIcons name="magnify" size={22} color="#fff" />
-                        )}
-                      </TouchableOpacity>
+                      {textDestProcessing && (
+                        <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
+                      )}
+                      {!textDestProcessing && textDestInput.length > 0 && (
+                        <TouchableOpacity
+                          onPress={() => { setTextDestInput(''); setDestinationOptions([]); }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          style={{ marginRight: 10 }}
+                        >
+                          <MaterialCommunityIcons name="close-circle" size={18} color={colors.textMuted} />
+                        </TouchableOpacity>
+                      )}
                     </View>
-
-                    {destinationOptions.length > 0 && (
-                      <>
-                        <Text style={s.optionsTitle}>Seleccioná el destino correcto:</Text>
-                        {destinationOptions.map((opt, idx) => (
-                          <TouchableOpacity
-                            key={opt.placeId || `opt-${idx}`}
-                            style={s.optionCard}
-                            onPress={() => selectDestination(opt)}
-                            activeOpacity={0.7}
-                          >
-                            <View style={s.optionNumberCircle}>
-                              <Text style={s.optionNumber}>{idx + 1}</Text>
-                            </View>
-                            <Text style={s.optionAddress} numberOfLines={2}>{opt.address}</Text>
-                            <MaterialCommunityIcons name="chevron-right" size={20} color={colors.textMuted} />
-                          </TouchableOpacity>
-                        ))}
-                      </>
-                    )}
                   </View>
+
+                  {/* Opciones de autocomplete — aparecen mientras el usuario escribe */}
+                  {destinationOptions.length > 0 && (
+                    <View style={s.autocompleteList}>
+                      {destinationOptions.map((opt, idx) => (
+                        <TouchableOpacity
+                          key={opt.placeId || `opt-${idx}`}
+                          style={[
+                            s.autocompleteItem,
+                            idx < destinationOptions.length - 1 && s.autocompleteItemBorder,
+                          ]}
+                          onPress={() => selectDestination(opt)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={s.autocompleteIcon}>
+                            <MaterialCommunityIcons name="map-marker-outline" size={18} color={colors.primary} />
+                          </View>
+                          <Text style={s.autocompleteAddress} numberOfLines={2}>{opt.address}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  {textDestInput.length >= 3 && !textDestProcessing && destinationOptions.length === 0 && (
+                    <Text style={s.autocompleteEmpty}>Sin resultados para "{textDestInput}"</Text>
+                  )}
 
                   <TouchableOpacity
                     style={s.backToChooseBtn}
@@ -1518,13 +1918,13 @@ const ActiveTripScreen = () => {
                       <View>
                         <Text style={s.livePriceLabel}>Costo estimado</Text>
                         <Text style={s.livePriceSubLabel}>
-                          {Number.isFinite(routeDistanceKm)
-                            ? `${formatDistance(routeDistanceKm)} x ${formatPrice(effectiveTariffPerKm)}/km`
+                          {Number.isFinite(checkoutDistanceKm) && checkoutDistanceKm > 0
+                            ? `${formatDistance(checkoutDistanceKm)} x ${formatPrice(effectiveTariffPerKm)}/km`
                             : 'Calculando costo...'}
                         </Text>
                       </View>
                       <Text style={s.livePriceValue}>
-                        {routeBasedTotalPrice == null ? '...' : formatPrice(routeBasedTotalPrice)}
+                        {fixedRouteTotalPrice == null ? '...' : formatPrice(fixedRouteTotalPrice)}
                       </Text>
                     </View>
                   </View>
@@ -1545,13 +1945,40 @@ const ActiveTripScreen = () => {
           {/* STEP 4: In progress */}
           {flowStep === FLOW_STEP.IN_PROGRESS && (
             <>
+              {/* Resumen de tramos anteriores */}
+              {accumulatedLegs.length > 0 && (
+                <View style={s.accumulatedCard}>
+                  <MaterialCommunityIcons name="layers-triple-outline" size={15} color={colors.info} />
+                  <Text style={s.accumulatedCardText}>
+                    {accumulatedLegs.length} tramo{accumulatedLegs.length !== 1 ? 's' : ''} anterior{accumulatedLegs.length !== 1 ? 'es' : ''}{' '}
+                    · {formatDistance(accumulatedLegs.reduce((s, l) => s + (l.distanceKm || 0), 0))}{' '}
+                    · {formatPrice(accumulatedLegs.reduce((s, l) => s + (l.price || 0), 0))}
+                  </Text>
+                </View>
+              )}
+
+              {/* Slider para finalizar */}
+              <SliderButton
+                ref={sliderRef}
+                onConfirm={handleEndTrip}
+                label="Deslizá para finalizar viaje"
+                color={colors.danger}
+                disabled={finishingTrip}
+              />
+
+              {/* Agregar otro destino */}
               <TouchableOpacity
-                style={[s.actionBtn, { backgroundColor: colors.danger }]}
-                onPress={handleEndTrip}
+                style={s.addDestBtn}
+                onPress={handleAddAnotherDestination}
                 activeOpacity={0.85}
               >
-                <MaterialCommunityIcons name="flag-checkered" size={22} color="#fff" />
-                <Text style={s.actionBtnText}>Llegué a destino</Text>
+                <MaterialCommunityIcons name="map-marker-plus" size={20} color={colors.primary} />
+                <Text style={s.addDestBtnText}>Agregar otro destino</Text>
+                {accumulatedLegs.length > 0 && (
+                  <View style={s.addDestBadge}>
+                    <Text style={s.addDestBadgeText}>{accumulatedLegs.length}</Text>
+                  </View>
+                )}
               </TouchableOpacity>
 
               <View style={s.addressCard}>
@@ -1566,7 +1993,7 @@ const ActiveTripScreen = () => {
                 <View style={s.addressRow}>
                   <View style={[s.addressDot, { backgroundColor: colors.danger }]} />
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={s.addressLabel}>Destino</Text>
+                    <Text style={s.addressLabel}>Destino actual</Text>
                     <Text style={s.addressText} numberOfLines={2}>{activeTrip.destination_address}</Text>
                   </View>
                 </View>
@@ -1575,15 +2002,15 @@ const ActiveTripScreen = () => {
               <View style={s.livePriceCard}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View>
-                    <Text style={s.livePriceLabel}>Costo total</Text>
+                    <Text style={s.livePriceLabel}>{accumulatedLegs.length > 0 ? 'Total acumulado' : 'Costo total'}</Text>
                     <Text style={s.livePriceSubLabel}>
-                      {Number.isFinite(routeDistanceKm)
-                        ? `${formatDistance(routeDistanceKm)} x ${formatPrice(effectiveTariffPerKm)}/km`
+                      {grandTotalDistanceKm > 0
+                        ? `${formatDistance(grandTotalDistanceKm)} x ${formatPrice(effectiveTariffPerKm)}/km`
                         : 'Calculando costo...'}
                     </Text>
                   </View>
                   <Text style={s.livePriceValue}>
-                    {routeBasedTotalPrice == null ? '...' : formatPrice(routeBasedTotalPrice)}
+                    {grandTotalPrice > 0 ? formatPrice(grandTotalPrice) : '...'}
                   </Text>
                 </View>
               </View>
@@ -1945,6 +2372,31 @@ const s = StyleSheet.create({
     paddingVertical: 8,
   },
   reRecordText: { color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_500Medium' },
+  floatingMapToggle: {
+    position: 'absolute',
+    alignSelf: 'center',
+    left: '50%',
+    transform: [{ translateX: -70 }],
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  floatingMapToggleText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+  },
   // Choose destination mode
   chooseModeTitle: {
     color: colors.text, fontSize: 15, fontFamily: 'Inter_700Bold',
@@ -1963,23 +2415,70 @@ const s = StyleSheet.create({
   chooseModeBtnSubtitle: { color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
   // Text destination
   textDestSection: { marginBottom: 10 },
-  textDestInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  textDestInput: {
-    flex: 1,
+  textDestInputRow: { marginBottom: 4 },
+  textDestInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: colors.background,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1.5,
     borderColor: colors.border,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingLeft: 12,
+  },
+  textDestIcon: { marginRight: 8 },
+  textDestInput: {
+    flex: 1,
+    paddingVertical: 12,
     color: colors.text,
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: 'Inter_400Regular',
   },
   textDestSearchBtn: {
     width: 46, height: 46, borderRadius: 12,
     backgroundColor: colors.primary,
     alignItems: 'center', justifyContent: 'center',
+  },
+  autocompleteList: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  autocompleteItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  autocompleteItemBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  autocompleteIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: `${colors.primary}12`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    flexShrink: 0,
+  },
+  autocompleteAddress: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    lineHeight: 18,
+  },
+  autocompleteEmpty: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    paddingVertical: 12,
   },
   backToChooseBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -2029,6 +2528,33 @@ const s = StyleSheet.create({
   },
   optionNumber: { color: colors.primary, fontSize: 13, fontFamily: 'Inter_700Bold' },
   optionAddress: { color: colors.text, fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1 },
+  // Multi-destino
+  accumulatedCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: `${colors.info}10`, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,
+    borderWidth: 1, borderColor: `${colors.info}25`,
+  },
+  accumulatedCardText: { color: colors.info, fontSize: 12, fontFamily: 'Inter_600SemiBold', flex: 1 },
+  addDestBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 14, borderRadius: 14, gap: 10, marginBottom: 10,
+    backgroundColor: `${colors.primary}10`, borderWidth: 1.5, borderColor: `${colors.primary}30`,
+  },
+  addDestBtnText: { color: colors.primary, fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  addDestBadge: {
+    backgroundColor: colors.primary, borderRadius: 10,
+    minWidth: 20, height: 20, paddingHorizontal: 5,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  addDestBadgeText: { color: '#fff', fontSize: 11, fontFamily: 'Inter_700Bold' },
+  finishModalLegsRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: `${colors.info}10`, borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 8, marginBottom: 10,
+    borderWidth: 1, borderColor: `${colors.info}25`,
+  },
+  finishModalLegsText: { color: colors.info, fontSize: 12, fontFamily: 'Inter_500Medium', flex: 1 },
 });
 
 export default ActiveTripScreen;

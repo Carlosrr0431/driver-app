@@ -1,3 +1,9 @@
+/**
+ * Componente: TripCard
+ * Que hace: Renderiza una tarjeta resumida de viaje historico con origen, destino, estado y metricas principales.
+ * Usado por:
+ * - driver-app/src/screens/HomeScreen.old.jsx -> import { TripCard } from '../components/trip/TripCard';
+ */
 import React from 'react';
 import { TouchableOpacity, View, Text } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';

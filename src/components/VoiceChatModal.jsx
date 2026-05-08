@@ -1,3 +1,9 @@
+/**
+ * Componente: VoiceChatModal
+ * Que hace: Muestra el modal de radio base para listar, grabar, enviar y reproducir mensajes de voz del conductor.
+ * Usado por:
+ * - driver-app/src/screens/HomeScreen.jsx -> import { VoiceChatModal } from '../components/VoiceChatModal';
+ */
 import React, { useRef, useEffect, useState } from 'react';
 import {
   View,

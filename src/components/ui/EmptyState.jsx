@@ -1,3 +1,9 @@
+/**
+ * Componente: EmptyState
+ * Que hace: Renderiza una vista de estado vacio con icono, titulo y mensaje para listas sin datos.
+ * Usado por:
+ * - Sin imports directos detectados en driver-app (componente disponible para reutilizacion).
+ */
 import React from 'react';
 import { View, Text } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';

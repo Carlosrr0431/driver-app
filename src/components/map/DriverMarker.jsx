@@ -1,3 +1,9 @@
+/**
+ * Componente: DriverMarker
+ * Que hace: Dibuja un marcador dedicado para la posicion del conductor con icono de auto y anillo visual.
+ * Usado por:
+ * - Sin imports directos detectados en driver-app (componente disponible para reutilizacion).
+ */
 import React from 'react';
 import { View } from 'react-native';
 import { Marker } from 'react-native-maps';

@@ -1,3 +1,11 @@
+/**
+ * Componente: Badge
+ * Que hace: Muestra una etiqueta de estado con color y texto configurable para viajes u otros estados.
+ * Usado por:
+ * - driver-app/src/components/trip/TripCard.jsx -> import { Badge } from '../ui/Badge';
+ * - driver-app/src/screens/ProfileScreen.jsx -> import { Badge } from '../components/ui/Badge';
+ * - driver-app/src/screens/TripDetailScreen.jsx -> import { Badge } from '../components/ui/Badge';
+ */
 import React from 'react';
 import { View, Text } from 'react-native';
 import { TRIP_STATUS_LABELS, TRIP_STATUS_COLORS } from '../../utils/constants';

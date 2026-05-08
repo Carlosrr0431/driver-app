@@ -1,3 +1,9 @@
+/**
+ * Componente: Button
+ * Que hace: Boton reutilizable con variantes visuales, estado de carga y animacion tactil con haptics.
+ * Usado por:
+ * - Sin imports directos detectados en driver-app (componente disponible para reutilizacion).
+ */
 import React from 'react';
 import { TouchableOpacity, Text, ActivityIndicator, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
