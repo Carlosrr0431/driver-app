@@ -43,12 +43,13 @@ export const GPS_CONFIG = {
   DISTANCE_FILTER: 15,
 };
 
-const DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS = 180;
+const DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS = 15;
+const MAX_TRIP_ACCEPT_TIMEOUT_SECONDS = 15;
 const configuredTripAcceptTimeout = Number(
   process.env.EXPO_PUBLIC_TRIP_ACCEPT_TIMEOUT_SECONDS || DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS
 );
 export const TRIP_ACCEPT_TIMEOUT = Number.isFinite(configuredTripAcceptTimeout)
-  ? Math.max(15, Math.round(configuredTripAcceptTimeout))
+  ? Math.max(10, Math.min(MAX_TRIP_ACCEPT_TIMEOUT_SECONDS, Math.round(configuredTripAcceptTimeout)))
   : DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS;
 
 export const DEFAULT_REGION = {

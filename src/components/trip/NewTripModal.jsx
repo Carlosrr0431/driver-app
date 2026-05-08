@@ -1,3 +1,10 @@
+/**
+ * Componente: NewTripModal
+ * Que hace: Muestra la asignacion de un viaje nuevo con cuenta regresiva, detalle del recorrido y acciones de aceptar/rechazar.
+ * Usado por:
+ * - driver-app/src/screens/HomeScreen.jsx -> import { NewTripModal } from '../components/trip/NewTripModal';
+ * - driver-app/src/screens/HomeScreen.old.jsx -> import { NewTripModal } from '../components/trip/NewTripModal';
+ */
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
@@ -48,8 +55,17 @@ const getCleanNotes = (trip) => {
   return cleaned || null;
 };
 
+// Countdown must be based on assignment time, not modal open time.
+const getInitialCountdown = (trip) => {
+  const assignedAtMs = trip?.assigned_at ? Date.parse(trip.assigned_at) : NaN;
+  if (!Number.isFinite(assignedAtMs)) return TRIP_ACCEPT_TIMEOUT;
+  // Evita que un reloj del dispositivo atrasado muestre mas segundos que el timeout real.
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - assignedAtMs) / 1000));
+  return Math.max(0, TRIP_ACCEPT_TIMEOUT - elapsedSeconds);
+};
+
 export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
-  const [countdown, setCountdown] = useState(TRIP_ACCEPT_TIMEOUT);
+  const [countdown, setCountdown] = useState(() => getInitialCountdown(trip));
   const [showRejectSheet, setShowRejectSheet] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
   const countdownRef = useRef(null);
@@ -67,10 +83,20 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     if (visible && trip) {
       decidedRef.current = false;
       timedOutRef.current = false;
-      setCountdown(TRIP_ACCEPT_TIMEOUT);
       setShowRejectSheet(false);
       setIsAccepting(false);
-      progressWidth.value = 100;
+      const initialCountdown = getInitialCountdown(trip);
+      const initialProgress = Math.max(0, (initialCountdown / TRIP_ACCEPT_TIMEOUT) * 100);
+
+      setCountdown(initialCountdown);
+      progressWidth.value = initialProgress;
+
+      if (initialCountdown <= 0) {
+        decidedRef.current = true;
+        if (onReject) onReject(tripRef.current?.id, 'Tiempo agotado');
+        return;
+      }
+
       playNotificationSound();
       Vibration.vibrate([0, 500, 200, 500, 200, 500]);
 
@@ -87,7 +113,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
         });
       }, 1000);
 
-      progressWidth.value = withTiming(0, { duration: TRIP_ACCEPT_TIMEOUT * 1000 });
+      progressWidth.value = withTiming(0, { duration: initialCountdown * 1000 });
     }
 
     return () => {
