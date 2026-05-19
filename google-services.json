@@ -1,14 +1,13 @@
 {
   "project_info": {
-    "project_number": "29570606227",
-    "firebase_url": "https://facunadu-ee52b.firebaseio.com",
-    "project_id": "facunadu-ee52b",
-    "storage_bucket": "facunadu-ee52b.firebasestorage.app"
+    "project_number": "459777078436",
+    "project_id": "profesionaapp",
+    "storage_bucket": "profesionaapp.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:29570606227:android:756263953786b9430d9966",
+        "mobilesdk_app_id": "1:459777078436:android:d9d0cbc346cabf0d19a231",
         "android_client_info": {
           "package_name": "com.remises.driverapp"
         }
@@ -16,26 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAHM7un7V67bPzYyR2bLhV2GKprd9H9gWQ"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:29570606227:android:f1e48c98e0c1c2130d9966",
-        "android_client_info": {
-          "package_name": "profesional.app"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyAHM7un7V67bPzYyR2bLhV2GKprd9H9gWQ"
+          "current_key": "AIzaSyCxtYWqD-huTu8gULDaWUurOzH5nm_ocLo"
         }
       ],
       "services": {

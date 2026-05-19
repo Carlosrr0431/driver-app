@@ -19,3 +19,8 @@ ios/build/
 # Environment
 .env
 .env.local
+
+# Android SDK local (no subir al repo)
+.tools/
+*.code-workspace
+coverage/

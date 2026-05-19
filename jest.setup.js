@@ -87,6 +87,26 @@ jest.mock('expo-font', () => ({
   loadAsync: jest.fn().mockResolvedValue(true),
 }));
 
+jest.mock('@react-native-firebase/messaging', () => {
+  const unsubscribe = jest.fn();
+  const messaging = () => ({
+    getToken: jest.fn().mockResolvedValue('fcm_test_token_123'),
+    onTokenRefresh: jest.fn(() => unsubscribe),
+    requestPermission: jest.fn().mockResolvedValue(1),
+    registerDeviceForRemoteMessages: jest.fn().mockResolvedValue(undefined),
+  });
+
+  messaging.AuthorizationStatus = {
+    NOT_DETERMINED: -1,
+    DENIED: 0,
+    AUTHORIZED: 1,
+    PROVISIONAL: 2,
+    EPHEMERAL: 3,
+  };
+
+  return messaging;
+});
+
 // ── Mocks de React Native ─────────────────────────────────────────────────────
 // RN 0.81 moved this internal module; keep a virtual mock for compatibility in tests.
 jest.mock('react-native/Libraries/Animated/NativeAnimatedHelper', () => ({}), { virtual: true });
@@ -173,6 +193,13 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('react-native-toast-message', () => ({
   __esModule: true,
   default: { show: jest.fn(), hide: jest.fn() },
+}));
+
+jest.mock('expo-speech', () => ({
+  speak: jest.fn(),
+  stop: jest.fn(),
+  isSpeakingAsync: jest.fn().mockResolvedValue(false),
+  getAvailableVoicesAsync: jest.fn().mockResolvedValue([]),
 }));
 
 // ── Mock de Supabase ──────────────────────────────────────────────────────────

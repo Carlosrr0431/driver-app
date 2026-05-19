@@ -70,7 +70,7 @@ const toastConfig = {
 };
 
 const AppContent = () => {
-  useAuth();
+  useAuth({ enableBootstrap: true });
   const notificationListener = useRef();
   const responseListener = useRef();
 

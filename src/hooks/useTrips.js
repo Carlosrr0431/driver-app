@@ -6,6 +6,7 @@ import { useTripStore } from '../stores/tripStore';
 import { TRIP_STATUS, PAGINATION_LIMIT, TRIP_ACCEPT_TIMEOUT } from '../utils/constants';
 import Toast from 'react-native-toast-message';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import { notifyTripAcceptedTransition } from '../services/tripTransition';
 
 function createTimeoutController(timeoutMs = 12000) {
   const controller = new AbortController();
@@ -422,6 +423,13 @@ export const useTrips = () => {
         type: 'success',
         text1: '¡Viaje aceptado!',
         text2: 'Dirígete al punto de recogida',
+      });
+
+      notifyTripAcceptedTransition(data.id).catch((notifyError) => {
+        console.warn(
+          'No se pudo disparar la confirmacion inmediata por WhatsApp:',
+          notifyError?.message || notifyError
+        );
       });
 
       return { success: true, data };

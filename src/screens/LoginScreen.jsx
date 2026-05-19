@@ -3,14 +3,14 @@ import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
+  Pressable,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   Dimensions,
   StatusBar,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn, SlideInUp, FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -184,44 +184,47 @@ const LoginScreen = () => {
                   fontFamily: 'Inter_400Regular', paddingVertical: 15, marginLeft: 12,
                 }}
               />
-              <TouchableOpacity onPress={togglePassword} style={{ padding: 6 }}>
+              <Pressable onPress={togglePassword} style={({ pressed }) => ({ padding: 6, opacity: pressed ? 0.6 : 1 })}>
                 <Ionicons
                   name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                   size={19} color={colors.textMuted}
                 />
-              </TouchableOpacity>
+              </Pressable>
             </View>
 
             {/* Login Button */}
-            <TouchableOpacity
+            <Pressable
               onPress={handleLogin}
               disabled={!canLogin}
-              activeOpacity={0.85}
-              style={{ borderRadius: 12, overflow: 'hidden', opacity: canLogin ? 1 : 0.45 }}
+              style={({ pressed }) => ({
+                borderRadius: 14, overflow: 'hidden',
+                opacity: !canLogin ? 0.45 : pressed ? 0.88 : 1,
+                boxShadow: canLogin ? '0 6px 20px rgba(40,46,105,0.32)' : 'none',
+              })}
             >
               <LinearGradient
-                colors={canLogin ? [BRAND_BLUE_LIGHT, BRAND_BLUE] : ['#D0D5E0', '#D0D5E0']}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                colors={canLogin ? ['#3d4494', BRAND_BLUE] : ['#D0D5E0', '#C8CCD8']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                 style={{
-                  height: 52, borderRadius: 12,
+                  height: 54, borderRadius: 14,
                   alignItems: 'center', justifyContent: 'center',
-                  flexDirection: 'row',
+                  flexDirection: 'row', gap: 10,
                 }}
               >
                 {isLoading ? (
-                  <Text style={{ color: '#fff', fontSize: 15, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.3 }}>
+                  <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold' }}>
                     Ingresando...
                   </Text>
                 ) : (
                   <>
-                    <Ionicons name="log-in-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={{ color: '#fff', fontSize: 15, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.3 }}>
+                    <Ionicons name="log-in-outline" size={22} color="#fff" />
+                    <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 }}>
                       Iniciar Sesión
                     </Text>
                   </>
                 )}
               </LinearGradient>
-            </TouchableOpacity>
+            </Pressable>
           </Animated.View>
 
           {/* Footer */}

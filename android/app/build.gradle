@@ -155,7 +155,8 @@ android {
 
 dependencies {
     // Firebase BoM — gestiona versiones de todos los SDKs de Firebase
-    implementation platform('com.google.firebase:firebase-bom:34.12.0')
+    implementation platform('com.google.firebase:firebase-bom:34.13.0')
+    implementation 'com.google.firebase:firebase-analytics'
     implementation 'com.google.firebase:firebase-messaging'
 
     // The version of react-native is set by the React Native Gradle Plugin
@@ -183,5 +184,17 @@ dependencies {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
+    }
+}
+
+afterEvaluate {
+    // Work around a React Native + CMake clean issue on Windows where
+    // autolinked codegen JNI folders can be removed before app native clean runs.
+    [
+        "externalNativeBuildCleanDebug",
+        "externalNativeBuildCleanDebugOptimized",
+        "externalNativeBuildCleanRelease",
+    ].each { taskName ->
+        tasks.findByName(taskName)?.enabled = false
     }
 }

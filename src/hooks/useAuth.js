@@ -1,10 +1,45 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { registerForPushNotifications, subscribeToTokenRefresh } from '../services/notifications';
 import Toast from 'react-native-toast-message';
 
-export const useAuth = () => {
+const globalScope = globalThis;
+
+const getGlobalAuthRuntime = () => {
+  if (!globalScope.__driverAppAuthRuntime) {
+    globalScope.__driverAppAuthRuntime = {
+      bootstrapRunning: false,
+      tokenRefreshSub: null,
+    };
+  }
+  return globalScope.__driverAppAuthRuntime;
+};
+
+const isInvalidRefreshTokenError = (error) => {
+  const message = error?.message || '';
+  return /Invalid Refresh Token|Already Used|Refresh Token Not Found/i.test(message);
+};
+
+const clearTokenRefreshSub = () => {
+  const runtime = getGlobalAuthRuntime();
+  if (!runtime.tokenRefreshSub) return;
+  try {
+    runtime.tokenRefreshSub.remove();
+  } catch (_) {}
+  runtime.tokenRefreshSub = null;
+};
+
+const syncTokenRefreshSub = (driverId) => {
+  const runtime = getGlobalAuthRuntime();
+  clearTokenRefreshSub();
+  if (!driverId) return;
+  runtime.tokenRefreshSub = subscribeToTokenRefresh(driverId);
+};
+
+export const useAuth = (options = {}) => {
+  const { enableBootstrap = false } = options;
+
   const {
     user,
     driver,
@@ -20,59 +55,7 @@ export const useAuth = () => {
     updateDriver,
   } = useAuthStore();
 
-  const tokenRefreshSub = useRef(null);
-
-  const isInvalidRefreshTokenError = (error) => {
-    const message = error?.message || '';
-    return /Invalid Refresh Token|Already Used|Refresh Token Not Found/i.test(message);
-  };
-
-  useEffect(() => {
-    let initialized = false;
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (session?.user) {
-          setUser(session.user);
-          setSession(session);
-          await fetchDriverProfile(session.user.id);
-        } else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' && !session) {
-          logoutStore();
-        } else if (!initialized && !session) {
-          logoutStore();
-        }
-        setLoading(false);
-        initialized = true;
-      }
-    );
-
-    // Only read cached session, never trigger a refresh here
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!initialized) {
-        if (!session) {
-          setLoading(false);
-        }
-        // If session exists, onAuthStateChange will fire INITIAL_SESSION and handle it
-      }
-    }).catch(async (error) => {
-      if (isInvalidRefreshTokenError(error)) {
-        await supabase.auth.signOut({ scope: 'local' });
-        logoutStore();
-        return;
-      }
-      if (!initialized) setLoading(false);
-    });
-
-    return () => {
-      subscription?.unsubscribe();
-      if (tokenRefreshSub.current) {
-        tokenRefreshSub.current.remove();
-        tokenRefreshSub.current = null;
-      }
-    };
-  }, []);
-
-  const fetchDriverProfile = async (userId) => {
+  const fetchDriverProfile = useCallback(async (userId) => {
     try {
       const { data, error } = await supabase
         .from('drivers')
@@ -99,17 +82,83 @@ export const useAuth = () => {
       setDriver(data);
       // Register push notifications after we have the driver profile
       registerForPushNotifications(data.id).catch(console.warn);
-      // Subscribe to token refresh to keep push_token in sync
-      if (tokenRefreshSub.current) {
-        tokenRefreshSub.current.remove();
-      }
-      tokenRefreshSub.current = subscribeToTokenRefresh(data.id);
+      // Keep only one onTokenRefresh listener alive globally
+      syncTokenRefreshSub(data.id);
       return data;
     } catch (error) {
       console.error('Error obteniendo perfil del chofer:', error);
       return null;
     }
-  };
+  }, [setDriver]);
+
+  useEffect(() => {
+    if (!enableBootstrap) return undefined;
+
+    const runtime = getGlobalAuthRuntime();
+    if (runtime.bootstrapRunning) {
+      return undefined;
+    }
+    runtime.bootstrapRunning = true;
+
+    let initialized = false;
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, nextSession) => {
+        try {
+          if (nextSession?.user) {
+            setUser(nextSession.user);
+            setSession(nextSession);
+            await fetchDriverProfile(nextSession.user.id);
+          } else if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !nextSession)) {
+            clearTokenRefreshSub();
+            logoutStore();
+          } else if (!initialized && !nextSession) {
+            clearTokenRefreshSub();
+            logoutStore();
+          }
+        } catch (error) {
+          if (isInvalidRefreshTokenError(error)) {
+            try {
+              await supabase.auth.signOut({ scope: 'local' });
+            } catch (_) {}
+            clearTokenRefreshSub();
+            logoutStore();
+          } else {
+            console.error('Error procesando cambio de sesión:', error);
+          }
+        } finally {
+          setLoading(false);
+          initialized = true;
+        }
+      }
+    );
+
+    supabase.auth
+      .getSession()
+      .then(({ data: { session: cachedSession } }) => {
+        if (!initialized && !cachedSession) {
+          setLoading(false);
+        }
+      })
+      .catch(async (error) => {
+        if (isInvalidRefreshTokenError(error)) {
+          try {
+            await supabase.auth.signOut({ scope: 'local' });
+          } catch (_) {}
+          clearTokenRefreshSub();
+          logoutStore();
+          setLoading(false);
+          return;
+        }
+        if (!initialized) setLoading(false);
+      });
+
+    return () => {
+      subscription?.unsubscribe();
+      runtime.bootstrapRunning = false;
+      clearTokenRefreshSub();
+    };
+  }, [enableBootstrap, fetchDriverProfile, logoutStore, setLoading, setSession, setUser]);
 
   const login = useCallback(async (email, password) => {
     try {
@@ -137,6 +186,14 @@ export const useAuth = () => {
 
       return { success: true };
     } catch (error) {
+      if (isInvalidRefreshTokenError(error)) {
+        try {
+          await supabase.auth.signOut({ scope: 'local' });
+        } catch (_) {}
+        clearTokenRefreshSub();
+        logoutStore();
+      }
+
       let message = 'Error al iniciar sesión';
       if (error.message?.includes('Invalid login credentials')) {
         message = 'Email o contraseña incorrectos';
@@ -156,10 +213,11 @@ export const useAuth = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchDriverProfile, loginStore, logoutStore, setLoading]);
 
   const logout = useCallback(async () => {
     try {
+      clearTokenRefreshSub();
       await supabase.auth.signOut();
       logoutStore();
       Toast.show({
@@ -168,9 +226,16 @@ export const useAuth = () => {
         text2: 'Hasta pronto',
       });
     } catch (error) {
+      if (isInvalidRefreshTokenError(error)) {
+        try {
+          await supabase.auth.signOut({ scope: 'local' });
+        } catch (_) {}
+        clearTokenRefreshSub();
+        logoutStore();
+      }
       console.error('Error cerrando sesión:', error);
     }
-  }, []);
+  }, [logoutStore]);
 
   const updateProfile = useCallback(async (updates) => {
     try {
@@ -200,7 +265,7 @@ export const useAuth = () => {
       });
       return { success: false, error };
     }
-  }, [driver]);
+  }, [driver, updateDriver]);
 
   return {
     user,

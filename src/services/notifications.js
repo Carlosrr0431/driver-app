@@ -1,12 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import messaging from '@react-native-firebase/messaging';
 import { supabase } from './supabase';
-import Constants from 'expo-constants';
-
-const resolveExpoProjectId = () =>
-  Constants?.expoConfig?.extra?.eas?.projectId ||
-  Constants?.easConfig?.projectId ||
-  null;
 
 const updateDriverPushToken = async (driverId, token) => {
   if (!driverId || !token) return;
@@ -87,14 +82,26 @@ export const registerForPushNotifications = async (driverId) => {
       });
     }
 
-    const projectId = resolveExpoProjectId();
-    if (!projectId) {
-      console.warn('No se encontró eas.projectId para registrar push notifications');
+    if (Platform.OS === 'ios') {
+      await messaging().registerDeviceForRemoteMessages();
+      const authorizationStatus = await messaging().requestPermission();
+      const isAuthorized =
+        authorizationStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+        authorizationStatus === messaging.AuthorizationStatus.PROVISIONAL;
+
+      if (!isAuthorized) {
+        console.warn('Permiso FCM denegado en iOS');
+        return null;
+      }
+    }
+
+    const token = await messaging().getToken();
+    if (!token) {
+      console.warn('No se pudo obtener el token FCM');
       return null;
     }
 
-    const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-    console.log('Push token registrado:', token);
+    console.log('Token FCM registrado:', `${token.slice(0, 18)}...`);
 
     if (driverId && token) {
       await updateDriverPushToken(driverId, token);
@@ -158,13 +165,22 @@ export const sendPaymentSuccessNotification = async (formattedAmount) => {
  * Retorna la suscripción para que el llamador pueda limpiarla.
  */
 export const subscribeToTokenRefresh = (driverId) => {
-  const subscription = Notifications.addPushTokenListener(async (tokenData) => {
-    if (!driverId || !tokenData?.data) return;
+  const unsubscribe = messaging().onTokenRefresh(async (token) => {
+    if (!driverId || !token) return;
     try {
-      await updateDriverPushToken(driverId, tokenData.data);
+      await updateDriverPushToken(driverId, token);
     } catch (e) {
       console.warn('Token refresh update failed:', e);
     }
   });
-  return subscription;
+
+  return {
+    remove: () => {
+      try {
+        unsubscribe();
+      } catch (e) {
+        console.warn('Token refresh unsubscribe failed:', e);
+      }
+    },
+  };
 };

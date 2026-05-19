@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Platform, Dimensions, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard, PanResponder, Animated } from 'react-native';
+import { View, Text, Linking, Platform, Dimensions, Pressable, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard, PanResponder, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -17,12 +17,14 @@ import { formatTimerMMSS, formatPrice, formatDistance, formatDuration } from '..
 import {
   autocompleteAddressSalta,
   decodePolyline,
+  evaluateRerouteState,
   getCurrentNavigationStep,
   getDirections,
   getDistanceToPolylineMeters,
   getPlaceDetails,
   getRouteRemainingMeters,
 } from '../services/googleMaps';
+import { useVoiceNavigation } from '../hooks/useVoiceNavigation';
 import { supabase } from '../services/supabase';
 import Toast from 'react-native-toast-message';
 
@@ -97,6 +99,17 @@ function formatEta(seconds) {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return minutes > 0 ? `${hours} h ${minutes} min` : `${hours} h`;
+}
+
+function createInitialRerouteEvalState() {
+  return {
+    offRouteSinceTs: null,
+    offRouteSamples: 0,
+    onRouteSamples: 0,
+    emaDeviation: null,
+    lastDeviationMeters: null,
+    lastUpdatedAt: 0,
+  };
 }
 
 function getManeuverIcon(maneuver) {
@@ -271,6 +284,8 @@ const MANEUVER_TEXT_MAP = [
   ['straight',            'seguí derecho'],
 ];
 
+const NAV_MANEUVER_PREVIEW_DISTANCE_METERS = 140;
+
 function getDirectActionText(maneuver, roadName) {
   const normalized = String(maneuver || '').toLowerCase();
   // Use "en" for turns/maneuvers, "por" for continuing on a road
@@ -300,10 +315,17 @@ function buildDirectNavigationInstruction(step, remainingDistanceMeters) {
     };
   }
 
+  const distToStep = Number(step?.distanceToStepMeters);
+  if (!Number.isFinite(distToStep) || distToStep > NAV_MANEUVER_PREVIEW_DISTANCE_METERS) {
+    return {
+      primary: 'Continuá por la ruta marcada',
+      roadName: null,
+    };
+  }
+
   const roadName = extractRoadNameFromInstruction(step?.instruction);
   const maneuverOrText = step?.maneuver || step?.instruction || '';
   const actionText = getDirectActionText(maneuverOrText, roadName);
-  const distToStep = step?.distanceToStepMeters;
   const distanceText = formatDistanceForSpeech(distToStep);
 
   // When very close to the maneuver (< 80 m), lead with "Ahora" + action.
@@ -596,6 +618,8 @@ const ActiveTripScreen = () => {
   const routeFetched = useRef(false);
   const lastRouteKeyRef = useRef('');
   const lastRerouteAtRef = useRef(0);
+  const rerouteInFlightRef = useRef(false);
+  const rerouteEvalStateRef = useRef(createInitialRerouteEvalState());
   const fareRouteKeyRef = useRef('');
   // Ref que mantiene las routeCoords actuales para que fetchNavigationRoute
   // pueda leerlas sin agregarlas como dependencia del useCallback.
@@ -609,6 +633,16 @@ const ActiveTripScreen = () => {
   const currentLocation = useLocationStore((s) => s.currentLocation);
   const heading = useLocationStore((s) => s.heading);
   const speed = useLocationStore((s) => s.speed);
+
+  const {
+    isMuted,
+    toggleMute,
+    announceManeuver,
+    announceReroute,
+    announcePickupArrival,
+    announceDestinationArrival,
+    resetAnnouncements,
+  } = useVoiceNavigation();
 
   const [routePolyline, setRoutePolyline] = useState(null);
   const [routeInfo, setRouteInfo] = useState(null);
@@ -679,6 +713,11 @@ const ActiveTripScreen = () => {
     setIsNorth3DEnabled(true);
   }, [activeTrip?.id]);
 
+  useEffect(() => {
+    // Evita arrastrar modo "viaje libre" entre viajes distintos.
+    setIsFreeRide(false);
+  }, [activeTrip?.id]);
+
   // Fetch tariff
   useEffect(() => {
     const fetchTariff = async () => {
@@ -740,14 +779,16 @@ const ActiveTripScreen = () => {
   useEffect(() => {
     routeFetched.current = false;
     lastRouteKeyRef.current = '';
+    lastRerouteAtRef.current = 0;
+    rerouteInFlightRef.current = false;
+    rerouteEvalStateRef.current = createInitialRerouteEvalState();
     setRoutePolyline(null);
     setRouteInfo(null);
     setRouteSteps([]);
     setRemainingDistanceMeters(null);
     setRemainingDurationSeconds(null);
     setNextStepInfo(null);
-    setFareRouteDistanceKm(null);
-    fareRouteKeyRef.current = '';
+    resetAnnouncements();
   }, [
     activeTrip?.id,
     activeTrip?.origin_lat,
@@ -757,6 +798,20 @@ const ActiveTripScreen = () => {
     activeTrip?.notes,
     flowStep,
     destinationSet,
+    resetAnnouncements,
+  ]);
+
+  // La tarifa fija depende solo de los endpoints del tramo (origen/destino),
+  // no del paso UI. Si cambia alguno, se invalida y se vuelve a calcular.
+  useEffect(() => {
+    setFareRouteDistanceKm(null);
+    fareRouteKeyRef.current = '';
+  }, [
+    activeTrip?.id,
+    activeTrip?.origin_lat,
+    activeTrip?.origin_lng,
+    activeTrip?.destination_lat,
+    activeTrip?.destination_lng,
   ]);
 
   const fetchNavigationRoute = useCallback(async (forceRefresh = false) => {
@@ -812,6 +867,31 @@ const ActiveTripScreen = () => {
     flowStep,
     destinationSet,
   ]);
+
+  const triggerAdaptiveReroute = useCallback(async (reason, cooldownMs = 5000) => {
+    const now = Date.now();
+    const minCooldownMs = Number.isFinite(cooldownMs)
+      ? Math.max(1500, Number(cooldownMs))
+      : 5000;
+
+    if (rerouteInFlightRef.current) return;
+    if (now - lastRerouteAtRef.current < minCooldownMs) return;
+
+    rerouteInFlightRef.current = true;
+    lastRerouteAtRef.current = now;
+
+    announceReroute();
+
+    try {
+      await fetchNavigationRoute(true);
+      rerouteEvalStateRef.current = createInitialRerouteEvalState();
+      resetAnnouncements();
+    } catch (error) {
+      console.warn('Error recalculando ruta:', reason || error);
+    } finally {
+      rerouteInFlightRef.current = false;
+    }
+  }, [fetchNavigationRoute, announceReroute, resetAnnouncements]);
 
   useEffect(() => {
     fetchNavigationRoute();
@@ -989,25 +1069,56 @@ const ActiveTripScreen = () => {
 
     const step = getCurrentNavigationStep(snappedNavPoint, routeSteps);
     setNextStepInfo(step);
-  }, [snappedNavPoint, routeCoords, routeInfo?.distanceValue, routeInfo?.durationValue, routeSteps]);
+
+    // ── Guía de voz turn-by-turn ──────────────────────────────────────────────
+    if (step && Number.isFinite(step.distanceToStepMeters)) {
+      announceManeuver(step, step.distanceToStepMeters);
+    }
+    if (Number.isFinite(remainingMeters) && remainingMeters <= 40) {
+      announceDestinationArrival();
+    }
+  }, [snappedNavPoint, routeCoords, routeInfo?.distanceValue, routeInfo?.durationValue, routeSteps, announceManeuver, announceDestinationArrival]);
 
   useEffect(() => {
     if (!currentLocation || routeCoords.length < 2) return;
+    if (Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters <= 45) return;
 
     // Usa la posición GPS raw (no snapped) para detectar desvíos reales.
-    // Umbral subido a 100 m y cooldown a 15 s para evitar re-ruteos por
-    // jitter de GPS cerca de edificios o en zonas de señal débil.
+    // El evaluador aplica umbral dinámico, histeresis y persistencia temporal.
     const currentPoint = {
       latitude: currentLocation.lat,
       longitude: currentLocation.lng,
     };
     const deviationMeters = getDistanceToPolylineMeters(currentPoint, routeCoords);
-    const now = Date.now();
-    if (deviationMeters > 100 && now - lastRerouteAtRef.current > 15000) {
-      lastRerouteAtRef.current = now;
-      fetchNavigationRoute(true);
+
+    const speedMps = Number.isFinite(currentLocation.speed)
+      ? Number(currentLocation.speed)
+      : (Number.isFinite(speed) ? Number(speed) : 0);
+
+    const evaluation = evaluateRerouteState({
+      deviationMeters,
+      speedMps,
+      accuracyMeters: currentLocation.accuracy,
+      distanceToNextStepMeters: nextStepInfo?.distanceToStepMeters,
+      state: rerouteEvalStateRef.current,
+    });
+
+    rerouteEvalStateRef.current = evaluation.state;
+
+    if (evaluation.shouldReroute) {
+      triggerAdaptiveReroute(
+        evaluation.rerouteReason,
+        evaluation.thresholds.cooldownMs,
+      );
     }
-  }, [currentLocation, routeCoords, fetchNavigationRoute]);
+  }, [
+    currentLocation,
+    routeCoords,
+    speed,
+    nextStepInfo?.distanceToStepMeters,
+    remainingDistanceMeters,
+    triggerAdaptiveReroute,
+  ]);
 
   // Distance to pickup
   const distanceToPickup = useMemo(() => {
@@ -1021,6 +1132,23 @@ const ActiveTripScreen = () => {
       pickupLat, pickupLng
     );
   }, [currentLocation, activeTrip?.origin_lat, activeTrip?.origin_lng, activeTrip?.destination_lat, activeTrip?.destination_lng, activeTrip?.notes]);
+
+  // Anuncio de voz al acercarse al punto de encuentro (< 50 m)
+  useEffect(() => {
+    if (flowStep !== FLOW_STEP.GOING_TO_PICKUP) return;
+    if (!Number.isFinite(distanceToPickup)) return;
+    if (distanceToPickup <= 50) {
+      announcePickupArrival();
+    }
+  }, [flowStep, distanceToPickup, announcePickupArrival]);
+
+  // Preview de la maniobra siguiente a la actual (la que viene después)
+  const nextNextStepInfo = useMemo(() => {
+    if (!nextStepInfo || !Array.isArray(routeSteps) || routeSteps.length === 0) return null;
+    const idx = Number.isFinite(nextStepInfo.index) ? nextStepInfo.index : -1;
+    if (idx < 0 || idx + 1 >= routeSteps.length) return null;
+    return routeSteps[idx + 1];
+  }, [nextStepInfo, routeSteps]);
 
   // ============================
   //  STEP HANDLERS
@@ -1082,27 +1210,40 @@ const ActiveTripScreen = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const { isApproachOnly: isApproachOnlyTrip } = resolvePickupPoint(activeTrip, currentLocation);
 
-    if (isApproachOnlyTrip && activeTrip?.id) {
-      try {
+    if (activeTrip?.id) {
+      const pickupUpdates = {
+        pickup_at: new Date().toISOString(),
+      };
+
+      if (isApproachOnlyTrip) {
         const pickupLat = parseFloat(activeTrip.destination_lat);
         const pickupLng = parseFloat(activeTrip.destination_lng);
         const pickupAddress = activeTrip.destination_address;
-        const { data: updatedTrip, error } = await supabase
-          .from('trips')
-          .update({
-            origin_address: pickupAddress,
-            origin_lat: pickupLat,
-            origin_lng: pickupLng,
-          })
-          .eq('id', activeTrip.id)
-          .select()
-          .single();
-        if (!error && updatedTrip) {
-          useTripStore.getState().updateActiveTrip(updatedTrip);
+
+        if (Number.isFinite(pickupLat) && Number.isFinite(pickupLng)) {
+          pickupUpdates.origin_address = pickupAddress;
+          pickupUpdates.origin_lat = pickupLat;
+          pickupUpdates.origin_lng = pickupLng;
         }
-      } catch (err) {
-        console.warn('Error updating pickup as origin:', err);
       }
+
+      // Sync in background so a slow network update never blocks the local flow.
+      supabase
+        .from('trips')
+        .update(pickupUpdates)
+        .eq('id', activeTrip.id)
+        .select()
+        .single()
+        .then(({ data: updatedTrip, error }) => {
+          if (!error && updatedTrip) {
+            useTripStore.getState().updateActiveTrip(updatedTrip);
+          }
+        })
+        .catch((err) => {
+          console.warn('Error syncing pickup info:', err);
+        });
+
+      useTripStore.getState().updateActiveTrip(pickupUpdates);
     }
 
     // Verificar si el destino final fue precargado por el pasajero vía WhatsApp
@@ -1280,8 +1421,83 @@ const ActiveTripScreen = () => {
       setFinishingTrip(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      const distanceKm = Number.isFinite(grandTotalDistanceKm) ? Math.round(grandTotalDistanceKm * 10) / 10 : 0;
-      const totalPrice = Number.isFinite(grandTotalPrice) ? Math.round(grandTotalPrice) : 0;
+      const accumulatedDistanceKm = accumulatedLegs.reduce((sum, leg) => {
+        const legDistance = Number(leg?.distanceKm);
+        return sum + (Number.isFinite(legDistance) ? legDistance : 0);
+      }, 0);
+      const accumulatedPrice = accumulatedLegs.reduce((sum, leg) => {
+        const legPrice = Number(leg?.price);
+        return sum + (Number.isFinite(legPrice) ? legPrice : 0);
+      }, 0);
+
+      let currentLegDistanceKm = Number(checkoutDistanceKm);
+      if (!Number.isFinite(currentLegDistanceKm) || currentLegDistanceKm < 0) {
+        currentLegDistanceKm = 0;
+      }
+
+      let currentLegPrice = Number(checkoutTotalPrice);
+      if (!Number.isFinite(currentLegPrice) || currentLegPrice < 0) {
+        currentLegPrice = 0;
+      }
+
+      // Fallback de seguridad: si el destino está definido pero el tramo quedó
+      // en 0 km (por race condition o fetch fallido), recalcular antes de cerrar.
+      const needsFixedFareFallback = shouldUseFixedRouteFare && (
+        currentLegDistanceKm <= 0 || currentLegPrice <= 0
+      );
+
+      if (needsFixedFareFallback) {
+        const origin = {
+          lat: parseFloat(activeTrip.origin_lat),
+          lng: parseFloat(activeTrip.origin_lng),
+        };
+        const destination = {
+          lat: parseFloat(activeTrip.destination_lat),
+          lng: parseFloat(activeTrip.destination_lng),
+        };
+
+        if (
+          Number.isFinite(origin.lat)
+          && Number.isFinite(origin.lng)
+          && Number.isFinite(destination.lat)
+          && Number.isFinite(destination.lng)
+        ) {
+          let fallbackDistanceKm = Number.isFinite(fareRouteDistanceKm) && fareRouteDistanceKm > 0
+            ? fareRouteDistanceKm
+            : null;
+
+          if (!fallbackDistanceKm) {
+            try {
+              const result = await getDirections(origin, destination);
+              const parsedKm = parseRouteDistanceKm({
+                distanceValue: result?.distanceValue,
+                distance: result?.distance,
+              });
+              if (Number.isFinite(parsedKm) && parsedKm > 0) {
+                fallbackDistanceKm = parsedKm;
+              }
+            } catch (error) {
+              console.warn('Error recalculating fixed fare route on finish:', error);
+            }
+          }
+
+          if (!fallbackDistanceKm) {
+            const routeMeters = Number(routeInfo?.distanceValue);
+            if (Number.isFinite(routeMeters) && routeMeters > 0) {
+              fallbackDistanceKm = routeMeters / 1000;
+            }
+          }
+
+          if (Number.isFinite(fallbackDistanceKm) && fallbackDistanceKm > 0) {
+            currentLegDistanceKm = fallbackDistanceKm;
+            currentLegPrice = Math.round(effectiveTariffPerKm * fallbackDistanceKm);
+            setFareRouteDistanceKm(fallbackDistanceKm);
+          }
+        }
+      }
+
+      const distanceKm = Math.round((accumulatedDistanceKm + currentLegDistanceKm) * 10) / 10;
+      const totalPrice = Math.round(accumulatedPrice + currentLegPrice);
       const commissionAmount = Math.round(totalPrice * (tariffInfo.commission || 10) / 100);
 
       const result = await updateTripStatus(activeTrip.id, TRIP_STATUS.COMPLETED, {
@@ -1326,8 +1542,13 @@ const ActiveTripScreen = () => {
   }, [
     activeTrip,
     finishingTrip,
-    grandTotalDistanceKm,
-    grandTotalPrice,
+    accumulatedLegs,
+    checkoutDistanceKm,
+    checkoutTotalPrice,
+    shouldUseFixedRouteFare,
+    fareRouteDistanceKm,
+    routeInfo?.distanceValue,
+    effectiveTariffPerKm,
     tariffInfo.commission,
     updateTripStatus,
     stopTracking,
@@ -1683,7 +1904,7 @@ const ActiveTripScreen = () => {
         maneuverPresentation.isCritical ? s.navigationCardCritical : null,
         { top: insets.top + 8, borderColor: maneuverPresentation.border },
       ]}>
-        {/* Ícono de maniobra + distancia al próximo paso + instrucción + km restantes */}
+        {/* Ícono de maniobra + distancia al próximo paso + instrucción + detalles derechos */}
         <View style={s.navMainRow}>
           <View style={[s.navIconBox, { backgroundColor: maneuverPresentation.background, borderColor: maneuverPresentation.border }]}>
             <MaterialCommunityIcons name={maneuverIcon} size={32} color={maneuverPresentation.tint} />
@@ -1691,8 +1912,35 @@ const ActiveTripScreen = () => {
           <View style={s.navDistanceCol}>
             <Text style={[s.navDistanceText, { color: maneuverPresentation.tint }]} numberOfLines={1}>{navigationDistanceText}</Text>
             <Text style={s.navInstructionText} numberOfLines={2}>{navigationInstruction}</Text>
+            {nextNextStepInfo && (
+              <View style={s.navNextStepRow}>
+                <MaterialCommunityIcons name={getManeuverIcon(nextNextStepInfo.maneuver)} size={13} color={colors.textMuted} />
+                <Text style={s.navNextStepText} numberOfLines={1}>
+                  {' '}{nextNextStepInfo.instruction || 'Seguí la ruta'}
+                </Text>
+              </View>
+            )}
           </View>
-          <Text style={s.navTotalText}>{remainingDistanceText}</Text>
+          <View style={s.navRightCol}>
+            <Text style={s.navTotalText}>{remainingDistanceText}</Text>
+            {Number.isFinite(speed) && speed > 0.5 && (
+              <View style={s.navSpeedBadge}>
+                <Text style={s.navSpeedText}>{Math.round(speed * 3.6)}</Text>
+                <Text style={s.navSpeedUnit}>km/h</Text>
+              </View>
+            )}
+            <Pressable
+              style={({ pressed }) => [s.navMuteBtn, { opacity: pressed ? 0.7 : 1 }]}
+              onPress={toggleMute}
+              hitSlop={8}
+            >
+              <MaterialCommunityIcons
+                name={isMuted ? 'volume-off' : 'volume-high'}
+                size={18}
+                color={isMuted ? colors.textMuted : colors.primary}
+              />
+            </Pressable>
+          </View>
         </View>
       </View>
 
@@ -2188,6 +2436,51 @@ const s = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
+  },
+  navRightCol: {
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 4,
+    minWidth: 50,
+  },
+  navSpeedBadge: {
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 40,
+  },
+  navSpeedText: {
+    fontSize: 16,
+    fontFamily: 'Inter_700Bold',
+    color: colors.text,
+    lineHeight: 18,
+  },
+  navSpeedUnit: {
+    fontSize: 9,
+    fontFamily: 'Inter_600SemiBold',
+    color: colors.textMuted,
+    lineHeight: 11,
+  },
+  navMuteBtn: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+  },
+  navNextStepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  navNextStepText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: colors.textMuted,
+    lineHeight: 14,
+    flex: 1,
   },
   navProgressTrack: {
     height: 4,

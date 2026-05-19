@@ -175,7 +175,7 @@ const ProfileScreen = () => {
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 30 }}
+        contentContainerStyle={{ paddingBottom: 110 }}
         showsVerticalScrollIndicator={false}
       >
         {/* Header with gradient */}

@@ -27,7 +27,6 @@ import { useLocation } from '../hooks/useLocation';
 import { supabase } from '../services/supabase';
 import { NewTripModal } from '../components/trip/NewTripModal';
 import { VoiceChatModal } from '../components/VoiceChatModal';
-import { useVoiceAutoPlay } from '../hooks/useVoiceAutoPlay';
 import { formatPrice, formatDistance } from '../utils/formatters';
 import { DEFAULT_REGION } from '../utils/constants';
 import Toast from 'react-native-toast-message';
@@ -45,13 +44,22 @@ const DriverLocationMarker = React.memo(({ location }) => {
         style={{ alignItems: 'center', justifyContent: 'center' }}
         onLayout={() => { if (ready) setTimeout(() => setReady(false), 800); }}
       >
+        {/* Halo exterior pulsante */}
         <View style={{
-          width: 34, height: 34, borderRadius: 17,
-          backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
-          borderWidth: 2, borderColor: '#fff',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+          position: 'absolute',
+          width: 52, height: 52, borderRadius: 26,
+          backgroundColor: `${colors.primary}18`,
+          borderWidth: 1.5, borderColor: `${colors.primary}30`,
+        }} />
+        {/* Marcador principal */}
+        <View style={{
+          width: 38, height: 38, borderRadius: 19,
+          backgroundColor: colors.primary,
+          alignItems: 'center', justifyContent: 'center',
+          borderWidth: 2.5, borderColor: '#FFFFFF',
+          boxShadow: '0 3px 10px rgba(40,46,105,0.45)',
         }}>
-          <MaterialCommunityIcons name="car" size={18} color="#fff" />
+          <MaterialCommunityIcons name="navigation" size={20} color="#fff" />
         </View>
       </View>
     </Marker>
@@ -74,8 +82,6 @@ const HomeScreen = () => {
   const [showVoice, setShowVoice] = useState(false);
   const [sheetIndex, setSheetIndex] = useState(0);
   const snapPoints = useMemo(() => ['25%', '70%'], []);
-
-  useVoiceAutoPlay();
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
   const { data: activeTripData } = useActiveTrip();
@@ -278,30 +284,39 @@ const HomeScreen = () => {
         position: 'absolute', top: insets.top + 8, left: 16, right: 16,
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
       }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        {/* Chip de conductor */}
+        <View style={{
+          flexDirection: 'row', alignItems: 'center',
+          backgroundColor: 'rgba(255,255,255,0.96)',
+          borderRadius: 24, paddingVertical: 6, paddingHorizontal: 10,
+          borderWidth: 1, borderColor: colors.borderLight,
+          boxShadow: '0 3px 12px rgba(15,23,42,0.10)',
+          gap: 8,
+        }}>
           <View style={{
-            width: 40, height: 40, borderRadius: 20,
-            backgroundColor: colors.surfaceLight, borderWidth: 2, borderColor: colors.primary,
+            width: 38, height: 38, borderRadius: 19,
+            backgroundColor: colors.surfaceLight,
+            borderWidth: 2, borderColor: isOnline ? colors.success : colors.border,
             alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
           }}>
             {driver?.photo_url ? (
-              <Image source={{ uri: driver.photo_url }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+              <Image source={{ uri: driver.photo_url }} style={{ width: 38, height: 38, borderRadius: 19 }} contentFit="cover" />
             ) : (
-              <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_700Bold' }}>{initials}</Text>
+              <Text style={{ color: colors.primary, fontSize: 14, fontFamily: 'Inter_700Bold' }}>{initials}</Text>
             )}
           </View>
-          <View style={{ marginLeft: 10 }}>
-            <Text style={{ color: colors.textDark, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
-              Hola, {firstName} 👋
+          <View>
+            <Text style={{ color: colors.text, fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
+              {firstName}
             </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <View style={{
-                width: 6, height: 6, borderRadius: 3,
-                backgroundColor: isOnline ? colors.success : colors.offline, marginRight: 5,
+                width: 7, height: 7, borderRadius: 3.5,
+                backgroundColor: isOnline ? colors.success : colors.offline,
               }} />
               <Text style={{
-                color: isOnline ? colors.success : colors.textMuted,
-                fontSize: 11, fontFamily: 'Inter_600SemiBold',
+                color: isOnline ? colors.success : colors.textLight,
+                fontSize: 10, fontFamily: 'Inter_600SemiBold',
               }}>
                 {isOnline ? 'En línea' : 'Desconectado'}
               </Text>
@@ -309,50 +324,54 @@ const HomeScreen = () => {
           </View>
         </View>
 
+        {/* Botón notificaciones */}
         <Pressable style={({ pressed }) => ({
-          width: 40, height: 40, borderRadius: 20,
-          backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
-          borderWidth: 1, borderColor: colors.border,
-          boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+          width: 42, height: 42, borderRadius: 21,
+          backgroundColor: 'rgba(255,255,255,0.96)',
+          alignItems: 'center', justifyContent: 'center',
+          borderWidth: 1, borderColor: colors.borderLight,
+          boxShadow: '0 3px 12px rgba(15,23,42,0.10)',
           opacity: pressed ? 0.7 : 1,
         })}>
-          <Ionicons name="notifications-outline" size={20} color={colors.secondary} />
+          <Ionicons name="notifications-outline" size={21} color={colors.secondary} />
         </Pressable>
       </View>
 
-      {/* Botón recentrar */}
-      <Pressable onPress={recenter} style={({ pressed }) => ({
-        position: 'absolute', right: 16, top: insets.top + 70,
-        width: 42, height: 42, borderRadius: 21,
-        backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: colors.border,
-        boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
-        opacity: pressed ? 0.7 : 1,
-      })}>
-        <Ionicons name="locate" size={20} color={colors.secondary} />
-      </Pressable>
-
-      {/* Floating radio button — declarado ANTES del BottomSheet para que el sheet lo tape al expandirse */}
-      <Pressable
-        onPress={() => setShowVoice(true)}
-        style={({ pressed }) => ({
-          position: 'absolute',
-          left: 16,
-          top: insets.top + 70,
-          width: 42,
-          height: 42,
-          borderRadius: 21,
-          backgroundColor: '#FFFFFF',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderWidth: 1,
-          borderColor: colors.border,
-          boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+      {/* Controles flotantes del mapa — grupo derecho */}
+      <View style={{
+        position: 'absolute', right: 14, top: insets.top + 70,
+        gap: 10,
+      }}>
+        <Pressable onPress={recenter} style={({ pressed }) => ({
+          width: 44, height: 44, borderRadius: 22,
+          backgroundColor: 'rgba(255,255,255,0.97)',
+          alignItems: 'center', justifyContent: 'center',
+          borderWidth: 1, borderColor: colors.borderLight,
+          boxShadow: '0 3px 12px rgba(15,23,42,0.12)',
           opacity: pressed ? 0.7 : 1,
-        })}
-      >
-        <MaterialCommunityIcons name="radio-tower" size={20} color={colors.primary} />
-      </Pressable>
+        })}>
+          <Ionicons name="locate" size={22} color={colors.primary} />
+        </Pressable>
+      </View>
+
+      {/* Botón de voz — grupo izquierdo */}
+      <View style={{
+        position: 'absolute', left: 14, top: insets.top + 70,
+      }}>
+        <Pressable
+          onPress={() => setShowVoice(true)}
+          style={({ pressed }) => ({
+            width: 44, height: 44, borderRadius: 22,
+            backgroundColor: 'rgba(255,255,255,0.97)',
+            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 1, borderColor: colors.borderLight,
+            boxShadow: '0 3px 12px rgba(15,23,42,0.12)',
+            opacity: pressed ? 0.7 : 1,
+          })}
+        >
+          <MaterialCommunityIcons name="radio-tower" size={21} color={colors.primary} />
+        </Pressable>
+      </View>
 
       {/* ========== BOTTOM SHEET ========== */}
       <BottomSheet
@@ -379,72 +398,70 @@ const HomeScreen = () => {
 
           {/* Toggle estado — se oculta si hay un viaje activo */}
           {!activeTrip && (
-          <Pressable onPress={handleToggleStatus}
-            style={({ pressed }) => ({
-              flexDirection: 'row', alignItems: 'center',
-              backgroundColor: '#FFFFFF',
-              borderRadius: 24, paddingVertical: 16, paddingHorizontal: 16,
-              borderWidth: 1, borderColor: isOnline ? '#BBF7D0' : '#E5E7EB',
-              boxShadow: `0 10px 18px rgba(15,23,42,${isOnline ? 0.08 : 0.05})`,
-              opacity: pressed ? 0.95 : 1,
-            })}>
-            <View style={{
-              width: 50, height: 50, borderRadius: 25,
-              backgroundColor: isOnline ? '#E8FFF1' : '#F3F4F6',
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              <MaterialCommunityIcons
-                name={isOnline ? 'steering' : 'power-standby'}
-                size={24} color={isOnline ? '#16A34A' : '#94A3B8'}
-              />
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Pressable onPress={handleToggleStatus}
+              style={({ pressed }) => ({
+                borderRadius: 20,
+                overflow: 'hidden',
+                boxShadow: isOnline
+                  ? '0 6px 20px rgba(22,199,132,0.28)'
+                  : '0 4px 14px rgba(15,23,42,0.07)',
+                opacity: pressed ? 0.93 : 1,
+              })}>
+              <LinearGradient
+                colors={isOnline ? ['#1AD98A', '#0DAA6E'] : ['#F8F9FC', '#F1F4F9']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  paddingVertical: 15, paddingHorizontal: 16,
+                  borderWidth: isOnline ? 0 : 1,
+                  borderColor: colors.borderLight,
+                  borderRadius: 20,
+                }}
+              >
+                {/* Ícono de estado */}
                 <View style={{
-                  width: 8, height: 8, borderRadius: 4,
-                  backgroundColor: isOnline ? '#22C55E' : '#CBD5E1', marginRight: 7,
-                }} />
-                <Text style={{
-                  fontSize: 16, fontFamily: 'Inter_700Bold',
-                  color: '#0F172A',
+                  width: 48, height: 48, borderRadius: 24,
+                  backgroundColor: isOnline ? 'rgba(255,255,255,0.22)' : colors.surfaceLight,
+                  alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {isOnline ? 'Estás en línea' : 'Estás desconectado'}
-                </Text>
-              </View>
-              <Text style={{
-                fontSize: 12,
-                fontFamily: 'Inter_500Medium',
-                color: '#64748B',
-                marginTop: 4,
-              }}>
-                {isOnline ? 'Recibiendo solicitudes de viaje' : 'Activá tu estado para empezar a recibir viajes'}
-              </Text>
-            </View>
-            <View style={{
-              minWidth: 92,
-              height: 42,
-              borderRadius: 21,
-              backgroundColor: isOnline ? '#16A34A' : '#E2E8F0',
-              justifyContent: 'center',
-              paddingHorizontal: 4,
-            }}>
-              <View style={{
-                width: 34, height: 34, borderRadius: 17, backgroundColor: '#fff',
-                alignSelf: isOnline ? 'flex-end' : 'flex-start',
-                alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
-              }} />
-              <Text style={{
-                position: 'absolute',
-                left: isOnline ? 12 : 42,
-                color: isOnline ? '#E8FFF1' : '#64748B',
-                fontSize: 11,
-                fontFamily: 'Inter_700Bold',
-              }}>
-                {isOnline ? 'ON' : 'OFF'}
-              </Text>
-            </View>
-          </Pressable>
+                  <MaterialCommunityIcons
+                    name={isOnline ? 'steering' : 'power-standby'}
+                    size={24}
+                    color={isOnline ? '#FFFFFF' : colors.textMuted}
+                  />
+                </View>
+
+                {/* Texto */}
+                <View style={{ flex: 1, marginLeft: 13 }}>
+                  <Text style={{
+                    fontSize: 16, fontFamily: 'Inter_700Bold',
+                    color: isOnline ? '#FFFFFF' : colors.text,
+                  }}>
+                    {isOnline ? 'Estás en línea' : 'Estás desconectado'}
+                  </Text>
+                  <Text style={{
+                    fontSize: 12, fontFamily: 'Inter_500Medium',
+                    color: isOnline ? 'rgba(255,255,255,0.80)' : colors.textMuted,
+                    marginTop: 3,
+                  }}>
+                    {isOnline ? 'Recibiendo solicitudes de viaje' : 'Tocá para empezar a recibir viajes'}
+                  </Text>
+                </View>
+
+                {/* Indicador ON/OFF */}
+                <View style={{
+                  width: 52, height: 28, borderRadius: 14,
+                  backgroundColor: isOnline ? 'rgba(255,255,255,0.22)' : '#E2E8F0',
+                  justifyContent: 'center', paddingHorizontal: 3,
+                }}>
+                  <View style={{
+                    width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff',
+                    alignSelf: isOnline ? 'flex-end' : 'flex-start',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.18)',
+                  }} />
+                </View>
+              </LinearGradient>
+            </Pressable>
           )}
 
         </View>
@@ -454,7 +471,7 @@ const HomeScreen = () => {
 
         {/* ── ZONA SCROLL: stats + historial ── */}
         <BottomSheetScrollView
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 100 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh}
               tintColor={colors.primary} colors={[colors.primary]} />
@@ -519,39 +536,104 @@ const HomeScreen = () => {
             </Animated.View>
           )}
 
-          {/* Stats */}
+          {/* ── Card de ganancias del día ── */}
+          <Animated.View entering={FadeInUp.delay(60).duration(350)} style={{ marginBottom: 10 }}>
+            <LinearGradient
+              colors={[colors.primary, colors.primaryDark]}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={{
+                borderRadius: 20, padding: 18,
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              }}
+            >
+              <View>
+                <Text style={{ color: 'rgba(255,255,255,0.72)', fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 }}>
+                  GANANCIAS DE HOY
+                </Text>
+                <Text style={{ color: '#FFFFFF', fontSize: 30, fontFamily: 'Inter_700Bold', marginTop: 4, lineHeight: 34 }}>
+                  {formatPrice(stats?.totalEarnings || 0)}
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 11, fontFamily: 'Inter_500Medium', marginTop: 2 }}>
+                  {stats?.totalTrips || 0} {stats?.totalTrips === 1 ? 'viaje' : 'viajes'} · {stats?.totalHours || 0}h de trabajo
+                </Text>
+              </View>
+              <View style={{
+                width: 56, height: 56, borderRadius: 28,
+                backgroundColor: 'rgba(255,255,255,0.15)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <MaterialCommunityIcons name="cash-multiple" size={28} color="rgba(255,255,255,0.90)" />
+              </View>
+            </LinearGradient>
+          </Animated.View>
+
+          {/* ── Stats secundarias ── */}
           <Animated.View entering={FadeInUp.delay(80).duration(380)}>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 4 }}>
-              <MiniStat icon="car-side" label="Viajes" value={String(stats?.totalTrips || 0)} color={colors.primary} />
-              <MiniStat icon="map-marker-distance" label="Distancia" value={formatDistance(stats?.totalKm)} color={colors.info} />
-              <MiniStat icon="clock-outline" label="Horas" value={`${stats?.totalHours || 0}h`} color={colors.warning} />
-              <MiniStat icon="cash" label="Ganancia" value={formatPrice(stats?.totalEarnings)} color={colors.secondary} />
+              <MiniStat
+                icon="car-side"
+                label="Viajes"
+                value={String(stats?.totalTrips || 0)}
+                color={colors.primary}
+              />
+              <MiniStat
+                icon="map-marker-distance"
+                label="Distancia"
+                value={formatDistance(stats?.totalKm)}
+                color={colors.info}
+                bg={colors.infoBg}
+              />
+              <MiniStat
+                icon="clock-outline"
+                label="Horas"
+                value={`${stats?.totalHours || 0}h`}
+                color={colors.warning}
+                bg={colors.warningBg}
+              />
             </View>
           </Animated.View>
 
           {/* Viaje activo */}
           {activeTrip && (
-            <Animated.View entering={SlideInRight.delay(100).springify()} style={{ marginTop: 12 }}>
+            <Animated.View entering={SlideInRight.delay(100).springify()} style={{ marginTop: 10, marginBottom: 2 }}>
               <Pressable onPress={() => navigation.navigate('ActiveTrip')}
                 style={({ pressed }) => ({
-                  backgroundColor: '#EFF6FF', borderRadius: 16, padding: 14,
-                  borderWidth: 1, borderColor: '#BFDBFE',
-                  flexDirection: 'row', alignItems: 'center',
-                  opacity: pressed ? 0.8 : 1,
+                  borderRadius: 18, overflow: 'hidden',
+                  opacity: pressed ? 0.88 : 1,
+                  boxShadow: '0 4px 16px rgba(40,46,105,0.22)',
                 })}>
-                <View style={{
-                  width: 40, height: 40, borderRadius: 20,
-                  backgroundColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <MaterialCommunityIcons name="navigation" size={20} color={colors.primary} />
-                </View>
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={{ color: '#1D4ED8', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>Viaje en curso</Text>
-                  <Text style={{ color: '#60A5FA', fontSize: 12, marginTop: 2 }} numberOfLines={1}>
-                    {activeTrip.destination_address}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+                <LinearGradient
+                  colors={[colors.primaryLight, colors.primary]}
+                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingVertical: 14, paddingHorizontal: 16,
+                  }}
+                >
+                  <View style={{
+                    width: 42, height: 42, borderRadius: 21,
+                    backgroundColor: 'rgba(255,255,255,0.18)',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <MaterialCommunityIcons name="navigation" size={22} color="#fff" />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 13 }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 }}>
+                      VIAJE EN CURSO
+                    </Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: 14, fontFamily: 'Inter_600SemiBold', marginTop: 2 }} numberOfLines={1}>
+                      {activeTrip.destination_address || 'Ver mapa'}
+                    </Text>
+                  </View>
+                  <View style={{
+                    backgroundColor: 'rgba(255,255,255,0.18)',
+                    borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6,
+                    flexDirection: 'row', alignItems: 'center', gap: 4,
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontFamily: 'Inter_700Bold' }}>Ver</Text>
+                    <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.9)" />
+                  </View>
+                </LinearGradient>
               </Pressable>
             </Animated.View>
           )}
@@ -572,24 +654,39 @@ const HomeScreen = () => {
             {tripsLoading ? (
               <SkeletonTrips />
             ) : allTrips.length > 0 ? (
-              allTrips.slice(0, 3).map((trip, idx) => (
-                <Animated.View key={trip.id} entering={FadeInUp.delay(160 + idx * 50).duration(300)}>
+              allTrips.slice(0, 4).map((trip, idx) => (
+                <Animated.View key={trip.id} entering={FadeInUp.delay(150 + idx * 55).duration(320)}>
                   <TripRow trip={trip} onPress={() => navigation.navigate('TripDetail', { tripId: trip.id })} />
                 </Animated.View>
               ))
             ) : (
-              <View style={{
-                backgroundColor: '#F9FAFB', borderRadius: 16, padding: 28,
-                alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6',
-              }}>
-                <MaterialCommunityIcons name="car-off" size={36} color="#D1D5DB" style={{ marginBottom: 8 }} />
-                <Text style={{ color: '#6B7280', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
-                  Sin viajes hoy
-                </Text>
-                <Text style={{ color: '#9CA3AF', fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 4, textAlign: 'center' }}>
-                  {isOnline ? 'Esperando asignaciones...' : 'Conectate para recibir viajes'}
-                </Text>
-              </View>
+              <Animated.View entering={FadeInUp.delay(160).duration(320)}>
+                <View style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 20, paddingVertical: 32, paddingHorizontal: 20,
+                  alignItems: 'center',
+                  borderWidth: 1, borderColor: colors.borderLight,
+                  boxShadow: '0 2px 8px rgba(15,23,42,0.04)',
+                }}>
+                  <View style={{
+                    width: 64, height: 64, borderRadius: 32,
+                    backgroundColor: colors.surfaceLight,
+                    alignItems: 'center', justifyContent: 'center',
+                    marginBottom: 14,
+                  }}>
+                    <MaterialCommunityIcons name={isOnline ? 'car-clock' : 'car-off'} size={34} color={colors.textLight} />
+                  </View>
+                  <Text style={{ color: colors.textDark, fontSize: 16, fontFamily: 'Inter_700Bold', marginBottom: 6 }}>
+                    Sin viajes hoy
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', lineHeight: 19 }}>
+                    {isOnline
+                      ? 'Estás en línea y esperando asignaciones'
+                      : 'Activá tu estado para empezar a recibir viajes'
+                    }
+                  </Text>
+                </View>
+              </Animated.View>
             )}
           </Animated.View>
         </BottomSheetScrollView>
@@ -615,31 +712,57 @@ const HomeScreen = () => {
 
 /* ========== COMPONENTES ========== */
 
-const MiniStat = ({ icon, label, value, color }) => (
+/**
+ * Tarjeta de estadística del día — diseño de app premium.
+ * Muestra ícono con fondo de color, valor grande y label.
+ */
+const MiniStat = ({ icon, label, value, color, bg }) => (
   <View style={{
-    flex: 1, backgroundColor: '#F9FAFB', borderRadius: 14,
-    paddingVertical: 10, paddingHorizontal: 6,
-    alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6',
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    boxShadow: '0 2px 8px rgba(15,23,42,0.06)',
   }}>
-    <MaterialCommunityIcons name={icon} size={16} color={color} style={{ marginBottom: 5 }} />
+    <View style={{
+      width: 34, height: 34, borderRadius: 10,
+      backgroundColor: bg || `${color}18`,
+      alignItems: 'center', justifyContent: 'center',
+      marginBottom: 7,
+    }}>
+      <MaterialCommunityIcons name={icon} size={17} color={color} />
+    </View>
     <Text
-      style={{ color: '#111827', fontSize: 13, fontFamily: 'Inter_700Bold', width: '100%', textAlign: 'center' }}
+      style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_700Bold', width: '100%', textAlign: 'center' }}
       numberOfLines={1}
       adjustsFontSizeToFit
-      minimumFontScale={0.55}
+      minimumFontScale={0.5}
     >
       {value}
     </Text>
-    <Text style={{ color: '#9CA3AF', fontSize: 9, fontFamily: 'Inter_500Medium', marginTop: 3 }}>{label}</Text>
+    <Text style={{ color: colors.textLight, fontSize: 9, fontFamily: 'Inter_600SemiBold', marginTop: 3, letterSpacing: 0.3 }}>
+      {label.toUpperCase()}
+    </Text>
   </View>
 );
 
+/**
+ * Fila de viaje reciente — diseño limpio con indicador de color de estado.
+ */
 const TripRow = ({ trip, onPress }) => {
-  const sc = {
-    completed: colors.success, cancelled: colors.danger, in_progress: colors.primary,
-    pending: colors.warning, accepted: colors.info, going_to_pickup: colors.primary,
+  const statusConfig = {
+    completed:       { color: colors.success,  icon: 'check-circle',  bg: colors.successBg },
+    cancelled:       { color: colors.danger,   icon: 'close-circle',  bg: colors.dangerBg },
+    in_progress:     { color: colors.primary,  icon: 'navigation',    bg: colors.surfaceLight },
+    pending:         { color: colors.warning,  icon: 'clock-outline', bg: colors.warningBg },
+    accepted:        { color: colors.info,     icon: 'car-arrow-right', bg: colors.infoBg },
+    going_to_pickup: { color: colors.primary,  icon: 'car-arrow-right', bg: colors.surfaceLight },
   };
-  const c = sc[trip.status] || colors.textMuted;
+  const cfg = statusConfig[trip.status] || { color: colors.textMuted, icon: 'car', bg: colors.surfaceLight };
   const time = trip.created_at
     ? new Date(trip.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
     : '';
@@ -647,44 +770,51 @@ const TripRow = ({ trip, onPress }) => {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => ({
       flexDirection: 'row', alignItems: 'center',
-      backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, marginBottom: 8,
-      borderWidth: 1, borderColor: '#F3F4F6',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
-      opacity: pressed ? 0.7 : 1,
+      backgroundColor: colors.surface,
+      borderRadius: 16, padding: 13, marginBottom: 8,
+      borderWidth: 1, borderColor: colors.borderLight,
+      boxShadow: '0 2px 6px rgba(15,23,42,0.05)',
+      opacity: pressed ? 0.75 : 1,
     })}>
       <View style={{
-        width: 38, height: 38, borderRadius: 12,
-        backgroundColor: `${c}15`, alignItems: 'center', justifyContent: 'center',
+        width: 40, height: 40, borderRadius: 13,
+        backgroundColor: cfg.bg, alignItems: 'center', justifyContent: 'center',
       }}>
-        <MaterialCommunityIcons
-          name={trip.status === 'completed' ? 'check-circle' : trip.status === 'cancelled' ? 'close-circle' : 'navigation'}
-          size={18} color={c}
-        />
+        <MaterialCommunityIcons name={cfg.icon} size={20} color={cfg.color} />
       </View>
-      <View style={{ flex: 1, marginLeft: 10 }}>
-        <Text style={{ color: '#111827', fontSize: 13, fontFamily: 'Inter_600SemiBold' }} numberOfLines={1}>
-          {trip.destination_address || 'Viaje'}
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={{ color: colors.text, fontSize: 13, fontFamily: 'Inter_600SemiBold' }} numberOfLines={1}>
+          {trip.destination_address || 'Viaje sin destino'}
         </Text>
-        <Text style={{ color: '#9CA3AF', fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 1 }}>
-          {time} · {formatDistance(trip.distance_km)}
-        </Text>
-        <Text style={{ color: '#D97706', fontSize: 10, fontFamily: 'Inter_600SemiBold', marginTop: 2 }}>
-          Comisión: {formatPrice(trip.commission_amount || 0)}
+        <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+          {time}{trip.distance_km ? ` · ${formatDistance(trip.distance_km)}` : ''}
         </Text>
       </View>
-      <Text style={{ color: c, fontSize: 14, fontFamily: 'Inter_700Bold' }}>
-        {formatPrice(trip.price)}
-      </Text>
+      <View style={{ alignItems: 'flex-end', gap: 3 }}>
+        <Text style={{ color: colors.text, fontSize: 15, fontFamily: 'Inter_700Bold' }}>
+          {trip.price != null ? formatPrice(trip.price) : '—'}
+        </Text>
+        {(trip.commission_amount > 0) && (
+          <Text style={{ color: colors.warning, fontSize: 10, fontFamily: 'Inter_600SemiBold' }}>
+            Com. {formatPrice(trip.commission_amount)}
+          </Text>
+        )}
+      </View>
     </Pressable>
   );
 };
 
+/**
+ * Skeleton de carga para la lista de viajes.
+ */
 const SkeletonTrips = () => (
   <View>
     {[1, 2, 3].map(i => (
       <View key={i} style={{
-        backgroundColor: '#F9FAFB', borderRadius: 14, height: 62, marginBottom: 8,
-        borderWidth: 1, borderColor: '#F3F4F6', opacity: 0.6,
+        backgroundColor: colors.surfaceRaised,
+        borderRadius: 16, height: 68, marginBottom: 8,
+        borderWidth: 1, borderColor: colors.borderLight,
+        opacity: 0.5 + (i * 0.1),
       }} />
     ))}
   </View>

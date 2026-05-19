@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, processLock } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 
@@ -12,6 +12,7 @@ const createSupabase = () =>
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      lock: processLock,
     },
     realtime: {
       params: {
@@ -28,14 +29,16 @@ if (!globalScope.__driverAppSupabaseClient) {
 
 export const supabase = globalScope.__driverAppSupabaseClient;
 
+const syncAutoRefreshWithAppState = (state) => {
+  if (state === 'active') {
+    supabase.auth.startAutoRefresh();
+  } else {
+    supabase.auth.stopAutoRefresh();
+  }
+};
+
 if (!globalScope.__driverAppSupabaseAppStateListener) {
   // Evita refrescos de token en segundo plano y reduce colisiones de refresh token
-  supabase.auth.startAutoRefresh();
-  globalScope.__driverAppSupabaseAppStateListener = AppState.addEventListener('change', (state) => {
-    if (state === 'active') {
-      supabase.auth.startAutoRefresh();
-    } else {
-      supabase.auth.stopAutoRefresh();
-    }
-  });
+  syncAutoRefreshWithAppState(AppState.currentState);
+  globalScope.__driverAppSupabaseAppStateListener = AppState.addEventListener('change', syncAutoRefreshWithAppState);
 }

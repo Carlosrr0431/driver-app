@@ -79,7 +79,145 @@ export function getDistanceToPolylineMeters(point, polylineCoords = []) {
   return minDistance;
 }
 
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+export function decodePolyline(encoded = '') {
+  const points = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < encoded.length) {
+    let b;
+    let shift = 0;
+    let result = 0;
+
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+
+    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+
+    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
+    lng += dlng;
+
+    points.push({
+      latitude: lat / 1e5,
+      longitude: lng / 1e5,
+    });
+  }
+
+  return points;
+}
+
+/**
+ * Evalua si corresponde recalcular la ruta para reaccionar rapido a desvios
+ * reales sin entrar en bucles por jitter de GPS.
+ */
+export function evaluateRerouteState({
+  deviationMeters,
+  speedMps = 0,
+  accuracyMeters = null,
+  distanceToNextStepMeters = null,
+  state = {},
+  now = Date.now(),
+}) {
+  const deviation = Number.isFinite(deviationMeters) ? Math.max(0, Number(deviationMeters)) : 0;
+  const speed = Number.isFinite(speedMps) ? Math.max(0, Number(speedMps)) : 0;
+  const speedKmh = speed * 3.6;
+  const accuracy = Number.isFinite(accuracyMeters) ? Math.max(0, Number(accuracyMeters)) : null;
+  const nextStepMeters = Number.isFinite(distanceToNextStepMeters)
+    ? Math.max(0, Number(distanceToNextStepMeters))
+    : null;
+  const nearManeuver = nextStepMeters !== null && nextStepMeters <= 180;
+
+  // Umbral dinamico similar al comportamiento de SDK de navegacion:
+  // mas estricto cerca de maniobras y mas tolerante con mala precision.
+  const speedAllowance = clampNumber(speedKmh * 0.3, 0, 20);
+  const accuracyAllowance = accuracy === null
+    ? 8
+    : clampNumber((accuracy - 8) * 0.8, 0, 24);
+  const maneuverTightening = nearManeuver ? 8 : 0;
+
+  const enterThreshold = clampNumber(40 + speedAllowance + accuracyAllowance - maneuverTightening, 35, 88);
+  const exitThreshold = clampNumber(enterThreshold * 0.58, 20, 55);
+  const hardThreshold = Math.max(enterThreshold + 18, enterThreshold * 1.4);
+
+  const persistMs = nearManeuver ? 900 : speedKmh >= 60 ? 1200 : speedKmh >= 30 ? 1700 : 2400;
+  const cooldownMs = nearManeuver ? 3500 : speedKmh >= 60 ? 4000 : 5000;
+
+  let offRouteSinceTs = Number.isFinite(state.offRouteSinceTs) ? state.offRouteSinceTs : null;
+  let offRouteSamples = Number.isFinite(state.offRouteSamples) ? state.offRouteSamples : 0;
+  let onRouteSamples = Number.isFinite(state.onRouteSamples) ? state.onRouteSamples : 0;
+
+  const previousEma = Number.isFinite(state.emaDeviation)
+    ? state.emaDeviation
+    : deviation;
+  const emaDeviation = previousEma * 0.68 + deviation * 0.32;
+  const isDeviationIncreasingFast = emaDeviation - previousEma >= 4;
+
+  if (deviation >= enterThreshold) {
+    offRouteSamples += 1;
+    onRouteSamples = 0;
+    if (offRouteSinceTs === null) offRouteSinceTs = now;
+  } else if (deviation <= exitThreshold) {
+    onRouteSamples += 1;
+    if (onRouteSamples >= 2) {
+      offRouteSinceTs = null;
+      offRouteSamples = 0;
+    }
+  } else {
+    // Banda de histeresis: no entramos ni salimos abruptamente del estado.
+    onRouteSamples = Math.max(0, onRouteSamples - 1);
+  }
+
+  const persistentOffRoute = offRouteSinceTs !== null
+    && offRouteSamples >= 2
+    && (now - offRouteSinceTs) >= persistMs;
+  const severeOffRoute = deviation >= hardThreshold
+    && (isDeviationIncreasingFast || offRouteSamples >= 2);
+
+  return {
+    shouldReroute: persistentOffRoute || severeOffRoute,
+    rerouteReason: severeOffRoute
+      ? 'deviation_severe'
+      : (persistentOffRoute ? 'deviation_persistent' : null),
+    thresholds: {
+      enterThreshold,
+      exitThreshold,
+      hardThreshold,
+      persistMs,
+      cooldownMs,
+      nearManeuver,
+    },
+    state: {
+      offRouteSinceTs,
+      offRouteSamples,
+      onRouteSamples,
+      emaDeviation,
+      lastDeviationMeters: deviation,
+      lastUpdatedAt: now,
+    },
+  };
+}
+
 function normalizeStep(step, index) {
+  const encodedPolyline = step?.polyline?.points || null;
+  const decodedPolyline = encodedPolyline ? decodePolyline(encodedPolyline) : [];
   return {
     index,
     instruction: stripHtmlInstruction(step?.html_instructions || step?.instructions || ''),
@@ -96,7 +234,8 @@ function normalizeStep(step, index) {
       lat: Number(step?.end_location?.lat),
       lng: Number(step?.end_location?.lng),
     },
-    polyline: step?.polyline?.points || null,
+    polyline: encodedPolyline,
+    polylineCoords: decodedPolyline,
   };
 }
 
@@ -133,10 +272,14 @@ export function getCurrentNavigationStep(currentPoint, steps = []) {
 
   for (let i = 0; i < steps.length; i += 1) {
     const step = steps[i];
-    const startPt = { latitude: step.startLocation.lat, longitude: step.startLocation.lng };
-    const endPt   = { latitude: step.endLocation.lat,   longitude: step.endLocation.lng };
-    const projected = projectPointToSegment(currentPoint, startPt, endPt);
-    const dist = getDistanceMeters(currentPoint, projected);
+    const coords = Array.isArray(step?.polylineCoords) && step.polylineCoords.length >= 2
+      ? step.polylineCoords
+      : [
+        { latitude: step?.startLocation?.lat, longitude: step?.startLocation?.lng },
+        { latitude: step?.endLocation?.lat, longitude: step?.endLocation?.lng },
+      ].filter((point) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude));
+
+    const dist = getDistanceToPolylineMeters(currentPoint, coords);
     if (dist < bestDist) {
       bestDist = dist;
       bestIndex = i;
@@ -167,9 +310,18 @@ export const getDirections = async (origin, destination) => {
     const originStr = `${origin.lat},${origin.lng}`;
     const destStr = `${destination.lat},${destination.lng}`;
 
-    const response = await fetch(
-      `${DIRECTIONS_BASE_URL}?origin=${originStr}&destination=${destStr}&key=${GOOGLE_MAPS_API_KEY}&language=es`
-    );
+    // departure_time=now + traffic_model=best_guess → ruta optimizada con tráfico en tiempo real.
+    // Si la API devuelve duration_in_traffic se usa para el ETA; si no, cae al duration estático.
+    const params = new URLSearchParams({
+      origin: originStr,
+      destination: destStr,
+      key: GOOGLE_MAPS_API_KEY,
+      language: 'es',
+      departure_time: 'now',
+      traffic_model: 'best_guess',
+    });
+
+    const response = await fetch(`${DIRECTIONS_BASE_URL}?${params}`);
     const data = await response.json();
 
     if (data.status !== 'OK' || !data.routes.length) {
@@ -181,9 +333,10 @@ export const getDirections = async (origin, destination) => {
 
     return {
       distance: leg.distance.text,
-      duration: leg.duration.text,
+      duration: leg.duration_in_traffic?.text || leg.duration.text,
       distanceValue: leg.distance.value,
-      durationValue: leg.duration.value,
+      // Priorizar duración con tráfico real cuando esté disponible
+      durationValue: leg.duration_in_traffic?.value || leg.duration.value,
       polyline: route.overview_polyline.points,
       steps: Array.isArray(leg.steps) ? leg.steps.map((step, index) => normalizeStep(step, index)) : [],
     };
@@ -426,43 +579,3 @@ export const getPlaceDetails = async (placeId) => {
   };
 };
 
-export const decodePolyline = (encoded) => {
-  const points = [];
-  let index = 0;
-  let lat = 0;
-  let lng = 0;
-
-  while (index < encoded.length) {
-    let b;
-    let shift = 0;
-    let result = 0;
-
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-
-    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
-    lat += dlat;
-
-    shift = 0;
-    result = 0;
-
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-
-    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
-    lng += dlng;
-
-    points.push({
-      latitude: lat / 1e5,
-      longitude: lng / 1e5,
-    });
-  }
-
-  return points;
-};
