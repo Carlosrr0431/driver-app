@@ -452,13 +452,29 @@ export const useTrips = () => {
         return { success: false, error: new Error('driver_not_ready') };
       }
 
+      const isTimeout = reason === 'Tiempo agotado';
+
+      // Si es timeout o rechazo, re-encolar para que otro chofer lo tome
+      // en vez de cancelar definitivamente el viaje del pasajero
+      const updatePayload = isTimeout
+        ? {
+            status: 'queued',
+            driver_id: null,
+            assigned_at: null,
+            dispatch_status: 'queued',
+            next_dispatch_at: new Date(Date.now() + 5000).toISOString(),
+          }
+        : {
+            status: 'queued',
+            driver_id: null,
+            assigned_at: null,
+            dispatch_status: 'queued',
+            next_dispatch_at: new Date(Date.now() + 5000).toISOString(),
+          };
+
       const { data, error } = await supabase
         .from('trips')
-        .update({
-          status: TRIP_STATUS.CANCELLED,
-          cancel_reason: reason,
-          // driver_id is intentionally kept so the reassignment logic can exclude this driver
-        })
+        .update(updatePayload)
         .eq('id', tripId)
         .eq('driver_id', driver.id)
         .eq('status', TRIP_STATUS.PENDING)
@@ -472,7 +488,7 @@ export const useTrips = () => {
         Toast.show({
           type: 'info',
           text1: 'Viaje no disponible',
-          text2: 'El viaje ya no estaba pendiente para rechazar.',
+          text2: 'El viaje ya no estaba pendiente.',
         });
         return { success: false, unavailable: true };
       }
@@ -481,8 +497,8 @@ export const useTrips = () => {
 
       Toast.show({
         type: 'info',
-        text1: 'Viaje rechazado',
-        text2: 'Se notificará al despachador',
+        text1: isTimeout ? 'Tiempo agotado' : 'Viaje rechazado',
+        text2: isTimeout ? 'Se buscará otro chofer disponible.' : 'Se buscará otro chofer disponible.',
       });
 
       return { success: true };
@@ -490,7 +506,7 @@ export const useTrips = () => {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'No se pudo rechazar el viaje',
+        text2: 'No se pudo procesar el viaje',
       });
       return { success: false, error };
     }

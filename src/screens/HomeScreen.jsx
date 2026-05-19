@@ -81,7 +81,7 @@ const HomeScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
   const [sheetIndex, setSheetIndex] = useState(0);
-  const snapPoints = useMemo(() => ['25%', '70%'], []);
+  const snapPoints = useMemo(() => ['28%', '72%'], []);
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
   const { data: activeTripData } = useActiveTrip();
@@ -262,9 +262,9 @@ const HomeScreen = () => {
           <>
             <Circle
               center={{ latitude: currentLocation.lat, longitude: currentLocation.lng }}
-              radius={250}
-              fillColor="rgba(220,38,38,0.06)"
-              strokeColor="rgba(220,38,38,0.15)"
+              radius={200}
+              fillColor="rgba(40,46,105,0.06)"
+              strokeColor="rgba(40,46,105,0.12)"
               strokeWidth={1}
             />
             <DriverLocationMarker location={currentLocation} />
@@ -471,7 +471,7 @@ const HomeScreen = () => {
 
         {/* ── ZONA SCROLL: stats + historial ── */}
         <BottomSheetScrollView
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 100 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 90 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh}
               tintColor={colors.primary} colors={[colors.primary]} />

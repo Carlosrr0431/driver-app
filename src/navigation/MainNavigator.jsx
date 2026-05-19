@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, Platform } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import HomeScreen from '../screens/HomeScreen';
@@ -48,50 +48,10 @@ const ProfileStack = () => (
   </Stack.Navigator>
 );
 
-const TAB_ICON_SIZE = 22;
-
-/**
- * Ícono de tab con indicador activo tipo pill (pastilla redondeada).
- * Cuando está activo: fondo azul con el ícono blanco.
- * Cuando está inactivo: ícono muted sin fondo.
- */
-const TabIcon = ({ name, label, color, focused, type = 'material' }) => {
-  const Icon = type === 'ion' ? Ionicons : MaterialCommunityIcons;
-  return (
-    <View style={{ alignItems: 'center', paddingTop: 2 }}>
-      <View style={{
-        paddingHorizontal: focused ? 16 : 0,
-        paddingVertical: 7,
-        borderRadius: 20,
-        backgroundColor: focused ? colors.primary : 'transparent',
-        minWidth: focused ? 54 : 0,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}>
-        <Icon
-          name={focused ? name : `${name}-outline`.replace('-outline-outline', '-outline')}
-          size={TAB_ICON_SIZE}
-          color={focused ? '#FFFFFF' : color}
-        />
-      </View>
-      {!focused && (
-        <Text style={{
-          color,
-          fontSize: 10,
-          fontFamily: 'Inter_600SemiBold',
-          marginTop: 2,
-        }}>
-          {label}
-        </Text>
-      )}
-    </View>
-  );
-};
-
 const MainNavigator = () => {
   useVoiceAutoPlay();
   const insets = useSafeAreaInsets();
-  const floatingBottom = Math.max(insets.bottom + 6, 14);
+  const paddingBottom = Platform.OS === 'ios' ? Math.max(insets.bottom, 12) : 20;
 
   return (
     <Tab.Navigator
@@ -100,34 +60,31 @@ const MainNavigator = () => {
         tabBarShowLabel: false,
         tabBarStyle: {
           position: 'absolute',
-          bottom: floatingBottom,
-          left: 20,
-          right: 20,
-          height: 64,
-          borderRadius: 32,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 64 + paddingBottom,
           backgroundColor: '#FFFFFF',
-          borderTopWidth: 0,
+          borderTopWidth: 1,
+          borderTopColor: '#F3F4F6',
           elevation: 0,
-          boxShadow: '0 8px 32px rgba(15,23,42,0.18)',
-          paddingHorizontal: 10,
-          paddingTop: 0,
-          paddingBottom: 0,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.04,
+          shadowRadius: 8,
+          paddingBottom,
+          paddingTop: 8,
         },
         tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textMuted,
+        tabBarInactiveTintColor: '#9CA3AF',
       }}
     >
       <Tab.Screen
         name="Home"
         component={HomeStack}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon
-              name="home"
-              label="Inicio"
-              color={color}
-              focused={focused}
-            />
+          tabBarIcon: ({ focused }) => (
+            <TabItem icon="home" label="Inicio" focused={focused} />
           ),
         }}
       />
@@ -135,13 +92,8 @@ const MainNavigator = () => {
         name="History"
         component={HistoryStack}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon
-              name="clock"
-              label="Historial"
-              color={color}
-              focused={focused}
-            />
+          tabBarIcon: ({ focused }) => (
+            <TabItem icon="time" label="Historial" focused={focused} />
           ),
         }}
       />
@@ -149,19 +101,46 @@ const MainNavigator = () => {
         name="Profile"
         component={ProfileStack}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon
-              name="person-circle"
-              label="Perfil"
-              color={color}
-              focused={focused}
-              type="ion"
-            />
+          tabBarIcon: ({ focused }) => (
+            <TabItem icon="person" label="Perfil" focused={focused} />
           ),
         }}
       />
     </Tab.Navigator>
   );
 };
+
+const TabItem = ({ icon, label, focused }) => (
+  <View style={styles.tabItem}>
+    <Ionicons
+      name={focused ? icon : `${icon}-outline`}
+      size={24}
+      color={focused ? colors.primary : '#9CA3AF'}
+    />
+    <Text style={[styles.label, focused && styles.labelActive]} numberOfLines={1}>
+      {label}
+    </Text>
+  </View>
+);
+
+const styles = StyleSheet.create({
+  tabItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    marginTop: 4,
+    letterSpacing: 0.1,
+  },
+  labelActive: {
+    color: colors.primary,
+    fontWeight: '700',
+  },
+});
 
 export default MainNavigator;

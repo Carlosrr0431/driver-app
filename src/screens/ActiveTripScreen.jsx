@@ -673,7 +673,7 @@ const ActiveTripScreen = () => {
   const [sheetIndex, setSheetIndex] = useState(0);
   const [accumulatedLegs, setAccumulatedLegs] = useState([]);
 
-  const snapPoints = useMemo(() => ['18%', '68%', '90%'], []);
+  const snapPoints = useMemo(() => ['24%', '68%', '90%'], []);
   const mapControlsBottomOffset = useMemo(() => Math.max(136, Math.round(SCREEN_HEIGHT * 0.2)), []);
 
   // Derive initial flow step from DB status
@@ -2536,7 +2536,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   handle: { backgroundColor: colors.textMuted, width: 32, height: 4, borderRadius: 2 },
-  sheetContent: { paddingHorizontal: 20, paddingBottom: 32, paddingTop: 4 },
+  sheetContent: { paddingHorizontal: 20, paddingBottom: 100, paddingTop: 4 },
   passengerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   avatarCircle: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 18, fontFamily: 'Inter_700Bold' },

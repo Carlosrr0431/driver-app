@@ -1,3 +1,8 @@
+// Silenciar warnings de deprecación que no afectan funcionalidad
+globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
+import { LogBox } from 'react-native';
+LogBox.ignoreLogs(['[expo-av]', 'This method is deprecated']);
+
 import React, { useEffect, useState, useRef } from 'react';
 import { StatusBar, View, Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';

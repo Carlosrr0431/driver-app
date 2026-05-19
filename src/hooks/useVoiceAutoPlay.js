@@ -67,7 +67,6 @@ export function useVoiceAutoPlay() {
     try {
       await stopCurrentSound();
 
-      // Configure audio for speaker output at full volume
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
@@ -91,10 +90,8 @@ export function useVoiceAutoPlay() {
         }
       });
 
-      // Explicitly play after loading for reliability
       await sound.playAsync();
 
-      // Persist the played status so fallback sync doesn't replay it.
       markAsPlayed(msgId).catch(() => {});
 
       Toast.show({
@@ -106,7 +103,6 @@ export function useVoiceAutoPlay() {
       return true;
     } catch (err) {
       console.error('Error auto-playing voice:', err);
-      // Clean up on error
       if (soundRef.current) {
         try { await soundRef.current.unloadAsync(); } catch {}
         soundRef.current = null;

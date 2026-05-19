@@ -139,9 +139,7 @@ export function useVoiceChat() {
         },
       };
 
-      const { recording: rec } = await Audio.Recording.createAsync(
-        recordingOptions
-      );
+      const { recording: rec } = await Audio.Recording.createAsync(recordingOptions);
       recordingRef.current = rec;
       setRecording(true);
       setRecordingTime(0);
