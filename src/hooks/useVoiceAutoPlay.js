@@ -5,7 +5,7 @@ import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import Toast from 'react-native-toast-message';
 
-const VOICE_AUTOPLAY_POLL_MS = 7000;
+const VOICE_AUTOPLAY_POLL_MS = 3000;
 const VOICE_AUTOPLAY_RECENT_WINDOW_MS = 45 * 60 * 1000;
 const MAX_PLAYED_IDS_CACHE = 160;
 
