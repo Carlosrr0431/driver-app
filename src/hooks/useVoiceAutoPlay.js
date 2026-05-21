@@ -159,9 +159,24 @@ export function useVoiceAutoPlay() {
     }
   }, [driverId, handleIncomingBaseMessage, hasPlayedId, markAsPlayed, rememberPlayedId]);
 
+  const subscribedDriverIdRef = useRef(null);
+
   useEffect(() => {
     if (!driverId) return;
+    // Evitar doble suscripción si el efecto se re-ejecuta con el mismo driverId
+    if (subscribedDriverIdRef.current === driverId && channelRef.current) return;
 
+    // Limpiar canal anterior si existía
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
+    subscribedDriverIdRef.current = driverId;
     syncPendingBaseMessages();
 
     pollRef.current = setInterval(() => {
@@ -174,30 +189,34 @@ export function useVoiceAutoPlay() {
       }
     });
 
-    channelRef.current = supabase
-      .channel(`voice_autoplay_${driverId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'voice_messages',
-        filter: `driver_id=eq.${driverId}`,
-      }, (payload) => {
-        const msg = payload.new;
-        handleIncomingBaseMessage(msg);
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          syncPendingBaseMessages();
-        }
-      });
+    // Construir canal completo antes de subscribe()
+    const channel = supabase.channel(`voice_autoplay_${driverId}`);
+    channel.on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'voice_messages',
+      filter: `driver_id=eq.${driverId}`,
+    }, (payload) => {
+      handleIncomingBaseMessage(payload.new);
+    });
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        syncPendingBaseMessages();
+      }
+    });
+    channelRef.current = channel;
 
     return () => {
+      subscribedDriverIdRef.current = null;
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
       appStateSub.remove();
-      if (channelRef.current) supabase.removeChannel(channelRef.current);
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
       stopCurrentSound();
     };
   }, [driverId, handleIncomingBaseMessage, stopCurrentSound, syncPendingBaseMessages]);
