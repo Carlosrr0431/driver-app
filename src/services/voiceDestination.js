@@ -1,4 +1,4 @@
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { AudioModule, setAudioModeAsync, RecordingPresets } from 'expo-audio';
 import { autocompleteAddressSalta, geocodeAddressMultiple } from './googleMaps';
 import { BARRIO_NAMES, findBarrio, searchBarrios } from '../data/barrios';
 
@@ -233,7 +233,7 @@ const BARRIOS_FOR_PROMPT = BARRIO_NAMES.slice(0, 200).join(', ');
 
 /**
  * Transcribe audio file using OpenAI Whisper API
- * @param {string} uri - Local file URI from expo-av recording
+ * @param {string} uri - Local file URI from expo-audio recording
  * @returns {Promise<string>} transcribed text
  */
 export async function transcribeAudio(uri) {
@@ -482,55 +482,24 @@ export async function voiceToDestination(uri) {
 }
 
 /**
- * Recording helpers using expo-av
+ * Recording helpers using expo-audio
  */
 export async function startDestinationRecording() {
-  const { granted } = await Audio.requestPermissionsAsync();
-  if (!granted) {
+  const status = await AudioModule.requestRecordingPermissionsAsync();
+  if (!status.granted) {
     throw new Error('Se necesita permiso de micrófono');
   }
-
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: true,
-    interruptionModeIOS: InterruptionModeIOS.DuckOthers,
-    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-    shouldDuckAndroid: false,
-    playThroughEarpieceAndroid: false,
-  });
-
-  const recordingOptions = {
-    isMeteringEnabled: false,
-    android: {
-      extension: '.m4a',
-      outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-      audioEncoder: Audio.AndroidAudioEncoder.AAC,
-      sampleRate: 44100,
-      numberOfChannels: 1,
-      bitRate: 128000,
-    },
-    ios: {
-      extension: '.m4a',
-      outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-      audioQuality: Audio.IOSAudioQuality.MAX,
-      sampleRate: 44100,
-      numberOfChannels: 1,
-      bitRate: 128000,
-    },
-    web: {
-      mimeType: 'audio/webm',
-      bitsPerSecond: 128000,
-    },
-  };
-
-  const { recording } = await Audio.Recording.createAsync(recordingOptions);
-  return recording;
+  await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+  const { AudioRecorder } = require('expo-audio');
+  const recorder = new AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  await recorder.prepareToRecordAsync();
+  recorder.record();
+  return recorder;
 }
 
 export async function stopDestinationRecording(recording) {
-  await recording.stopAndUnloadAsync();
-  const uri = recording.getURI();
+  await recording.stop();
+  const uri = recording.uri;
   if (!uri) throw new Error('No se obtuvo el archivo de audio');
   return uri;
 }

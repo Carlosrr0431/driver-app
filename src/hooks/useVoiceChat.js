@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { useAudioPlayer, useAudioRecorder, AudioModule, setAudioModeAsync, RecordingPresets } from 'expo-audio';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import Toast from 'react-native-toast-message';
@@ -11,10 +11,10 @@ export function useVoiceChat() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
-  const recordingRef = useRef(null);
   const timerRef = useRef(null);
   const channelRef = useRef(null);
-  const soundRef = useRef(null);
+  const player = useAudioPlayer(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const driverId = driver?.id;
 
@@ -57,41 +57,20 @@ export function useVoiceChat() {
     return () => {
       if (channelRef.current) supabase.removeChannel(channelRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
-      stopSound();
     };
   }, [driverId, fetchMessages]);
 
-  const stopSound = async () => {
-    if (soundRef.current) {
-      try { await soundRef.current.unloadAsync(); } catch {}
-      soundRef.current = null;
-    }
-  };
-
   const playAudio = async (url) => {
     try {
-      await stopSound();
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
-        interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
         shouldDuckAndroid: false,
         playThroughEarpieceAndroid: false,
+        allowsRecording: false,
       });
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: url },
-        { shouldPlay: false, volume: 1.0 }
-      );
-      soundRef.current = sound;
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) {
-          sound.unloadAsync().catch(() => {});
-          if (soundRef.current === sound) soundRef.current = null;
-        }
-      });
-      await sound.playAsync();
+      player.replace({ uri: url });
+      player.play();
     } catch (err) {
       console.error('Error playing audio:', err);
     }
@@ -99,48 +78,14 @@ export function useVoiceChat() {
 
   const startRecording = async () => {
     try {
-      const { granted } = await Audio.requestPermissionsAsync();
-      if (!granted) {
+      const status = await AudioModule.requestRecordingPermissionsAsync();
+      if (!status.granted) {
         Toast.show({ type: 'error', text1: 'Permiso de micrófono requerido' });
         return;
       }
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
-        interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-        shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
-      });
-
-      const recordingOptions = {
-        isMeteringEnabled: true,
-        android: {
-          extension: '.m4a',
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
-          sampleRate: 44100,
-          numberOfChannels: 1,
-          bitRate: 128000,
-        },
-        ios: {
-          extension: '.m4a',
-          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-          audioQuality: Audio.IOSAudioQuality.MAX,
-          sampleRate: 44100,
-          numberOfChannels: 1,
-          bitRate: 128000,
-        },
-        web: {
-          mimeType: 'audio/webm',
-          bitsPerSecond: 128000,
-        },
-      };
-
-      const { recording: rec } = await Audio.Recording.createAsync(recordingOptions);
-      recordingRef.current = rec;
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       setRecording(true);
       setRecordingTime(0);
       timerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000);
@@ -151,17 +96,14 @@ export function useVoiceChat() {
   };
 
   const cancelRecording = async () => {
-    if (recordingRef.current) {
-      try { await recordingRef.current.stopAndUnloadAsync(); } catch {}
-      recordingRef.current = null;
-    }
+    try { await recorder.stop(); } catch {}
     setRecording(false);
     clearInterval(timerRef.current);
     setRecordingTime(0);
   };
 
   const sendRecording = async () => {
-    if (!recordingRef.current || !driverId) return;
+    if (!driverId) return;
 
     clearInterval(timerRef.current);
     const duration = recordingTime;
@@ -169,9 +111,8 @@ export function useVoiceChat() {
     setSending(true);
 
     try {
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
-      recordingRef.current = null;
+      await recorder.stop();
+      const uri = recorder.uri;
 
       if (!uri) throw new Error('No recording URI');
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { AppState } from 'react-native';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
@@ -10,40 +10,24 @@ const VOICE_AUTOPLAY_RECENT_WINDOW_MS = 45 * 60 * 1000;
 const MAX_PLAYED_IDS_CACHE = 160;
 
 /**
- * Lightweight hook that subscribes to voice_messages in realtime
- * and auto-plays any incoming message from base.
- * Should be mounted once at HomeScreen level so it works
- * even when VoiceChatModal is closed.
+ * Hook que hace polling cada 3s para reproducir automáticamente
+ * mensajes de voz de la base. Usa expo-audio (SDK 54).
  */
 export function useVoiceAutoPlay() {
   const { driver } = useAuthStore();
   const driverId = driver?.id;
-  const channelRef = useRef(null);
   const pollRef = useRef(null);
-  const soundRef = useRef(null);
   const isSyncingRef = useRef(false);
   const playedIdsRef = useRef(new Set());
+  const currentUrlRef = useRef(null);
+  const player = useAudioPlayer(null);
 
   const rememberPlayedId = useCallback((msgId) => {
     if (!msgId) return;
     playedIdsRef.current.add(msgId);
-
     if (playedIdsRef.current.size > MAX_PLAYED_IDS_CACHE) {
       const keep = [...playedIdsRef.current].slice(-Math.floor(MAX_PLAYED_IDS_CACHE / 2));
       playedIdsRef.current = new Set(keep);
-    }
-  }, []);
-
-  const hasPlayedId = useCallback((msgId) => {
-    if (!msgId) return false;
-    return playedIdsRef.current.has(msgId);
-  }, []);
-
-  const stopCurrentSound = useCallback(async () => {
-    if (soundRef.current) {
-      try { await soundRef.current.stopAsync(); } catch {}
-      try { await soundRef.current.unloadAsync(); } catch {}
-      soundRef.current = null;
     }
   }, []);
 
@@ -55,42 +39,27 @@ export function useVoiceAutoPlay() {
         .update({ is_played: true })
         .eq('id', msgId)
         .eq('driver_id', driverId);
-    } catch (err) {
-      console.warn('Error marking voice message as played:', err?.message || err);
-    }
+    } catch {}
   }, [driverId]);
 
   const playAudio = useCallback(async (url, msgId) => {
-    if (!url || !msgId || hasPlayedId(msgId)) return false;
+    if (!url || !msgId) return false;
+    if (playedIdsRef.current.has(msgId)) return false;
     rememberPlayedId(msgId);
 
     try {
-      await stopCurrentSound();
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
-        interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+        interruptionModeAndroid: 'duckOthers',
         shouldDuckAndroid: false,
         playThroughEarpieceAndroid: false,
+        allowsRecording: false,
       });
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: url },
-        { shouldPlay: false, volume: 1.0 }
-      );
-      soundRef.current = sound;
-
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) {
-          sound.unloadAsync().catch(() => {});
-          if (soundRef.current === sound) soundRef.current = null;
-        }
-      });
-
-      await sound.playAsync();
+      currentUrlRef.current = url;
+      player.replace({ uri: url });
+      player.play();
 
       markAsPlayed(msgId).catch(() => {});
 
@@ -103,27 +72,15 @@ export function useVoiceAutoPlay() {
       return true;
     } catch (err) {
       console.error('Error auto-playing voice:', err);
-      if (soundRef.current) {
-        try { await soundRef.current.unloadAsync(); } catch {}
-        soundRef.current = null;
-      }
       return false;
     }
-  }, [hasPlayedId, markAsPlayed, rememberPlayedId, stopCurrentSound]);
-
-  const handleIncomingBaseMessage = useCallback(async (message) => {
-    if (!message || message.sender_type !== 'base' || !message.audio_url || !message.id) return;
-    await playAudio(message.audio_url, message.id);
-  }, [playAudio]);
+  }, [player, markAsPlayed, rememberPlayedId]);
 
   const syncPendingBaseMessages = useCallback(async () => {
     if (!driverId || isSyncingRef.current) return;
-
     isSyncingRef.current = true;
     try {
       const sinceIso = new Date(Date.now() - VOICE_AUTOPLAY_RECENT_WINDOW_MS).toISOString();
-      // Buscar mensajes recientes de la base sin depender exclusivamente de is_played
-      // (puede no existir la columna en algunas versiones del schema)
       const { data, error } = await supabase
         .from('voice_messages')
         .select('id, sender_type, audio_url, created_at, is_played')
@@ -133,91 +90,39 @@ export function useVoiceAutoPlay() {
         .order('created_at', { ascending: true })
         .limit(10);
 
-      if (error) {
-        console.warn('Error syncing pending voice messages:', error?.message || error);
-        return;
-      }
+      if (error) return;
 
-      const pending = Array.isArray(data) ? data : [];
-      for (const message of pending) {
-        if (!message?.id) continue;
-        // Usar cache local como fuente de verdad para evitar re-reproducir
-        if (hasPlayedId(message.id)) continue;
-        if (message.is_played === true) {
-          rememberPlayedId(message.id);
+      for (const msg of (data || [])) {
+        if (!msg?.id) continue;
+        if (playedIdsRef.current.has(msg.id)) continue;
+        if (msg.is_played === true) {
+          rememberPlayedId(msg.id);
           continue;
         }
-
-        const played = await handleIncomingBaseMessage(message);
-        if (played) {
-          markAsPlayed(message.id).catch(() => {});
-          break;
-        }
+        if (msg.sender_type !== 'base' || !msg.audio_url) continue;
+        const played = await playAudio(msg.audio_url, msg.id);
+        if (played) break;
       }
     } finally {
       isSyncingRef.current = false;
     }
-  }, [driverId, handleIncomingBaseMessage, hasPlayedId, markAsPlayed, rememberPlayedId]);
-
-  const subscribedDriverIdRef = useRef(null);
+  }, [driverId, playAudio, rememberPlayedId]);
 
   useEffect(() => {
     if (!driverId) return;
-    // Evitar doble suscripción si el efecto se re-ejecuta con el mismo driverId
-    if (subscribedDriverIdRef.current === driverId && channelRef.current) return;
 
-    // Limpiar canal anterior si existía
-    if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
-    }
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-
-    subscribedDriverIdRef.current = driverId;
     syncPendingBaseMessages();
 
-    pollRef.current = setInterval(() => {
-      syncPendingBaseMessages();
-    }, VOICE_AUTOPLAY_POLL_MS);
+    pollRef.current = setInterval(syncPendingBaseMessages, VOICE_AUTOPLAY_POLL_MS);
 
-    const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        syncPendingBaseMessages();
-      }
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') syncPendingBaseMessages();
     });
-
-    // Construir canal completo antes de subscribe()
-    const channel = supabase.channel(`voice_autoplay_${driverId}`);
-    channel.on('postgres_changes', {
-      event: 'INSERT',
-      schema: 'public',
-      table: 'voice_messages',
-      filter: `driver_id=eq.${driverId}`,
-    }, (payload) => {
-      handleIncomingBaseMessage(payload.new);
-    });
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        syncPendingBaseMessages();
-      }
-    });
-    channelRef.current = channel;
 
     return () => {
-      subscribedDriverIdRef.current = null;
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      clearInterval(pollRef.current);
+      pollRef.current = null;
       appStateSub.remove();
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-      stopCurrentSound();
     };
-  }, [driverId, handleIncomingBaseMessage, stopCurrentSound, syncPendingBaseMessages]);
+  }, [driverId, syncPendingBaseMessages]);
 }

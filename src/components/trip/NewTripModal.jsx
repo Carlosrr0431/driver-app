@@ -33,7 +33,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Audio } from 'expo-av';
+import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { colors } from '../../theme/colors';
 import { formatPrice, formatDistance, formatDuration } from '../../utils/formatters';
 import { TRIP_ACCEPT_TIMEOUT, CANCEL_REASONS } from '../../utils/constants';
@@ -97,7 +97,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const [showRejectSheet, setShowRejectSheet] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
   const countdownRef = useRef(null);
-  const soundRef = useRef(null);
+  const notifPlayer = useAudioPlayer(require('../../../assets/notification.wav'));
   const progressWidth = useSharedValue(100);
   // Keep ref so handleTimeout closure always has latest trip
   const tripRef = useRef(trip);
@@ -162,30 +162,24 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
 
   const playNotificationSound = async () => {
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        playsInSilentMode: true,
         shouldDuckAndroid: false,
         playThroughEarpieceAndroid: false,
+        allowsRecording: false,
       });
-      const { sound } = await Audio.Sound.createAsync(
-        require('../../../assets/notification.wav'),
-        { shouldPlay: true, isLooping: true, volume: 1.0 }
-      );
-      soundRef.current = sound;
+      notifPlayer.seekTo(0);
+      notifPlayer.loop = true;
+      notifPlayer.play();
     } catch {
       Vibration.vibrate([0, 300, 100, 300]);
     }
   };
 
   const stopSound = async () => {
-    if (soundRef.current) {
-      try {
-        await soundRef.current.stopAsync();
-        await soundRef.current.unloadAsync();
-      } catch (_) {}
-      soundRef.current = null;
-    }
+    try {
+      notifPlayer.pause();
+    } catch (_) {}
   };
 
   const handleAccept = async () => {
