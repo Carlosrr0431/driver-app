@@ -122,15 +122,16 @@ export function useVoiceAutoPlay() {
     isSyncingRef.current = true;
     try {
       const sinceIso = new Date(Date.now() - VOICE_AUTOPLAY_RECENT_WINDOW_MS).toISOString();
+      // Buscar mensajes recientes de la base sin depender exclusivamente de is_played
+      // (puede no existir la columna en algunas versiones del schema)
       const { data, error } = await supabase
         .from('voice_messages')
         .select('id, sender_type, audio_url, created_at, is_played')
         .eq('driver_id', driverId)
         .eq('sender_type', 'base')
-        .eq('is_played', false)
         .gte('created_at', sinceIso)
         .order('created_at', { ascending: true })
-        .limit(5);
+        .limit(10);
 
       if (error) {
         console.warn('Error syncing pending voice messages:', error?.message || error);
@@ -140,18 +141,23 @@ export function useVoiceAutoPlay() {
       const pending = Array.isArray(data) ? data : [];
       for (const message of pending) {
         if (!message?.id) continue;
-        if (hasPlayedId(message.id)) {
-          markAsPlayed(message.id).catch(() => {});
+        // Usar cache local como fuente de verdad para evitar re-reproducir
+        if (hasPlayedId(message.id)) continue;
+        if (message.is_played === true) {
+          rememberPlayedId(message.id);
           continue;
         }
 
         const played = await handleIncomingBaseMessage(message);
-        if (played) break;
+        if (played) {
+          markAsPlayed(message.id).catch(() => {});
+          break;
+        }
       }
     } finally {
       isSyncingRef.current = false;
     }
-  }, [driverId, handleIncomingBaseMessage, hasPlayedId, markAsPlayed]);
+  }, [driverId, handleIncomingBaseMessage, hasPlayedId, markAsPlayed, rememberPlayedId]);
 
   useEffect(() => {
     if (!driverId) return;
