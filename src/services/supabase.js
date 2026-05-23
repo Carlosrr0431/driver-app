@@ -31,7 +31,9 @@ export const supabase = globalScope.__driverAppSupabaseClient;
 
 const syncAutoRefreshWithAppState = (state) => {
   if (state === 'active') {
-    supabase.auth.startAutoRefresh();
+    // Pequeño delay para que el processLock libere cualquier operación
+    // pendiente antes de arrancar el auto-refresh, evitando colisiones de token.
+    setTimeout(() => supabase.auth.startAutoRefresh(), 200);
   } else {
     supabase.auth.stopAutoRefresh();
   }

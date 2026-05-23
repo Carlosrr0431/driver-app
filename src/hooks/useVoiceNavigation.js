@@ -1,5 +1,33 @@
 import { useState, useRef, useCallback } from 'react';
+import { Platform } from 'react-native';
 import * as Speech from 'expo-speech';
+
+// iOS no siempre tiene es-419 instalado; se usa es-AR como primer fallback y es como último recurso
+const SPEECH_LANGUAGES = Platform.OS === 'ios'
+  ? ['es-AR', 'es-MX', 'es-419', 'es']
+  : ['es-419', 'es-AR', 'es'];
+
+let cachedSpeechLanguage = null;
+
+async function getAvailableSpeechLanguage() {
+  if (cachedSpeechLanguage) return cachedSpeechLanguage;
+  try {
+    const voices = await Speech.getAvailableVoicesAsync();
+    for (const lang of SPEECH_LANGUAGES) {
+      const found = voices.some(
+        (v) => v.language === lang || v.language?.startsWith(lang.split('-')[0])
+      );
+      if (found) {
+        cachedSpeechLanguage = lang;
+        return lang;
+      }
+    }
+  } catch {
+    // getAvailableVoicesAsync puede fallar en algunos dispositivos
+  }
+  cachedSpeechLanguage = SPEECH_LANGUAGES[SPEECH_LANGUAGES.length - 1];
+  return cachedSpeechLanguage;
+}
 
 // Umbrales de pre-aviso: 500m → 200m → 80m (igual al Navigation SDK)
 const ANNOUNCE_THRESHOLDS = [500, 200, 80];
@@ -77,24 +105,27 @@ export function useVoiceNavigation() {
   // Conjunto de claves ya anunciadas: evita repetir el mismo aviso
   const announcedRef = useRef(new Set());
 
+  const lastSpokenRef = useRef({ text: '', at: 0 });
+
   const speak = useCallback((text, priority = false) => {
     if (isMutedRef.current) return;
 
-    Speech.isSpeakingAsync()
-      .then((speaking) => {
-        if (!speaking || priority) {
-          if (speaking) Speech.stop();
-          Speech.speak(text, {
-            language: 'es-419', // Español latinoamericano — mayor compatibilidad Android/iOS
-            rate: 1.05,
-            pitch: 1.0,
-          });
-        }
-      })
-      .catch(() => {
-        // Fallback: hablar directamente si isSpeakingAsync no está disponible
-        Speech.speak(text, { language: 'es-419', rate: 1.05, pitch: 1.0 });
-      });
+    const now = Date.now();
+    if (lastSpokenRef.current.text === text && now - lastSpokenRef.current.at < 4000) return;
+    lastSpokenRef.current = { text, at: now };
+
+    getAvailableSpeechLanguage().then((language) => {
+      Speech.isSpeakingAsync()
+        .then((speaking) => {
+          if (!speaking || priority) {
+            if (speaking) Speech.stop();
+            Speech.speak(text, { language, rate: 1.05, pitch: 1.0 });
+          }
+        })
+        .catch(() => {
+          Speech.speak(text, { language, rate: 1.05, pitch: 1.0 });
+        });
+    });
   }, []);
 
   const toggleMute = useCallback(() => {

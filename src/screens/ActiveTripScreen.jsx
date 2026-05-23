@@ -775,7 +775,11 @@ const ActiveTripScreen = () => {
     };
   }, [activeTrip?.id]);
 
-  // Reset route when routing-relevant trip data changes
+  // Reset route when routing-relevant trip data changes.
+  // Voice announcements only reset when the navigation endpoints actually change
+  // (trip id, origin, destination) to avoid re-announcing the same maneuver when
+  // flowStep or destinationSet toggle without changing the route.
+  const routeResetKeyRef = useRef('');
   useEffect(() => {
     routeFetched.current = false;
     lastRouteKeyRef.current = '';
@@ -788,7 +792,19 @@ const ActiveTripScreen = () => {
     setRemainingDistanceMeters(null);
     setRemainingDurationSeconds(null);
     setNextStepInfo(null);
-    resetAnnouncements();
+
+    const newRouteKey = [
+      activeTrip?.id,
+      activeTrip?.origin_lat,
+      activeTrip?.origin_lng,
+      activeTrip?.destination_lat,
+      activeTrip?.destination_lng,
+    ].join('|');
+
+    if (newRouteKey !== routeResetKeyRef.current) {
+      routeResetKeyRef.current = newRouteKey;
+      resetAnnouncements();
+    }
   }, [
     activeTrip?.id,
     activeTrip?.origin_lat,

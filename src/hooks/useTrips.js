@@ -312,82 +312,8 @@ export const useTrips = () => {
 
       const pendingTripSnapshot = useTripStore.getState().pendingTrip;
 
-      const verifyTimeout = createTimeoutController(6000);
-      const { data: tripToAccept, error: verifyError } = await supabase
-        .from('trips')
-        .select('id, driver_id, status, assigned_at')
-        .eq('id', tripId)
-        .maybeSingle()
-        .abortSignal(verifyTimeout.signal);
-      verifyTimeout.cleanup();
-
-      if (verifyError) throw verifyError;
-
-      const belongsToDriver = tripToAccept?.driver_id === driver.id;
-      const isPending = tripToAccept?.status === TRIP_STATUS.PENDING;
-      if (!tripToAccept || !belongsToDriver || !isPending) {
-        clearPendingTrip();
-        Toast.show({
-          type: 'error',
-          text1: 'Viaje no disponible',
-          text2: 'El viaje ya no está pendiente para vos.',
-        });
-        return { success: false, unavailable: true };
-      }
-
-      // Evitar desincronización entre timeout local y timeout del backend.
-      // La validez real se decide en DB con el UPDATE condicional por status/driver.
-
-      // Check commission balance before accepting (5 s timeout per query)
-      const commTimeout = createTimeoutController(5000);
-      const { data: commTrips } = await supabase
-        .from('trips')
-        .select('commission_amount, completed_at')
-        .eq('driver_id', driver.id)
-        .eq('status', TRIP_STATUS.COMPLETED)
-        .gt('commission_amount', 0)
-        .order('completed_at', { ascending: true })
-        .abortSignal(commTimeout.signal);
-      commTimeout.cleanup();
-
-      let payments = [];
-      try {
-        const payTimeout = createTimeoutController(5000);
-        const { data: payData } = await supabase
-          .from('commission_payments')
-          .select('amount, created_at')
-          .eq('driver_id', driver.id)
-          .order('created_at', { ascending: false })
-          .abortSignal(payTimeout.signal);
-        payTimeout.cleanup();
-        payments = payData || [];
-      } catch (_) {}
-
-      const totalComm = (commTrips || []).reduce((s, t) => s + (Number(t.commission_amount) || 0), 0);
-      const totalPaid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-      const balance = totalComm - totalPaid;
-
-      if (balance > 0) {
-        const lastPayDate = payments.length > 0 ? new Date(payments[0].created_at) : null;
-        const unpaidTrips = lastPayDate
-          ? (commTrips || []).filter((t) => new Date(t.completed_at) > lastPayDate)
-          : (commTrips || []);
-        const oldest = unpaidTrips.length > 0 ? unpaidTrips[0] : null;
-        const threeDaysAgo = new Date();
-        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-        if (oldest && new Date(oldest.completed_at) < threeDaysAgo) {
-          Toast.show({
-            type: 'error',
-            text1: 'Cuenta bloqueada',
-            text2: 'Regularizá tus comisiones pendientes para aceptar viajes',
-            visibilityTime: 5000,
-          });
-          clearPendingTrip();
-          return { success: false, blocked: true };
-        }
-      }
-
-      const timeout = createTimeoutController(12000);
+      // Accept first, verify commissions after — speed is critical with short timeouts.
+      const timeout = createTimeoutController(10000);
       const { data, error } = await supabase
         .from('trips')
         .update({
@@ -431,6 +357,57 @@ export const useTrips = () => {
           notifyError?.message || notifyError
         );
       });
+
+      // Commission check async — don't block acceptance
+      (async () => {
+        try {
+          const commTimeout = createTimeoutController(5000);
+          const { data: commTrips } = await supabase
+            .from('trips')
+            .select('commission_amount, completed_at')
+            .eq('driver_id', driver.id)
+            .eq('status', TRIP_STATUS.COMPLETED)
+            .gt('commission_amount', 0)
+            .order('completed_at', { ascending: true })
+            .abortSignal(commTimeout.signal);
+          commTimeout.cleanup();
+
+          let payments = [];
+          try {
+            const payTimeout = createTimeoutController(5000);
+            const { data: payData } = await supabase
+              .from('commission_payments')
+              .select('amount, created_at')
+              .eq('driver_id', driver.id)
+              .order('created_at', { ascending: false })
+              .abortSignal(payTimeout.signal);
+            payTimeout.cleanup();
+            payments = payData || [];
+          } catch (_) {}
+
+          const totalComm = (commTrips || []).reduce((s, t) => s + (Number(t.commission_amount) || 0), 0);
+          const totalPaid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+          const balance = totalComm - totalPaid;
+
+          if (balance > 0) {
+            const lastPayDate = payments.length > 0 ? new Date(payments[0].created_at) : null;
+            const unpaidTrips = lastPayDate
+              ? (commTrips || []).filter((t) => new Date(t.completed_at) > lastPayDate)
+              : (commTrips || []);
+            const oldest = unpaidTrips.length > 0 ? unpaidTrips[0] : null;
+            const threeDaysAgo = new Date();
+            threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+            if (oldest && new Date(oldest.completed_at) < threeDaysAgo) {
+              Toast.show({
+                type: 'error',
+                text1: 'Comisiones pendientes',
+                text2: 'Regularizá tus comisiones. El próximo viaje será bloqueado.',
+                visibilityTime: 5000,
+              });
+            }
+          }
+        } catch (_) {}
+      })();
 
       return { success: true, data };
     } catch (error) {

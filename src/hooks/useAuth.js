@@ -109,7 +109,15 @@ export const useAuth = (options = {}) => {
             setUser(nextSession.user);
             setSession(nextSession);
             await fetchDriverProfile(nextSession.user.id);
-          } else if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !nextSession)) {
+          } else if (event === 'SIGNED_OUT') {
+            clearTokenRefreshSub();
+            logoutStore();
+          } else if (event === 'TOKEN_REFRESHED' && !nextSession) {
+            // El refresh falló — limpiar sesión inválida del storage para evitar
+            // que en el próximo arranque se intente usar el token ya consumido.
+            try {
+              await supabase.auth.signOut({ scope: 'local' });
+            } catch (_) {}
             clearTokenRefreshSub();
             logoutStore();
           } else if (!initialized && !nextSession) {
@@ -135,7 +143,16 @@ export const useAuth = (options = {}) => {
 
     supabase.auth
       .getSession()
-      .then(({ data: { session: cachedSession } }) => {
+      .then(async ({ data: { session: cachedSession }, error: sessionError }) => {
+        if (sessionError && isInvalidRefreshTokenError(sessionError)) {
+          try {
+            await supabase.auth.signOut({ scope: 'local' });
+          } catch (_) {}
+          clearTokenRefreshSub();
+          logoutStore();
+          setLoading(false);
+          return;
+        }
         if (!initialized && !cachedSession) {
           setLoading(false);
         }

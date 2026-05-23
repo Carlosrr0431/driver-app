@@ -12,6 +12,9 @@ const MAX_PLAYED_IDS_CACHE = 160;
 /**
  * Hook que hace polling cada 3s para reproducir automáticamente
  * mensajes de voz de la base. Usa expo-audio (SDK 54).
+ *
+ * Flujo: consulta voice_messages con is_played=false, espera a que
+ * el player cargue el audio (evento 'loaded'), y recién ahí llama play().
  */
 export function useVoiceAutoPlay() {
   const { driver } = useAuthStore();
@@ -19,7 +22,6 @@ export function useVoiceAutoPlay() {
   const pollRef = useRef(null);
   const isSyncingRef = useRef(false);
   const playedIdsRef = useRef(new Set());
-  const currentUrlRef = useRef(null);
   const player = useAudioPlayer(null);
 
   const rememberPlayedId = useCallback((msgId) => {
@@ -42,38 +44,69 @@ export function useVoiceAutoPlay() {
     } catch {}
   }, [driverId]);
 
-  const playAudio = useCallback(async (url, msgId) => {
-    if (!url || !msgId) return false;
-    if (playedIdsRef.current.has(msgId)) return false;
+  const playAudio = useCallback((url, msgId) => {
+    if (!url || !msgId) return Promise.resolve(false);
+    if (playedIdsRef.current.has(msgId)) return Promise.resolve(false);
     rememberPlayedId(msgId);
 
-    try {
-      await setAudioModeAsync({
-        playsInSilentMode: true,
-        interruptionMode: 'duckOthers',
-        interruptionModeAndroid: 'duckOthers',
-        shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
-        allowsRecording: false,
-      });
+    return new Promise(async (resolve) => {
+      let resolved = false;
+      let timeoutId = null;
 
-      currentUrlRef.current = url;
-      player.replace({ uri: url });
-      player.play();
+      const cleanup = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        player.removeListener('playbackStatusUpdate', onStatus);
+      };
 
-      markAsPlayed(msgId).catch(() => {});
+      const onStatus = (status) => {
+        if (resolved) return;
+        if (status.isLoaded && !status.isBuffering) {
+          resolved = true;
+          cleanup();
+          player.play();
+          markAsPlayed(msgId).catch(() => {});
+          Toast.show({
+            type: 'info',
+            text1: '🎙️ Mensaje de la base',
+            text2: 'Reproduciendo audio...',
+            visibilityTime: 2000,
+          });
+          resolve(true);
+        }
+      };
 
-      Toast.show({
-        type: 'info',
-        text1: '🎙️ Mensaje de la base',
-        text2: 'Reproduciendo audio...',
-        visibilityTime: 2000,
-      });
-      return true;
-    } catch (err) {
-      console.error('Error auto-playing voice:', err);
-      return false;
-    }
+      try {
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          interruptionMode: 'duckOthers',
+          interruptionModeAndroid: 'duckOthers',
+          shouldDuckAndroid: false,
+          playThroughEarpieceAndroid: false,
+          allowsRecording: false,
+        });
+
+        player.addListener('playbackStatusUpdate', onStatus);
+        player.replace({ uri: url });
+
+        timeoutId = setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
+          if (player.isLoaded) {
+            player.play();
+            markAsPlayed(msgId).catch(() => {});
+            resolve(true);
+          } else {
+            resolve(false);
+          }
+        }, 8000);
+      } catch (err) {
+        resolved = true;
+        cleanup();
+        console.error('Error auto-playing voice:', err);
+        resolve(false);
+      }
+    });
   }, [player, markAsPlayed, rememberPlayedId]);
 
   const syncPendingBaseMessages = useCallback(async () => {
@@ -86,6 +119,7 @@ export function useVoiceAutoPlay() {
         .select('id, sender_type, audio_url, created_at, is_played')
         .eq('driver_id', driverId)
         .eq('sender_type', 'base')
+        .eq('is_played', false)
         .gte('created_at', sinceIso)
         .order('created_at', { ascending: true })
         .limit(10);
@@ -95,11 +129,7 @@ export function useVoiceAutoPlay() {
       for (const msg of (data || [])) {
         if (!msg?.id) continue;
         if (playedIdsRef.current.has(msg.id)) continue;
-        if (msg.is_played === true) {
-          rememberPlayedId(msg.id);
-          continue;
-        }
-        if (msg.sender_type !== 'base' || !msg.audio_url) continue;
+        if (!msg.audio_url) continue;
         const played = await playAudio(msg.audio_url, msg.id);
         if (played) break;
       }

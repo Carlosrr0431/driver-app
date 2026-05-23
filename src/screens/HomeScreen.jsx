@@ -27,7 +27,6 @@ import { useLocation } from '../hooks/useLocation';
 import { supabase } from '../services/supabase';
 import { NewTripModal } from '../components/trip/NewTripModal';
 import { VoiceChatModal } from '../components/VoiceChatModal';
-import { useVoiceAutoPlay } from '../hooks/useVoiceAutoPlay';
 import { formatPrice, formatDistance } from '../utils/formatters';
 import { DEFAULT_REGION } from '../utils/constants';
 import Toast from 'react-native-toast-message';
@@ -90,9 +89,6 @@ const HomeScreen = () => {
   const { data: todayTrips, isLoading: tripsLoading, refetch: refetchTrips } = useTripHistory('today');
 
   const isOnline = driver?.is_available || false;
-
-  // Reproducción automática de mensajes de voz de la base
-  useVoiceAutoPlay();
 
   useEffect(() => {
     const init = async () => {
@@ -206,6 +202,8 @@ const HomeScreen = () => {
       await supabase.from('driver_locations').upsert({
         driver_id: driver.id,
         is_online: newStatus,
+        lat: currentLocation?.lat ?? null,
+        lng: currentLocation?.lng ?? null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'driver_id' });
 

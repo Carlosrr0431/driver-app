@@ -228,6 +228,9 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const pickupAddress = getPickupAddress(trip);
   const preloadedDestination = approachOnly ? parsePreloadedDestination(trip) : null;
   const hasPreloadedDestination = Boolean(preloadedDestination?.address);
+  const hasKnownPassengerFare =
+    hasPreloadedDestination
+    && (trip.price != null || trip.distance_km != null);
   const cleanNotes = getCleanNotes(trip);
 
   return (
@@ -455,7 +458,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                 {/* Destination */}
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
                   <View style={{ width: 22, alignItems: 'center', paddingTop: 2 }}>
-                    {approachOnly
+                    {approachOnly && !hasPreloadedDestination
                       ? <MaterialCommunityIcons name="help-circle-outline" size={13} color={colors.textMuted} />
                       : <View style={{ width: 11, height: 11, borderRadius: 3, backgroundColor: colors.primary }} />
                     }
@@ -504,7 +507,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                 <StatPill
                   icon="cash"
                   value={trip.price != null ? formatPrice(trip.price) : 'A definir'}
-                  label={trip.price != null ? 'Precio' : 'Al bajar'}
+                  label={trip.price != null ? (hasKnownPassengerFare ? 'Total' : 'Precio') : 'Al bajar'}
                   highlight
                 />
               </View>

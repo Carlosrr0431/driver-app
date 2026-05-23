@@ -25,17 +25,23 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.remises.driverapp",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "config": {
         "googleMapsApiKey": "AIzaSyAkXsxRZfAehqO8EPxFN24nSJRPDHqh2jg"
       },
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para mostrar tu posición en el mapa y asignarte viajes cercanos.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Necesitamos tu ubicación en segundo plano para el seguimiento de viajes activos.",
         "NSLocationAlwaysUsageDescription": "Necesitamos tu ubicación siempre activa para rastrear viajes en curso.",
+        "NSMicrophoneUsageDescription": "Necesitamos acceso al micrófono para el asistente de voz.",
+        "NSPhotoLibraryUsageDescription": "Necesitamos acceso a tus fotos para actualizar tu foto de perfil.",
+        "NSCameraUsageDescription": "Necesitamos acceso a la cámara para tomar tu foto de perfil.",
         "UIBackgroundModes": [
           "location",
           "fetch",
-          "remote-notification"
+          "remote-notification",
+          "audio"
         ]
       }
     },
@@ -82,8 +88,18 @@
           "color": "#DC2626"
         }
       ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
       "expo-font",
-      "expo-updates"
+      "expo-updates",
+      "expo-audio",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Necesitamos acceso a tus fotos para actualizar tu foto de perfil.",
+          "cameraPermission": "Necesitamos acceso a la cámara para tomar tu foto de perfil."
+        }
+      ]
     ],
     "extra": {
       "eas": {
