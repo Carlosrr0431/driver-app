@@ -65,6 +65,16 @@ CREATE POLICY "Chofer actualiza sus viajes"
     OR driver_id IN (
       SELECT id FROM public.drivers WHERE owner_id = public.get_my_driver_id()
     )
+  )
+  WITH CHECK (
+    driver_id = public.get_my_driver_id()
+    OR driver_id IN (
+      SELECT id FROM public.drivers WHERE owner_id = public.get_my_driver_id()
+    )
+    OR (
+      driver_id IS NULL
+      AND status IN ('queued', 'cancelled')
+    )
   );
 
 -- ══════════════════════════════════════════════════

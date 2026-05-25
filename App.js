@@ -1,7 +1,12 @@
 // Silenciar warnings de deprecación que no afectan funcionalidad
 globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
 import { LogBox } from 'react-native';
-LogBox.ignoreLogs(['[expo-av]', 'This method is deprecated']);
+LogBox.ignoreLogs([
+  '[expo-av]',
+  'This method is deprecated',
+  'Invalid Refresh Token',
+  'Refresh Token Not Found',
+]);
 
 import React, { useEffect, useState, useRef } from 'react';
 import { StatusBar, View, Text } from 'react-native';

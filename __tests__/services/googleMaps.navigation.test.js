@@ -1,4 +1,10 @@
-import { evaluateRerouteState } from '../../src/services/googleMaps';
+import {
+  computeNavigationSnapshot,
+  createInitialNavigationProgressState,
+  evaluateRerouteState,
+  getRouteRemainingMeters,
+  projectPointOntoPolyline,
+} from '../../src/services/googleMaps';
 
 describe('evaluateRerouteState', () => {
   it('no dispara reroute por un unico pico de jitter', () => {
@@ -102,5 +108,95 @@ describe('evaluateRerouteState', () => {
 
     expect(second.shouldReroute).toBe(true);
     expect(second.rerouteReason).toBe('deviation_severe');
+  });
+});
+
+describe('projectPointOntoPolyline', () => {
+  const routeCoords = [
+    { latitude: -24.7829, longitude: -65.4122 },
+    { latitude: -24.7839, longitude: -65.4122 },
+    { latitude: -24.7849, longitude: -65.4122 },
+  ];
+
+  it('proyecta un punto sobre el segmento más cercano', () => {
+    const projection = projectPointOntoPolyline(
+      { latitude: -24.7834, longitude: -65.41225 },
+      routeCoords,
+    );
+
+    expect(projection.deviationMeters).toBeLessThan(30);
+    expect(projection.distanceAlongMeters).toBeGreaterThan(0);
+    expect(projection.snappedPoint.latitude).toBeCloseTo(-24.7834, 3);
+  });
+});
+
+describe('computeNavigationSnapshot', () => {
+  const routeCoords = [
+    { latitude: -24.7800, longitude: -65.4100 },
+    { latitude: -24.7810, longitude: -65.4100 },
+    { latitude: -24.7820, longitude: -65.4100 },
+    { latitude: -24.7830, longitude: -65.4100 },
+  ];
+
+  const steps = [
+    {
+      index: 0,
+      instruction: 'Continúa por Av. San Martín',
+      distanceValue: 600,
+      maneuver: 'straight',
+      endLocation: { lat: -24.7810, lng: -65.4100 },
+    },
+    {
+      index: 1,
+      instruction: 'Gira a la derecha en Av. Belgrano',
+      distanceValue: 500,
+      maneuver: 'turn-right',
+      endLocation: { lat: -24.7830, lng: -65.4100 },
+    },
+  ];
+
+  it('mantiene progreso monótono y calcula paso actual', () => {
+    const first = computeNavigationSnapshot({
+      currentPoint: { latitude: -24.7802, longitude: -65.4100 },
+      routeCoords,
+      steps,
+      progressState: createInitialNavigationProgressState(),
+      routeDistanceMeters: 1100,
+      routeDurationSeconds: 240,
+      speedMps: 8,
+    });
+
+    const second = computeNavigationSnapshot({
+      currentPoint: { latitude: -24.7798, longitude: -65.4100 },
+      routeCoords,
+      steps,
+      progressState: first.progressState,
+      routeDistanceMeters: 1100,
+      routeDurationSeconds: 240,
+      speedMps: 8,
+    });
+
+    expect(second.progressState.lastDistanceAlongMeters)
+      .toBeGreaterThanOrEqual(first.progressState.lastDistanceAlongMeters - 14);
+    expect(second.currentStep).toBeTruthy();
+    expect(second.remainingDistanceMeters).toBeGreaterThan(0);
+    expect(Number.isFinite(second.remainingDurationSeconds)).toBe(true);
+  });
+});
+
+describe('getRouteRemainingMeters', () => {
+  it('usa proyección sobre la polilínea en lugar del vértice más cercano', () => {
+    const routeCoords = [
+      { latitude: -24.7800, longitude: -65.4100 },
+      { latitude: -24.7830, longitude: -65.4100 },
+    ];
+
+    const remaining = getRouteRemainingMeters(
+      { latitude: -24.7815, longitude: -65.4100 },
+      routeCoords,
+    );
+
+    expect(remaining).toBeGreaterThan(0);
+    expect(remaining).toBeLessThan(350);
   });
 });

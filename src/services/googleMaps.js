@@ -239,34 +239,288 @@ function normalizeStep(step, index) {
   };
 }
 
-export function getRouteRemainingMeters(currentPoint, routeCoords = []) {
-  if (!currentPoint || routeCoords.length === 0) return 0;
-  if (routeCoords.length === 1) return getDistanceMeters(currentPoint, routeCoords[0]);
-
-  let nearestIndex = 0;
-  let nearestDistance = Number.POSITIVE_INFINITY;
-
-  for (let index = 0; index < routeCoords.length; index += 1) {
-    const distance = getDistanceMeters(currentPoint, routeCoords[index]);
-    if (distance < nearestDistance) {
-      nearestDistance = distance;
-      nearestIndex = index;
-    }
-  }
-
-  let total = nearestDistance;
-  for (let index = nearestIndex; index < routeCoords.length - 1; index += 1) {
+function getPolylineTotalLengthMeters(routeCoords = []) {
+  if (routeCoords.length < 2) return 0;
+  let total = 0;
+  for (let index = 0; index < routeCoords.length - 1; index += 1) {
     total += getDistanceMeters(routeCoords[index], routeCoords[index + 1]);
   }
-  return Math.round(total);
+  return total;
 }
 
-export function getCurrentNavigationStep(currentPoint, steps = []) {
+/**
+ * Proyecta un punto GPS sobre la polilínea de ruta.
+ * Devuelve posición ajustada a la calle, distancia recorrida y desvío lateral.
+ */
+export function projectPointOntoPolyline(point, routeCoords = []) {
+  if (!point || routeCoords.length === 0) {
+    return {
+      snappedPoint: point || null,
+      segmentIndex: 0,
+      distanceAlongMeters: 0,
+      deviationMeters: Number.POSITIVE_INFINITY,
+    };
+  }
+
+  if (routeCoords.length === 1) {
+    const deviationMeters = getDistanceMeters(point, routeCoords[0]);
+    return {
+      snappedPoint: routeCoords[0],
+      segmentIndex: 0,
+      distanceAlongMeters: 0,
+      deviationMeters,
+    };
+  }
+
+  let best = {
+    segmentIndex: 0,
+    distanceAlongMeters: 0,
+    deviationMeters: Number.POSITIVE_INFINITY,
+    snappedPoint: routeCoords[0],
+  };
+
+  let accumulated = 0;
+  for (let index = 0; index < routeCoords.length - 1; index += 1) {
+    const start = routeCoords[index];
+    const end = routeCoords[index + 1];
+    const projected = projectPointToSegment(point, start, end);
+    const deviationMeters = getDistanceMeters(point, projected);
+    const segmentLength = getDistanceMeters(start, end);
+    const alongSegment = getDistanceMeters(start, projected);
+
+    if (deviationMeters < best.deviationMeters) {
+      best = {
+        segmentIndex: index,
+        distanceAlongMeters: accumulated + alongSegment,
+        deviationMeters,
+        snappedPoint: projected,
+      };
+    }
+    accumulated += segmentLength;
+  }
+
+  return best;
+}
+
+function buildStepEndDistances(steps = [], routeLengthMeters = 0) {
+  if (!Array.isArray(steps) || steps.length === 0) return [];
+
+  let cumulative = 0;
+  const markers = steps.map((step, index) => {
+    const stepMeters = Number(step?.distanceValue);
+    cumulative += Number.isFinite(stepMeters) && stepMeters > 0 ? stepMeters : 0;
+    return {
+      index,
+      endDistanceMeters: Math.min(cumulative, routeLengthMeters || cumulative),
+      step,
+    };
+  });
+
+  if (routeLengthMeters > 0 && markers.length > 0) {
+    markers[markers.length - 1].endDistanceMeters = routeLengthMeters;
+  }
+
+  return markers;
+}
+
+function resolveStepFromProgress(distanceAlongMeters, stepMarkers = [], lastStepIndex = 0) {
+  if (!stepMarkers.length) return null;
+
+  const advanceThresholdMeters = 28;
+  let stepIndex = Math.max(0, Math.min(lastStepIndex, stepMarkers.length - 1));
+
+  for (let index = stepIndex; index < stepMarkers.length; index += 1) {
+    if (distanceAlongMeters + advanceThresholdMeters < stepMarkers[index].endDistanceMeters) {
+      stepIndex = index;
+      break;
+    }
+    stepIndex = index;
+  }
+
+  const marker = stepMarkers[stepIndex];
+  const distanceToStepMeters = Math.max(
+    0,
+    Math.round(marker.endDistanceMeters - distanceAlongMeters),
+  );
+
+  if (distanceToStepMeters <= advanceThresholdMeters && stepIndex + 1 < stepMarkers.length) {
+    const next = stepMarkers[stepIndex + 1];
+    return {
+      ...next.step,
+      index: next.index,
+      distanceToStepMeters: Math.max(
+        0,
+        Math.round(next.endDistanceMeters - distanceAlongMeters),
+      ),
+    };
+  }
+
+  return {
+    ...marker.step,
+    index: marker.index,
+    distanceToStepMeters,
+  };
+}
+
+function estimateRemainingDurationSeconds({
+  remainingMeters,
+  speedMps = 0,
+  routeDistanceMeters = 0,
+  routeDurationSeconds = 0,
+}) {
+  if (!Number.isFinite(remainingMeters) || remainingMeters <= 0) return 0;
+
+  const trafficEta = routeDistanceMeters > 0 && routeDurationSeconds > 0
+    ? (remainingMeters / routeDistanceMeters) * routeDurationSeconds
+    : null;
+
+  const speedKmh = Math.max(0, Number(speedMps) || 0) * 3.6;
+  if (speedKmh >= 8) {
+    const effectiveSpeedMps = Math.max(Number(speedMps) || 0, 2.8);
+    const speedEta = remainingMeters / effectiveSpeedMps;
+    if (Number.isFinite(trafficEta)) {
+      return Math.max(0, Math.round(speedEta * 0.62 + trafficEta * 0.38));
+    }
+    return Math.max(0, Math.round(speedEta));
+  }
+
+  if (Number.isFinite(trafficEta)) {
+    return Math.max(0, Math.round(trafficEta));
+  }
+
+  return null;
+}
+
+function smoothEtaSeconds(nextEtaSeconds, previousEtaSeconds) {
+  if (!Number.isFinite(nextEtaSeconds) || nextEtaSeconds <= 0) {
+    return previousEtaSeconds ?? null;
+  }
+  if (!Number.isFinite(previousEtaSeconds) || previousEtaSeconds <= 0) {
+    return nextEtaSeconds;
+  }
+  return Math.round(previousEtaSeconds * 0.72 + nextEtaSeconds * 0.28);
+}
+
+export function createInitialNavigationProgressState() {
+  return {
+    lastDistanceAlongMeters: 0,
+    lastStepIndex: 0,
+    smoothedEtaSeconds: null,
+  };
+}
+
+/**
+ * Calcula el estado completo de navegación en un solo paso, al estilo Navigation SDK:
+ * proyección sobre ruta, progreso monótono, paso actual y ETA híbrida (velocidad + tráfico).
+ */
+export function computeNavigationSnapshot({
+  currentPoint,
+  routeCoords = [],
+  steps = [],
+  progressState = {},
+  speedMps = 0,
+  routeDistanceMeters = 0,
+  routeDurationSeconds = 0,
+  accuracyMeters = null,
+}) {
+  const routeLengthMeters = routeDistanceMeters > 0
+    ? routeDistanceMeters
+    : getPolylineTotalLengthMeters(routeCoords);
+
+  if (!currentPoint || routeCoords.length === 0 || routeLengthMeters <= 0) {
+    return {
+      snappedPoint: currentPoint || null,
+      deviationMeters: Number.POSITIVE_INFINITY,
+      remainingDistanceMeters: 0,
+      remainingDurationSeconds: null,
+      currentStep: null,
+      progressRatio: 0,
+      progressState: progressState || createInitialNavigationProgressState(),
+    };
+  }
+
+  const projection = projectPointOntoPolyline(currentPoint, routeCoords);
+  const lastAlong = Number.isFinite(progressState?.lastDistanceAlongMeters)
+    ? progressState.lastDistanceAlongMeters
+    : 0;
+  const jitterAllowance = Number.isFinite(accuracyMeters)
+    ? clampNumber(accuracyMeters * 0.35, 4, 14)
+    : 6;
+  const distanceAlongMeters = Math.max(
+    lastAlong - jitterAllowance,
+    Math.min(projection.distanceAlongMeters, routeLengthMeters),
+  );
+
+  const remainingDistanceMeters = Math.max(0, Math.round(routeLengthMeters - distanceAlongMeters));
+  const stepMarkers = buildStepEndDistances(steps, routeLengthMeters);
+  const lastStepIndex = Number.isFinite(progressState?.lastStepIndex)
+    ? progressState.lastStepIndex
+    : 0;
+  const currentStep = resolveStepFromProgress(distanceAlongMeters, stepMarkers, lastStepIndex);
+
+  const rawEtaSeconds = estimateRemainingDurationSeconds({
+    remainingMeters: remainingDistanceMeters,
+    speedMps,
+    routeDistanceMeters: routeLengthMeters,
+    routeDurationSeconds,
+  });
+  const smoothedEtaSeconds = smoothEtaSeconds(
+    rawEtaSeconds,
+    progressState?.smoothedEtaSeconds,
+  );
+
+  const progressRatio = routeLengthMeters > 0
+    ? Math.max(0, Math.min(1, distanceAlongMeters / routeLengthMeters))
+    : 0;
+
+  return {
+    snappedPoint: projection.snappedPoint,
+    deviationMeters: projection.deviationMeters,
+    remainingDistanceMeters,
+    remainingDurationSeconds: smoothedEtaSeconds,
+    currentStep,
+    progressRatio,
+    progressState: {
+      lastDistanceAlongMeters: distanceAlongMeters,
+      lastStepIndex: currentStep?.index ?? lastStepIndex,
+      smoothedEtaSeconds,
+    },
+  };
+}
+
+export function getRouteRemainingMeters(currentPoint, routeCoords = []) {
+  if (!currentPoint || routeCoords.length === 0) return 0;
+  const routeLengthMeters = getPolylineTotalLengthMeters(routeCoords);
+  if (routeLengthMeters <= 0) {
+    return routeCoords.length === 1
+      ? Math.round(getDistanceMeters(currentPoint, routeCoords[0]))
+      : 0;
+  }
+
+  const projection = projectPointOntoPolyline(currentPoint, routeCoords);
+  return Math.max(0, Math.round(routeLengthMeters - projection.distanceAlongMeters));
+}
+
+export function getCurrentNavigationStep(currentPoint, steps = [], options = {}) {
   if (!currentPoint || !Array.isArray(steps) || steps.length === 0) return null;
 
-  // Find the step the driver is geometrically ON by projecting the current
-  // position onto each step's line segment and picking the closest one.
-  // This avoids falsely staying on an already-passed step.
+  const routeCoords = Array.isArray(options.routeCoords) ? options.routeCoords : [];
+  const routeLengthMeters = Number(options.routeDistanceMeters) > 0
+    ? Number(options.routeDistanceMeters)
+    : getPolylineTotalLengthMeters(routeCoords);
+
+  if (routeCoords.length >= 2 && routeLengthMeters > 0) {
+    const snapshot = computeNavigationSnapshot({
+      currentPoint,
+      routeCoords,
+      steps,
+      progressState: options.progressState || createInitialNavigationProgressState(),
+      routeDistanceMeters: routeLengthMeters,
+    });
+    return snapshot.currentStep;
+  }
+
+  // Fallback legacy: proyección por step cuando no hay polyline completa.
   let bestIndex = 0;
   let bestDist = Number.POSITIVE_INFINITY;
 
@@ -289,8 +543,6 @@ export function getCurrentNavigationStep(currentPoint, steps = []) {
   const step = steps[bestIndex];
   const distToEnd = Math.round(getDistanceMeters(currentPoint, step.endLocation));
 
-  // If we've essentially reached the end of this step, advance to the next one
-  // so the instruction already shown is for the upcoming maneuver.
   if (distToEnd <= 35 && bestIndex + 1 < steps.length) {
     const next = steps[bestIndex + 1];
     return {
@@ -317,6 +569,9 @@ export const getDirections = async (origin, destination) => {
       destination: destStr,
       key: GOOGLE_MAPS_API_KEY,
       language: 'es',
+      region: 'ar',
+      mode: 'driving',
+      units: 'metric',
       departure_time: 'now',
       traffic_model: 'best_guess',
     });

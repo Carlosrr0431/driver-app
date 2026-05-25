@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { supabase } from '../services/supabase';
+import { clearInvalidAuthSession, isInvalidRefreshTokenError } from '../services/authSession';
 import { useAuthStore } from '../stores/authStore';
 import { registerForPushNotifications, subscribeToTokenRefresh } from '../services/notifications';
 import Toast from 'react-native-toast-message';
@@ -16,11 +17,6 @@ const getGlobalAuthRuntime = () => {
   return globalScope.__driverAppAuthRuntime;
 };
 
-const isInvalidRefreshTokenError = (error) => {
-  const message = error?.message || '';
-  return /Invalid Refresh Token|Already Used|Refresh Token Not Found/i.test(message);
-};
-
 const clearTokenRefreshSub = () => {
   const runtime = getGlobalAuthRuntime();
   if (!runtime.tokenRefreshSub) return;
@@ -35,6 +31,12 @@ const syncTokenRefreshSub = (driverId) => {
   clearTokenRefreshSub();
   if (!driverId) return;
   runtime.tokenRefreshSub = subscribeToTokenRefresh(driverId);
+};
+
+const handleInvalidRefreshToken = async (logoutStore) => {
+  await clearInvalidAuthSession();
+  clearTokenRefreshSub();
+  logoutStore();
 };
 
 export const useAuth = (options = {}) => {
@@ -102,73 +104,70 @@ export const useAuth = (options = {}) => {
 
     let initialized = false;
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, nextSession) => {
-        try {
-          if (nextSession?.user) {
-            setUser(nextSession.user);
-            setSession(nextSession);
-            await fetchDriverProfile(nextSession.user.id);
-          } else if (event === 'SIGNED_OUT') {
-            clearTokenRefreshSub();
-            logoutStore();
-          } else if (event === 'TOKEN_REFRESHED' && !nextSession) {
-            // El refresh falló — limpiar sesión inválida del storage para evitar
-            // que en el próximo arranque se intente usar el token ya consumido.
-            try {
-              await supabase.auth.signOut({ scope: 'local' });
-            } catch (_) {}
-            clearTokenRefreshSub();
-            logoutStore();
-          } else if (!initialized && !nextSession) {
-            clearTokenRefreshSub();
-            logoutStore();
-          }
-        } catch (error) {
+    const runDeferredAuthWork = (work) => {
+      queueMicrotask(() => {
+        work().catch(async (error) => {
           if (isInvalidRefreshTokenError(error)) {
-            try {
-              await supabase.auth.signOut({ scope: 'local' });
-            } catch (_) {}
-            clearTokenRefreshSub();
-            logoutStore();
-          } else {
-            console.error('Error procesando cambio de sesión:', error);
+            await handleInvalidRefreshToken(logoutStore);
+            return;
           }
-        } finally {
-          setLoading(false);
-          initialized = true;
-        }
-      }
-    );
-
-    supabase.auth
-      .getSession()
-      .then(async ({ data: { session: cachedSession }, error: sessionError }) => {
-        if (sessionError && isInvalidRefreshTokenError(sessionError)) {
-          try {
-            await supabase.auth.signOut({ scope: 'local' });
-          } catch (_) {}
-          clearTokenRefreshSub();
-          logoutStore();
-          setLoading(false);
-          return;
-        }
-        if (!initialized && !cachedSession) {
-          setLoading(false);
-        }
-      })
-      .catch(async (error) => {
-        if (isInvalidRefreshTokenError(error)) {
-          try {
-            await supabase.auth.signOut({ scope: 'local' });
-          } catch (_) {}
-          clearTokenRefreshSub();
-          logoutStore();
-          setLoading(false);
-          return;
-        }
-        if (!initialized) setLoading(false);
+          console.error('Error procesando cambio de sesión:', error);
+        });
       });
+    };
+
+    const finishBootstrap = () => {
+      setLoading(false);
+      initialized = true;
+    };
+
+    const clearAuthenticatedState = () => {
+      clearTokenRefreshSub();
+      logoutStore();
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (nextSession?.user) {
+        setUser(nextSession.user);
+        setSession(nextSession);
+        finishBootstrap();
+        runDeferredAuthWork(() => fetchDriverProfile(nextSession.user.id));
+        return;
+      }
+
+      if (event === 'SIGNED_OUT') {
+        clearAuthenticatedState();
+        finishBootstrap();
+        return;
+      }
+
+      if (event === 'TOKEN_REFRESHED') {
+        if (nextSession) {
+          setSession(nextSession);
+          if (nextSession.user) {
+            setUser(nextSession.user);
+          }
+        } else {
+          clearAuthenticatedState();
+          runDeferredAuthWork(() => clearInvalidAuthSession());
+        }
+        finishBootstrap();
+        return;
+      }
+
+      if (event === 'INITIAL_SESSION') {
+        if (!nextSession) {
+          clearAuthenticatedState();
+        }
+        finishBootstrap();
+        return;
+      }
+
+      if (!initialized && !nextSession) {
+        clearAuthenticatedState();
+        finishBootstrap();
+      }
+    });
 
     return () => {
       subscription?.unsubscribe();
@@ -204,11 +203,7 @@ export const useAuth = (options = {}) => {
       return { success: true };
     } catch (error) {
       if (isInvalidRefreshTokenError(error)) {
-        try {
-          await supabase.auth.signOut({ scope: 'local' });
-        } catch (_) {}
-        clearTokenRefreshSub();
-        logoutStore();
+        await handleInvalidRefreshToken(logoutStore);
       }
 
       let message = 'Error al iniciar sesión';
@@ -244,11 +239,8 @@ export const useAuth = (options = {}) => {
       });
     } catch (error) {
       if (isInvalidRefreshTokenError(error)) {
-        try {
-          await supabase.auth.signOut({ scope: 'local' });
-        } catch (_) {}
-        clearTokenRefreshSub();
-        logoutStore();
+        await handleInvalidRefreshToken(logoutStore);
+        return;
       }
       console.error('Error cerrando sesión:', error);
     }

@@ -10,6 +10,16 @@ import Toast from 'react-native-toast-message';
 
 const BACKGROUND_LOCATION_TASK = 'background-location-task';
 
+function getDistanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 try {
   TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     if (error) {
@@ -54,7 +64,13 @@ export const useLocation = () => {
   const trackingIntervalRef = useRef(null);
   const activeTripIdRef = useRef(null);
   const watchSubscriptionRef = useRef(null);
+  const navWatchSubscriptionRef = useRef(null);
+  const navLastLocationRef = useRef(null);
   const pendingBackgroundStartRef = useRef(false);
+  const isNavigationWatchActiveRef = useRef(false);
+  const lastLocationRef = useRef(null);
+  const lastSupabasePushRef = useRef(0);
+  const hasSyncedToSupabaseRef = useRef(false);
 
   const requestPermissions = useCallback(async () => {
     try {
@@ -79,7 +95,55 @@ export const useLocation = () => {
     }
   }, []);
 
-  const getCurrentPosition = useCallback(async () => {
+  const updateDriverLocation = useCallback(async (location) => {
+    if (!driver?.id || !location) return;
+    try {
+      await supabase
+        .from('drivers')
+        .update({
+          current_lat: location.lat,
+          current_lng: location.lng,
+        })
+        .eq('id', driver.id);
+    } catch (error) {
+      console.error('Error actualizando ubicación del chofer:', error);
+    }
+  }, [driver]);
+
+  const pushLocationToSupabase = useCallback(async (pos, options = {}) => {
+    const { force = false } = options;
+    if (!driver?.id) return;
+    const now = Date.now();
+    if (!force && now - lastSupabasePushRef.current < 5000) return;
+    lastSupabasePushRef.current = now;
+
+    try {
+      await supabase
+        .from('driver_locations')
+        .upsert({
+          driver_id: driver.id,
+          lat: pos.lat,
+          lng: pos.lng,
+          speed: pos.speed || 0,
+          heading: pos.heading || 0,
+          is_online: true,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'driver_id' });
+    } catch (error) {
+      console.warn('Error pushing location to Supabase:', error.message);
+    }
+  }, [driver]);
+
+  const syncLocationToBackend = useCallback(async (pos, options = {}) => {
+    const { force = false } = options;
+    if (!driver?.id || !pos) return;
+    hasSyncedToSupabaseRef.current = true;
+    await updateDriverLocation(pos);
+    await pushLocationToSupabase(pos, { force });
+  }, [driver, updateDriverLocation, pushLocationToSupabase]);
+
+  const getCurrentPosition = useCallback(async (options = {}) => {
+    const { syncToSupabase = false } = options;
     try {
       // Verificar permisos antes de pedir ubicación
       const { status } = await Location.getForegroundPermissionsAsync();
@@ -106,16 +170,9 @@ export const useLocation = () => {
 
       // Filtro de movimiento: evita actualizar currentLocation cuando el auto está
       // detenido y el GPS jittea entre la calle y la vereda.
-      // Haversine inline porque getDistanceMeters está definido más abajo en el hook.
       const last = lastLocationRef.current;
       if (last) {
-        const R = 6378137;
-        const dLat = (pos.lat - last.lat) * Math.PI / 180;
-        const dLng = (pos.lng - last.lng) * Math.PI / 180;
-        const sinDLat = Math.sin(dLat / 2);
-        const sinDLng = Math.sin(dLng / 2);
-        const a = sinDLat ** 2 + Math.cos(last.lat * Math.PI / 180) * Math.cos(pos.lat * Math.PI / 180) * sinDLng ** 2;
-        const distMeters = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distMeters = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
         const isMoving = pos.speed > 1.5; // m/s ≈ 5.4 km/h
         // Parado: requiere ≥ 12 m de desplazamiento antes de aceptar el nuevo punto.
         // En movimiento: cualquier cambio ≥ 4 m es relevante para la navegación.
@@ -124,27 +181,15 @@ export const useLocation = () => {
       lastLocationRef.current = pos;
 
       setCurrentLocation(pos);
+      if (syncToSupabase) {
+        await syncLocationToBackend(pos, { force: true });
+      }
       return pos;
     } catch (error) {
       console.warn('Error obteniendo posición:', error.message);
       return null;
     }
-  }, [requestPermissions]);
-
-  const updateDriverLocation = useCallback(async (location) => {
-    if (!driver?.id || !location) return;
-    try {
-      await supabase
-        .from('drivers')
-        .update({
-          current_lat: location.lat,
-          current_lng: location.lng,
-        })
-        .eq('id', driver.id);
-    } catch (error) {
-      console.error('Error actualizando ubicación del chofer:', error);
-    }
-  }, [driver]);
+  }, [requestPermissions, setCurrentLocation, syncLocationToBackend]);
 
   const sendTrackingPoint = useCallback(async (tripId, location) => {
     if (!tripId || !location || !driver?.id) return;
@@ -246,42 +291,79 @@ export const useLocation = () => {
     }
   }, []);
 
-  const lastLocationRef = useRef(null);
-  const lastSupabasePushRef = useRef(0);
-
-  const getDistanceMeters = (lat1, lng1, lat2, lng2) => {
-    const R = 6371000;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) ** 2 +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-      Math.sin(dLng / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  };
-
-  const pushLocationToSupabase = useCallback(async (pos) => {
-    if (!driver?.id) return;
-    const now = Date.now();
-    // Throttle: solo pushear cada 5 segundos como mínimo
-    if (now - lastSupabasePushRef.current < 5000) return;
-    lastSupabasePushRef.current = now;
-
-    try {
-      await supabase
-        .from('driver_locations')
-        .upsert({
-          driver_id: driver.id,
-          lat: pos.lat,
-          lng: pos.lng,
-          speed: pos.speed || 0,
-          heading: pos.heading || 0,
-          is_online: true,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'driver_id' });
-    } catch (error) {
-      console.warn('Error pushing location to Supabase:', error.message);
+  const applyLocationUpdate = useCallback((pos, options = {}) => {
+    const {
+      minMovingMeters = 8,
+      minStoppedMeters = 15,
+      skipSupabase = false,
+      force = false,
+    } = options;
+    const last = lastLocationRef.current;
+    if (!force && last) {
+      const dist = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
+      const isMoving = pos.speed > 1.5;
+      const minDist = isMoving ? minMovingMeters : minStoppedMeters;
+      if (dist < minDist) return false;
     }
-  }, [driver]);
+
+    lastLocationRef.current = pos;
+    setCurrentLocation(pos);
+    if (!skipSupabase) {
+      hasSyncedToSupabaseRef.current = true;
+      pushLocationToSupabase(pos, { force });
+      updateDriverLocation(pos);
+    }
+    return true;
+  }, [setCurrentLocation, pushLocationToSupabase, updateDriverLocation]);
+
+  const startNavigationWatch = useCallback(async () => {
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
+    if (navWatchSubscriptionRef.current) return;
+
+    isNavigationWatchActiveRef.current = true;
+    navLastLocationRef.current = lastLocationRef.current;
+
+    navWatchSubscriptionRef.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.BestForNavigation,
+        distanceInterval: 3,
+        timeInterval: 1000,
+      },
+      (location) => {
+        const accuracy = location.coords.accuracy ?? 99;
+        if (accuracy > 28) return;
+
+        const pos = {
+          lat: location.coords.latitude,
+          lng: location.coords.longitude,
+          speed: location.coords.speed ?? 0,
+          heading: location.coords.heading ?? 0,
+          accuracy,
+        };
+
+        const last = navLastLocationRef.current || lastLocationRef.current;
+        if (last) {
+          const dist = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
+          const isMoving = pos.speed > 1.2;
+          const minDist = isMoving ? 3 : 8;
+          if (dist < minDist) return;
+        }
+
+        navLastLocationRef.current = pos;
+        applyLocationUpdate(pos, { minMovingMeters: 0, minStoppedMeters: 0 });
+      },
+    );
+  }, [requestPermissions, applyLocationUpdate]);
+
+  const stopNavigationWatch = useCallback(() => {
+    isNavigationWatchActiveRef.current = false;
+    navLastLocationRef.current = null;
+    if (navWatchSubscriptionRef.current) {
+      navWatchSubscriptionRef.current.remove();
+      navWatchSubscriptionRef.current = null;
+    }
+  }, []);
 
   const setOfflineLocation = useCallback(async () => {
     if (!driver?.id) return;
@@ -326,29 +408,30 @@ export const useLocation = () => {
           accuracy,
         };
 
+        if (!hasSyncedToSupabaseRef.current) {
+          applyLocationUpdate(pos, { force: true });
+          return;
+        }
+
         const last = lastLocationRef.current;
         if (last) {
           const dist = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
           const isMoving = pos.speed > 1.5; // m/s ≈ 5.4 km/h
-          // Cuando el auto está detenido exigimos más desplazamiento real
-          // para evitar que el jitter de GPS lleve el origen a la vereda.
           const minDist = isMoving ? 8 : 15;
           if (dist < minDist) return;
         }
 
-        lastLocationRef.current = pos;
-        setCurrentLocation(pos);
-        pushLocationToSupabase(pos);
-        updateDriverLocation(pos);
+        applyLocationUpdate(pos);
       }
     );
-  }, [requestPermissions, setCurrentLocation, pushLocationToSupabase, updateDriverLocation]);
+  }, [requestPermissions, applyLocationUpdate]);
 
   const stopWatching = useCallback(() => {
     if (watchSubscriptionRef.current) {
       watchSubscriptionRef.current.remove();
       watchSubscriptionRef.current = null;
     }
+    hasSyncedToSupabaseRef.current = false;
     setOfflineLocation();
   }, [setOfflineLocation]);
 
@@ -368,8 +451,9 @@ export const useLocation = () => {
         watchSubscriptionRef.current.remove();
         watchSubscriptionRef.current = null;
       }
+      stopNavigationWatch();
     };
-  }, [maybeStartBackgroundUpdates]);
+  }, [maybeStartBackgroundUpdates, stopNavigationWatch]);
 
   return {
     currentLocation,
@@ -383,6 +467,8 @@ export const useLocation = () => {
     stopTracking,
     startWatching,
     stopWatching,
+    startNavigationWatch,
+    stopNavigationWatch,
     updateDriverLocation,
     pushLocationToSupabase,
     setOfflineLocation,

@@ -4,7 +4,6 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../theme/colors';
 import HomeScreen from '../screens/HomeScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -18,6 +17,10 @@ import { useVoiceAutoPlay } from '../hooks/useVoiceAutoPlay';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
+
+const TAB_ACTIVE_COLOR = '#161616';
+const TAB_INACTIVE_COLOR = '#767676';
+const TAB_BAR_BORDER = '#EBEBEB';
 
 const HomeStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -51,40 +54,55 @@ const ProfileStack = () => (
 const MainNavigator = () => {
   useVoiceAutoPlay();
   const insets = useSafeAreaInsets();
-  const paddingBottom = Platform.OS === 'ios' ? Math.max(insets.bottom, 12) : 20;
+  const extraBottomInset = Platform.OS === 'android' ? 7 : 1;
+  const paddingBottom = insets.bottom + extraBottomInset;
+  const tabBarHeight = 46 + paddingBottom;
 
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarShowLabel: false,
+        tabBarShowLabel: true,
+        tabBarActiveTintColor: TAB_ACTIVE_COLOR,
+        tabBarInactiveTintColor: TAB_INACTIVE_COLOR,
+        tabBarIconStyle: {
+          marginBottom: 2,
+        },
+        tabBarLabel: ({ focused, color, children }) => (
+          <Text
+            style={[styles.label, focused && styles.labelActive, { color }]}
+            numberOfLines={1}
+          >
+            {children}
+          </Text>
+        ),
+        tabBarItemStyle: {
+          paddingTop: 2,
+          paddingBottom: 0,
+        },
         tabBarStyle: {
           position: 'absolute',
           bottom: 0,
           left: 0,
           right: 0,
-          height: 64 + paddingBottom,
+          height: tabBarHeight,
           backgroundColor: '#FFFFFF',
-          borderTopWidth: 1,
-          borderTopColor: '#F3F4F6',
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: TAB_BAR_BORDER,
           elevation: 0,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 0.04,
-          shadowRadius: 8,
+          shadowOpacity: 0,
           paddingBottom,
-          paddingTop: 8,
+          paddingTop: 4,
         },
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: '#9CA3AF',
       }}
     >
       <Tab.Screen
         name="Home"
         component={HomeStack}
         options={{
-          tabBarIcon: ({ focused }) => (
-            <TabItem icon="home" label="Inicio" focused={focused} />
+          title: 'Inicio',
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon icon="home" focused={focused} color={color} />
           ),
         }}
       />
@@ -92,8 +110,9 @@ const MainNavigator = () => {
         name="History"
         component={HistoryStack}
         options={{
-          tabBarIcon: ({ focused }) => (
-            <TabItem icon="time" label="Historial" focused={focused} />
+          title: 'Historial',
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon icon="time" focused={focused} color={color} />
           ),
         }}
       />
@@ -101,8 +120,9 @@ const MainNavigator = () => {
         name="Profile"
         component={ProfileStack}
         options={{
-          tabBarIcon: ({ focused }) => (
-            <TabItem icon="person" label="Perfil" focused={focused} />
+          title: 'Mi perfil',
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon icon="person" focused={focused} color={color} />
           ),
         }}
       />
@@ -110,35 +130,30 @@ const MainNavigator = () => {
   );
 };
 
-const TabItem = ({ icon, label, focused }) => (
-  <View style={styles.tabItem}>
+const TabIcon = ({ icon, focused, color }) => (
+  <View style={styles.iconWrap}>
     <Ionicons
       name={focused ? icon : `${icon}-outline`}
-      size={24}
-      color={focused ? colors.primary : '#9CA3AF'}
+      size={22}
+      color={color}
     />
-    <Text style={[styles.label, focused && styles.labelActive]} numberOfLines={1}>
-      {label}
-    </Text>
   </View>
 );
 
 const styles = StyleSheet.create({
-  tabItem: {
-    flex: 1,
+  iconWrap: {
+    width: 28,
+    height: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
   },
   label: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#9CA3AF',
-    marginTop: 4,
-    letterSpacing: 0.1,
+    fontSize: 10,
+    fontWeight: '400',
+    marginTop: 0,
+    letterSpacing: 0,
   },
   labelActive: {
-    color: colors.primary,
     fontWeight: '700',
   },
 });

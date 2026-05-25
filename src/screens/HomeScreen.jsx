@@ -91,14 +91,21 @@ const HomeScreen = () => {
   const isOnline = driver?.is_available || false;
 
   useEffect(() => {
+    if (!driver?.id) return;
+
+    let cancelled = false;
     const init = async () => {
       await requestPermissions();
-      await getCurrentPosition();
+      await getCurrentPosition({ syncToSupabase: isOnline });
+      if (cancelled) return;
       if (isOnline) startWatching();
     };
     init();
-    return () => { stopWatching(); };
-  }, []);
+    return () => {
+      cancelled = true;
+      stopWatching();
+    };
+  }, [driver?.id, isOnline]);
 
   // Recover any pending trip that arrived while the app was in the background/killed
   const checkPendingTripFromDB = useCallback(async () => {
@@ -208,7 +215,12 @@ const HomeScreen = () => {
       }, { onConflict: 'driver_id' });
 
       updateDriver({ is_available: newStatus });
-      if (newStatus) { startWatching(); } else { stopWatching(); }
+      if (newStatus) {
+        await getCurrentPosition({ syncToSupabase: true });
+        startWatching();
+      } else {
+        stopWatching();
+      }
 
       Toast.show({
         type: 'success',

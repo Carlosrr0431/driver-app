@@ -7,6 +7,7 @@ import { TRIP_STATUS, PAGINATION_LIMIT, TRIP_ACCEPT_TIMEOUT } from '../utils/con
 import Toast from 'react-native-toast-message';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { notifyTripAcceptedTransition } from '../services/tripTransition';
+import { rejectTripViaDashboard, rejectTripViaRpc } from '../services/tripReject';
 
 function createTimeoutController(timeoutMs = 12000) {
   const controller = new AbortController();
@@ -424,66 +425,79 @@ export const useTrips = () => {
   }, [driver?.id, clearPendingTrip, queryClient, setActiveTrip]);
 
   const rejectTrip = useCallback(async (tripId, reason) => {
+    const isTimeout = reason === 'Tiempo agotado';
+
+    // Cerrar el modal de inmediato; la API puede tardar o fallar.
+    if (isTimeout) {
+      clearPendingTrip();
+    }
+
+    const finishReject = () => {
+      clearPendingTrip();
+      Toast.show({
+        type: 'info',
+        text1: isTimeout ? 'Tiempo agotado' : 'Viaje rechazado',
+        text2: 'Se buscará otro chofer disponible.',
+      });
+      return { success: true };
+    };
+
     try {
       if (!driver?.id) {
         return { success: false, error: new Error('driver_not_ready') };
       }
 
-      const isTimeout = reason === 'Tiempo agotado';
-
-      // Si es timeout o rechazo, re-encolar para que otro chofer lo tome
-      // en vez de cancelar definitivamente el viaje del pasajero
-      const updatePayload = isTimeout
-        ? {
-            status: 'queued',
-            driver_id: null,
-            assigned_at: null,
-            dispatch_status: 'queued',
-            next_dispatch_at: new Date(Date.now() + 5000).toISOString(),
-          }
-        : {
-            status: 'queued',
-            driver_id: null,
-            assigned_at: null,
-            dispatch_status: 'queued',
-            next_dispatch_at: new Date(Date.now() + 5000).toISOString(),
-          };
-
-      const { data, error } = await supabase
-        .from('trips')
-        .update(updatePayload)
-        .eq('id', tripId)
-        .eq('driver_id', driver.id)
-        .eq('status', TRIP_STATUS.PENDING)
-        .select('id')
-        .maybeSingle();
-
-      if (error) throw error;
-
-      if (!data) {
-        clearPendingTrip();
-        Toast.show({
-          type: 'info',
-          text1: 'Viaje no disponible',
-          text2: 'El viaje ya no estaba pendiente.',
-        });
-        return { success: false, unavailable: true };
+      try {
+        const rpcResult = await rejectTripViaRpc(tripId, reason);
+        if (rpcResult.success) {
+          return finishReject();
+        }
+      } catch (rpcError) {
+        if (rpcError?.unavailable) {
+          clearPendingTrip();
+          Toast.show({
+            type: 'info',
+            text1: 'Viaje no disponible',
+            text2: 'El viaje ya no estaba pendiente.',
+          });
+          return { success: false, unavailable: true };
+        }
+        console.warn('rejectTrip RPC fallback:', rpcError?.message || rpcError);
       }
 
-      clearPendingTrip();
+      try {
+        const apiResult = await rejectTripViaDashboard(tripId, reason);
+        if (apiResult.success) {
+          return finishReject();
+        }
+      } catch (apiError) {
+        if (apiError?.unavailable) {
+          clearPendingTrip();
+          Toast.show({
+            type: 'info',
+            text1: 'Viaje no disponible',
+            text2: 'El viaje ya no estaba pendiente.',
+          });
+          return { success: false, unavailable: true };
+        }
+        console.warn('rejectTrip API fallback:', apiError?.message || apiError);
+      }
 
-      Toast.show({
-        type: 'info',
-        text1: isTimeout ? 'Tiempo agotado' : 'Viaje rechazado',
-        text2: isTimeout ? 'Se buscará otro chofer disponible.' : 'Se buscará otro chofer disponible.',
-      });
-
-      return { success: true };
+      throw new Error('No se pudo rechazar el viaje. Ejecutá fix_trips_rls_driver_reject.sql en Supabase.');
     } catch (error) {
+      if (isTimeout) {
+        clearPendingTrip();
+      }
+      const details = String(error?.message || error?.details || '').trim();
+      console.error('rejectTrip error:', error);
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'No se pudo procesar el viaje',
+        text2: details.includes('fix_trips_rls')
+          ? 'No se pudo rechazar el viaje. Aplicá el SQL fix_trips_rls_driver_reject.sql en Supabase.'
+          : (details.includes('row-level security')
+            ? 'No se pudo rechazar el viaje. Contactá al operador si persiste.'
+            : (details || 'No se pudo procesar el viaje')),
       });
       return { success: false, error };
     }

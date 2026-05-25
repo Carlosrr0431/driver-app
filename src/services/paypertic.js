@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { getSafeSession } from './authSession';
 
 const DASHBOARD_URL =
   process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://profesional-dashboard.vercel.app';
@@ -10,9 +10,7 @@ const DASHBOARD_URL =
  * @returns {{ form_url: string, payment_id: string, external_transaction_id: string }}
  */
 export async function createPaymentSession(amount) {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const { session } = await getSafeSession();
 
   if (!session?.access_token) {
     throw new Error('No hay sesión activa');
@@ -56,9 +54,7 @@ export async function createPaymentSession(amount) {
  * }}
  */
 export async function getPaymentStatus(paymentId) {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const { session } = await getSafeSession();
 
   if (!session?.access_token) {
     throw new Error('No hay sesión activa');

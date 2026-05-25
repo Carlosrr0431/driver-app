@@ -96,23 +96,47 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const [countdown, setCountdown] = useState(() => getInitialCountdown(trip));
   const [showRejectSheet, setShowRejectSheet] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
   const countdownRef = useRef(null);
+  const timeoutRef = useRef(null);
   const notifPlayer = useAudioPlayer(require('../../../assets/notification.wav'));
   const progressWidth = useSharedValue(100);
-  // Keep ref so handleTimeout closure always has latest trip
   const tripRef = useRef(trip);
+  const onRejectRef = useRef(onReject);
   useEffect(() => { tripRef.current = trip; }, [trip]);
+  useEffect(() => { onRejectRef.current = onReject; }, [onReject]);
   // Prevents both timer-timeout and manual-accept from firing simultaneously
   const decidedRef = useRef(false);
-  // Signals that the interval reached 0 so the effect below can fire onReject
-  const timedOutRef = useRef(false);
+
+  const clearTimers = () => {
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  };
+
+  const handleTimeout = () => {
+    if (decidedRef.current) return;
+    decidedRef.current = true;
+    clearTimers();
+    setCountdown(0);
+    setIsDismissed(true);
+    stopSound();
+    onRejectRef.current?.(tripRef.current?.id, 'Tiempo agotado');
+  };
 
   useEffect(() => {
     if (visible && trip) {
       decidedRef.current = false;
-      timedOutRef.current = false;
+      setIsDismissed(false);
       setShowRejectSheet(false);
       setIsAccepting(false);
+      clearTimers();
+
       const initialCountdown = getInitialCountdown(trip);
       const initialProgress = Math.max(0, (initialCountdown / TRIP_ACCEPT_TIMEOUT) * 100);
 
@@ -120,45 +144,29 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
       progressWidth.value = initialProgress;
 
       if (initialCountdown <= 0) {
-        decidedRef.current = true;
-        if (onReject) onReject(tripRef.current?.id, 'Tiempo agotado');
-        return;
+        handleTimeout();
+        return () => {
+          clearTimers();
+          stopSound();
+        };
       }
 
       playNotificationSound();
       Vibration.vibrate([0, 500, 200, 500, 200, 500]);
 
       countdownRef.current = setInterval(() => {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            clearInterval(countdownRef.current);
-            // Signal timeout — actual onReject call happens in the effect below
-            // to keep the updater pure and avoid concurrent-mode double-invocation
-            timedOutRef.current = true;
-            return 0;
-          }
-          return prev - 1;
-        });
+        setCountdown((prev) => Math.max(0, prev - 1));
       }, 1000);
 
+      timeoutRef.current = setTimeout(handleTimeout, initialCountdown * 1000);
       progressWidth.value = withTiming(0, { duration: initialCountdown * 1000 });
     }
 
     return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
+      clearTimers();
       stopSound();
     };
   }, [visible, trip?.id]);
-
-  // Handles the timeout side-effect outside of the setState updater
-  useEffect(() => {
-    if (countdown === 0 && timedOutRef.current && !decidedRef.current) {
-      decidedRef.current = true;
-      timedOutRef.current = false;
-      stopSound();
-      if (onReject) onReject(tripRef.current?.id, 'Tiempo agotado');
-    }
-  }, [countdown]);
 
   const playNotificationSound = async () => {
     try {
@@ -185,7 +193,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const handleAccept = async () => {
     if (isAccepting || decidedRef.current) return;
     decidedRef.current = true;
-    if (countdownRef.current) clearInterval(countdownRef.current);
+    clearTimers();
     setIsAccepting(true);
     stopSound();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -210,7 +218,10 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   };
 
   const handleRejectWithReason = (reason) => {
-    if (countdownRef.current) clearInterval(countdownRef.current);
+    if (decidedRef.current) return;
+    decidedRef.current = true;
+    clearTimers();
+    setIsDismissed(true);
     setShowRejectSheet(false);
     stopSound();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -221,7 +232,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
     width: `${progressWidth.value}%`,
   }));
 
-  if (!visible || !trip) return null;
+  if (!visible || !trip || isDismissed) return null;
 
   const isUrgent = countdown <= 10;
   const approachOnly = isApproachOnly(trip);

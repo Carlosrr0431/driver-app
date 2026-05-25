@@ -23,7 +23,42 @@ async function resolveFreshAccessToken() {
   return session.access_token;
 }
 
-async function postTripTransition(accessToken, tripId, timeoutMs) {
+function isRpcMissingError(error) {
+  const code = String(error?.code || '');
+  const message = String(error?.message || '').toLowerCase();
+  return code === 'PGRST202' || message.includes('could not find the function');
+}
+
+export async function rejectTripViaRpc(tripId, reason) {
+  const normalizedTripId = String(tripId || '').trim();
+  const normalizedReason = String(reason || 'Rechazado por chofer').trim();
+
+  const { data, error } = await supabase.rpc('driver_reject_pending_trip', {
+    p_trip_id: normalizedTripId,
+    p_reason: normalizedReason,
+  });
+
+  if (error) {
+    if (isRpcMissingError(error)) {
+      return { success: false, rpcMissing: true };
+    }
+    throw error;
+  }
+
+  if (data?.success === true) {
+    return { success: true, tripId: data.trip_id || normalizedTripId };
+  }
+
+  if (data?.unavailable) {
+    const unavailableError = new Error(data?.error || 'trip_not_pending');
+    unavailableError.unavailable = true;
+    throw unavailableError;
+  }
+
+  throw new Error(data?.error || 'reject_failed');
+}
+
+async function postRejectTrip(accessToken, tripId, reason, timeoutMs) {
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => {
     abortController.abort();
@@ -37,10 +72,9 @@ async function postTripTransition(accessToken, tripId, timeoutMs) {
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
-        event: 'trip.transition',
+        event: 'trip.driver_reject',
         tripId,
-        status: 'going_to_pickup',
-        source: 'driver_app_accept',
+        reason,
       }),
       signal: abortController.signal,
     });
@@ -52,27 +86,34 @@ async function postTripTransition(accessToken, tripId, timeoutMs) {
   }
 }
 
-export async function notifyTripAcceptedTransition(tripId, { timeoutMs = 7000 } = {}) {
+export async function rejectTripViaDashboard(tripId, reason, { timeoutMs = 10000 } = {}) {
   const normalizedTripId = String(tripId || '').trim();
   if (!normalizedTripId) {
     throw new Error('tripId invalido');
   }
 
   let accessToken = await resolveFreshAccessToken();
-  let { response, payload } = await postTripTransition(accessToken, normalizedTripId, timeoutMs);
+  let { response, payload } = await postRejectTrip(accessToken, normalizedTripId, reason, timeoutMs);
 
   if (response.status === 401) {
     const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
     if (!refreshError && refreshed?.session?.access_token) {
       accessToken = refreshed.session.access_token;
-      ({ response, payload } = await postTripTransition(accessToken, normalizedTripId, timeoutMs));
+      ({ response, payload } = await postRejectTrip(
+        accessToken,
+        normalizedTripId,
+        reason,
+        timeoutMs,
+      ));
     }
   }
 
   if (!response.ok || payload?.success !== true) {
-    const reason = payload?.error || `HTTP ${response.status}`;
-    throw new Error(`No se pudo notificar aceptacion inmediata: ${reason}`);
+    const reasonText = payload?.error || `HTTP ${response.status}`;
+    const error = new Error(reasonText);
+    error.unavailable = Boolean(payload?.unavailable);
+    throw error;
   }
 
-  return payload;
+  return { success: true, tripId: payload.tripId || normalizedTripId };
 }
