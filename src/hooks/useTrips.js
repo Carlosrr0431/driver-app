@@ -7,7 +7,13 @@ import { TRIP_STATUS, PAGINATION_LIMIT, TRIP_ACCEPT_TIMEOUT } from '../utils/con
 import Toast from 'react-native-toast-message';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { notifyTripAcceptedTransition } from '../services/tripTransition';
-import { rejectTripViaDashboard, rejectTripViaRpc } from '../services/tripReject';
+import {
+  rejectTripViaDashboard,
+  rejectTripViaRpc,
+  verifyTripAlreadyReleased,
+} from '../services/tripReject';
+
+const rejectInFlightTripIds = new Set();
 
 function createTimeoutController(timeoutMs = 12000) {
   const controller = new AbortController();
@@ -425,6 +431,16 @@ export const useTrips = () => {
   }, [driver?.id, clearPendingTrip, queryClient, setActiveTrip]);
 
   const rejectTrip = useCallback(async (tripId, reason) => {
+    const normalizedTripId = String(tripId || '').trim();
+    if (!normalizedTripId) {
+      return { success: false, error: new Error('trip_id_invalid') };
+    }
+
+    if (rejectInFlightTripIds.has(normalizedTripId)) {
+      return { success: true, deduped: true };
+    }
+    rejectInFlightTripIds.add(normalizedTripId);
+
     const isTimeout = reason === 'Tiempo agotado';
 
     // Cerrar el modal de inmediato; la API puede tardar o fallar.
@@ -447,12 +463,31 @@ export const useTrips = () => {
         return { success: false, error: new Error('driver_not_ready') };
       }
 
+      let lastRpcError = null;
+      let lastApiError = null;
+
       try {
-        const rpcResult = await rejectTripViaRpc(tripId, reason);
+        const rpcResult = await rejectTripViaRpc(normalizedTripId, reason);
         if (rpcResult.success) {
           return finishReject();
         }
+        if (rpcResult.needsVerify) {
+          const released = await verifyTripAlreadyReleased(normalizedTripId, driver.id);
+          if (released) {
+            return finishReject();
+          }
+          if (rpcResult.unavailable) {
+            clearPendingTrip();
+            Toast.show({
+              type: 'info',
+              text1: 'Viaje no disponible',
+              text2: 'El viaje ya no estaba pendiente.',
+            });
+            return { success: false, unavailable: true };
+          }
+        }
       } catch (rpcError) {
+        lastRpcError = rpcError;
         if (rpcError?.unavailable) {
           clearPendingTrip();
           Toast.show({
@@ -466,11 +501,12 @@ export const useTrips = () => {
       }
 
       try {
-        const apiResult = await rejectTripViaDashboard(tripId, reason);
+        const apiResult = await rejectTripViaDashboard(normalizedTripId, reason, { driverId: driver.id });
         if (apiResult.success) {
           return finishReject();
         }
       } catch (apiError) {
+        lastApiError = apiError;
         if (apiError?.unavailable) {
           clearPendingTrip();
           Toast.show({
@@ -483,7 +519,18 @@ export const useTrips = () => {
         console.warn('rejectTrip API fallback:', apiError?.message || apiError);
       }
 
-      throw new Error('No se pudo rechazar el viaje. Ejecutá fix_trips_rls_driver_reject.sql en Supabase.');
+      const released = await verifyTripAlreadyReleased(normalizedTripId, driver.id);
+      if (released) {
+        return finishReject();
+      }
+
+      const lastMessage = String(
+        lastApiError?.message
+        || lastRpcError?.message
+        || 'No se pudo rechazar el viaje'
+      ).trim();
+
+      throw new Error(lastMessage);
     } catch (error) {
       if (isTimeout) {
         clearPendingTrip();
@@ -493,13 +540,13 @@ export const useTrips = () => {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: details.includes('fix_trips_rls')
-          ? 'No se pudo rechazar el viaje. Aplicá el SQL fix_trips_rls_driver_reject.sql en Supabase.'
-          : (details.includes('row-level security')
-            ? 'No se pudo rechazar el viaje. Contactá al operador si persiste.'
-            : (details || 'No se pudo procesar el viaje')),
+        text2: details.includes('row-level security')
+          ? 'No se pudo rechazar el viaje. Contactá al operador si persiste.'
+          : (details || 'No se pudo procesar el viaje'),
       });
       return { success: false, error };
+    } finally {
+      rejectInFlightTripIds.delete(normalizedTripId);
     }
   }, [driver?.id, clearPendingTrip]);
 

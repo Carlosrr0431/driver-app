@@ -1,7 +1,16 @@
 -- =====================================================
 -- FIX: Chofer no puede rechazar viaje pending (error 42501 RLS)
 --
--- Ejecutar TODO este archivo en el editor SQL de Supabase.
+-- Síntoma en driver-app: toast "No se pudo procesar el viaje" al
+-- rechazar/cancelar un viaje nuevo desde NewTripModal.
+--
+-- Causa: la política "Chofer actualiza sus viajes" solo define USING
+-- (driver_id = get_my_driver_id()). Sin WITH CHECK explícito, Postgres
+-- reutiliza USING también para la fila nueva. Al poner driver_id = NULL
+-- y status = 'queued', falla el chequeo RLS.
+--
+-- EJECUTAR en el editor SQL de Supabase.
+-- Requiere get_my_driver_id() (fix_drivers_rls_recursion.sql paso 1).
 -- =====================================================
 
 -- 1) Helper RLS (idempotente)
@@ -72,6 +81,15 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'error', 'trip_not_found');
   END IF;
 
+  v_context := COALESCE(v_trip.wa_context, '{}'::jsonb);
+  v_excluded := COALESCE(v_context->'dispatch_excluded_driver_ids', '[]'::jsonb);
+
+  IF v_trip.status = 'queued' AND v_trip.driver_id IS NULL THEN
+    IF v_excluded @> to_jsonb(v_driver_id::text) THEN
+      RETURN jsonb_build_object('success', true, 'trip_id', p_trip_id, 'idempotent', true);
+    END IF;
+  END IF;
+
   IF v_trip.driver_id IS DISTINCT FROM v_driver_id THEN
     RETURN jsonb_build_object('success', false, 'error', 'trip_not_owned');
   END IF;
@@ -79,9 +97,6 @@ BEGIN
   IF v_trip.status IS DISTINCT FROM 'pending' THEN
     RETURN jsonb_build_object('success', false, 'error', 'trip_not_pending', 'unavailable', true);
   END IF;
-
-  v_context := COALESCE(v_trip.wa_context, '{}'::jsonb);
-  v_excluded := COALESCE(v_context->'dispatch_excluded_driver_ids', '[]'::jsonb);
 
   IF NOT v_excluded @> to_jsonb(v_driver_id::text) THEN
     v_context := v_context || jsonb_build_object(
