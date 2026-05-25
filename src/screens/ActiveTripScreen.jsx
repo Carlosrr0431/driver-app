@@ -1,5 +1,16 @@
 ﻿import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Platform, Dimensions, Pressable, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard, PanResponder, Animated } from 'react-native';
+import { View, Text, Linking, Platform, Dimensions, Pressable, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useDerivedValue,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -16,13 +27,13 @@ import { TRIP_STATUS, EMERGENCY_PHONE, DISPATCHER_PHONE, TRACKING_BASE_URL } fro
 import { formatTimerMMSS, formatPrice, formatDistance, formatDuration } from '../utils/formatters';
 import {
   autocompleteAddressSalta,
+  computeNavigationSnapshot,
+  createInitialNavigationProgressState,
   decodePolyline,
   evaluateRerouteState,
-  getCurrentNavigationStep,
   getDirections,
-  getDistanceToPolylineMeters,
   getPlaceDetails,
-  getRouteRemainingMeters,
+  projectPointOntoPolyline,
 } from '../services/googleMaps';
 import { useVoiceNavigation } from '../hooks/useVoiceNavigation';
 import { supabase } from '../services/supabase';
@@ -99,6 +110,12 @@ function formatEta(seconds) {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return minutes > 0 ? `${hours} h ${minutes} min` : `${hours} h`;
+}
+
+function formatArrivalClock(secondsFromNow) {
+  if (!Number.isFinite(secondsFromNow) || secondsFromNow <= 0) return 'Ahora';
+  const arrival = new Date(Date.now() + secondsFromNow * 1000);
+  return arrival.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 }
 
 function createInitialRerouteEvalState() {
@@ -370,6 +387,29 @@ function parsePreloadedDestination(notes) {
   return null;
 }
 
+/**
+ * Tarifa acordada con el pasajero por WhatsApp (precio + km ya persistidos en trips).
+ * Evita recalcular con tariff_per_km al finalizar y cobrar distinto a lo confirmado.
+ */
+function resolveConfirmedPassengerFare(trip) {
+  const preloaded = parsePreloadedDestination(trip?.notes);
+  if (!preloaded?.address) return null;
+
+  const price = Number(trip?.price);
+  const distanceKm = Number(trip?.distance_km);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  if (!Number.isFinite(distanceKm) || distanceKm <= 0) return null;
+
+  const commissionAmount = Number(trip?.commission_amount);
+  return {
+    price: Math.round(price),
+    distanceKm,
+    commissionAmount: Number.isFinite(commissionAmount) && commissionAmount >= 0
+      ? Math.round(commissionAmount)
+      : null,
+  };
+}
+
 function resolvePickupPoint(trip, currentLocation) {
   const overrideLat = parseFloat(trip?.pickup_override_lat);
   const overrideLng = parseFloat(trip?.pickup_override_lng);
@@ -447,35 +487,26 @@ function resolvePickupPoint(trip, currentLocation) {
  */
 function snapOriginToRoute(lat, lng, routeCoords) {
   if (!routeCoords || routeCoords.length < 2) return { lat, lng };
-  let nearest = null;
-  let nearestDist = Infinity;
-  for (let i = 0; i < routeCoords.length - 1; i++) {
-    const a = routeCoords[i];
-    const b = routeCoords[i + 1];
-    const dx = b.longitude - a.longitude;
-    const dy = b.latitude - a.latitude;
-    const lenSq = dx * dx + dy * dy;
-    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1,
-      ((lng - a.longitude) * dx + (lat - a.latitude) * dy) / lenSq,
-    ));
-    const sLat = a.latitude + t * dy;
-    const sLng = a.longitude + t * dx;
-    const dLat = (sLat - lat) * Math.PI / 180;
-    const dLng = (sLng - lng) * Math.PI / 180;
-    const sinDLat = Math.sin(dLat / 2);
-    const sinDLng = Math.sin(dLng / 2);
-    const a2 = sinDLat ** 2 + Math.cos(lat * Math.PI / 180) * Math.cos(sLat * Math.PI / 180) * sinDLng ** 2;
-    const d = 6378137 * 2 * Math.atan2(Math.sqrt(a2), Math.sqrt(1 - a2));
-    if (d < nearestDist) { nearestDist = d; nearest = { lat: sLat, lng: sLng }; }
+  const projection = projectPointOntoPolyline(
+    { latitude: lat, longitude: lng },
+    routeCoords,
+  );
+  const snapThreshold = 35;
+  if (projection.deviationMeters <= snapThreshold && projection.snappedPoint) {
+    return {
+      lat: projection.snappedPoint.latitude,
+      lng: projection.snappedPoint.longitude,
+    };
   }
-  return nearest && nearestDist < 30 ? nearest : { lat, lng };
+  return { lat, lng };
 }
 
 // ─── SliderButton ─────────────────────────────────────────────────────────────
-// 100% native driver: fill usa translateX en vez de width (layout props no son native).
-// translateX desplaza un view de ancho completo desde -trackW (oculto) hasta 0 (lleno).
+// Gesto horizontal en todo el track (RNGH + Reanimated) para evitar conflictos
+// con BottomSheetScrollView y lograr animaciones fluidas en el hilo de UI.
 const SLIDER_THUMB = 52;
 const SLIDER_PAD   = 4;
+const SLIDER_SPRING_RESET = { damping: 22, stiffness: 320, mass: 0.7 };
 
 const sliderS = StyleSheet.create({
   track: {
@@ -495,116 +526,140 @@ const sliderS = StyleSheet.create({
     width: SLIDER_THUMB, height: SLIDER_THUMB, borderRadius: SLIDER_THUMB / 2,
     alignItems: 'center', justifyContent: 'center',
     position: 'absolute', left: SLIDER_PAD,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.22,
+    shadowRadius: 4,
+    elevation: 5,
   },
 });
 
 const SliderButton = React.memo(React.forwardRef(({ onConfirm, label = 'Deslizá para confirmar', color, disabled = false }, ref) => {
-  const tx           = useRef(new Animated.Value(0)).current;
-  const trackWRef    = useRef(0);
-  const disabledRef  = useRef(disabled);
-  const confirmedRef = useRef(false);
-  const [trackW, setTrackW] = useState(0);
+  const onConfirmRef = useRef(onConfirm);
+  const translateX = useSharedValue(0);
+  const trackWidth = useSharedValue(0);
+  const startX = useSharedValue(0);
+  const dragging = useSharedValue(0);
+  const confirmed = useSharedValue(false);
+  const disabledSV = useSharedValue(disabled);
 
-  useEffect(() => { disabledRef.current = disabled; }, [disabled]);
+  useEffect(() => { onConfirmRef.current = onConfirm; }, [onConfirm]);
+  useEffect(() => { disabledSV.value = disabled; }, [disabled, disabledSV]);
 
-  // Expone reset() para que el padre pueda reiniciar el slider (ej: cancelar modal)
+  const maxTravel = useDerivedValue(() =>
+    Math.max(1, trackWidth.value - SLIDER_THUMB - SLIDER_PAD * 2),
+  );
+
+  const triggerConfirm = useCallback(() => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    onConfirmRef.current?.();
+  }, []);
+
   React.useImperativeHandle(ref, () => ({
     reset: () => {
-      confirmedRef.current = false;
-      Animated.spring(tx, { toValue: 0, useNativeDriver: true, friction: 7, tension: 80 }).start();
+      confirmed.value = false;
+      dragging.value = 0;
+      translateX.value = withSpring(0, SLIDER_SPRING_RESET);
     },
   }));
 
-  // maxTravel: distancia máxima que puede recorrer el thumb
-  const maxTravel = Math.max(1, trackW - SLIDER_THUMB - SLIDER_PAD * 2);
-
-  // Fill: view de ancho total que se desliza desde la izquierda (native driver ✅)
-  // tx=0 → translateX=-trackW (completamente oculto a la izquierda)
-  // tx=maxTravel → translateX=0 (completamente visible)
-  const fillTranslateX = tx.interpolate({
-    inputRange:  [0, maxTravel],
-    outputRange: [-Math.max(1, trackW), 0],
-    extrapolate: 'clamp',
-  });
-
-  // Texto se desvanece al 40% del recorrido (native driver ✅)
-  const labelOpacity = tx.interpolate({
-    inputRange:  [0, maxTravel * 0.4],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-
-  const pan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => !disabledRef.current,
-      // Solo robar el gesto si el movimiento es más horizontal que vertical
-      onMoveShouldSetPanResponder: (_, g) =>
-        !disabledRef.current && Math.abs(g.dx) > Math.abs(g.dy) + 3,
-      onPanResponderGrant: () => {
-        if (confirmedRef.current) return; // ya confirmado, ignorar nuevos gestos
-        tx.stopAnimation();
-      },
-      onPanResponderMove: (_, g) => {
-        if (confirmedRef.current) return;
-        const max = trackWRef.current - SLIDER_THUMB - SLIDER_PAD * 2;
-        if (max <= 0) return;
-        tx.setValue(Math.max(0, Math.min(g.dx, max)));
-      },
-      onPanResponderRelease: (_, g) => {
-        if (confirmedRef.current) return;
-        const max = trackWRef.current - SLIDER_THUMB - SLIDER_PAD * 2;
-        if (max > 0 && g.dx >= max * 0.78) {
-          // Llega al final → queda ahí y llama onConfirm
-          confirmedRef.current = true;
-          Animated.timing(tx, { toValue: max, duration: 90, useNativeDriver: true }).start(() => {
-            onConfirm?.();
-          });
-        } else {
-          // No llegó al umbral → vuelve al inicio
-          Animated.spring(tx, { toValue: 0, useNativeDriver: true, friction: 7, tension: 80 }).start();
-        }
-      },
-      onPanResponderTerminate: () => {
-        if (confirmedRef.current) return;
-        Animated.spring(tx, { toValue: 0, useNativeDriver: true, friction: 7, tension: 80 }).start();
-      },
+  const panGesture = useMemo(() => Gesture.Pan()
+    .activeOffsetX([-6, 6])
+    .failOffsetY([-12, 12])
+    .onBegin(() => {
+      if (disabledSV.value || confirmed.value) return;
+      dragging.value = 1;
+      startX.value = translateX.value;
     })
-  ).current;
+    .onUpdate((e) => {
+      if (disabledSV.value || confirmed.value) return;
+      const max = maxTravel.value;
+      translateX.value = Math.max(0, Math.min(startX.value + e.translationX, max));
+    })
+    .onEnd((e) => {
+      if (disabledSV.value || confirmed.value) {
+        dragging.value = 0;
+        return;
+      }
+      dragging.value = 0;
+      const max = maxTravel.value;
+      const progress = max > 0 ? translateX.value / max : 0;
+      const flickConfirm = e.velocityX > 700 && progress >= 0.45;
+      if (progress >= 0.72 || flickConfirm) {
+        confirmed.value = true;
+        translateX.value = withTiming(max, { duration: 120 }, (finished) => {
+          if (finished) runOnJS(triggerConfirm)();
+        });
+      } else {
+        translateX.value = withSpring(0, SLIDER_SPRING_RESET);
+      }
+    })
+    .onFinalize((_e, success) => {
+      dragging.value = 0;
+      if (!success && !confirmed.value && !disabledSV.value) {
+        translateX.value = withSpring(0, SLIDER_SPRING_RESET);
+      }
+    }),
+  [disabledSV, confirmed, dragging, maxTravel, startX, translateX, triggerConfirm]);
 
   const btnColor = color || colors.danger;
 
+  const trackStyle = useAnimatedStyle(() => ({
+    opacity: disabledSV.value ? 0.45 : 1,
+  }));
+
+  const fillStyle = useAnimatedStyle(() => ({
+    width: Math.max(trackWidth.value, 1),
+    backgroundColor: btnColor,
+    opacity: 0.32,
+    transform: [{
+      translateX: interpolate(
+        translateX.value,
+        [0, maxTravel.value],
+        [-Math.max(trackWidth.value, 1), 0],
+        Extrapolation.CLAMP,
+      ),
+    }],
+  }));
+
+  const labelStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      translateX.value,
+      [0, maxTravel.value * 0.45],
+      [1, 0],
+      Extrapolation.CLAMP,
+    ),
+  }));
+
+  const thumbStyle = useAnimatedStyle(() => ({
+    backgroundColor: btnColor,
+    transform: [
+      { translateX: translateX.value },
+      { scale: interpolate(dragging.value, [0, 1], [1, 1.06], Extrapolation.CLAMP) },
+    ],
+  }));
+
   return (
-    <View
-      onLayout={e => {
-        const w = e.nativeEvent.layout.width;
-        setTrackW(w);
-        trackWRef.current = w;
-      }}
-      style={[sliderS.track, { backgroundColor: `${btnColor}18`, borderColor: `${btnColor}45` }]}
-    >
-      {/* Relleno progresivo — translateX en vez de width → native driver */}
+    <GestureDetector gesture={panGesture}>
       <Animated.View
-        pointerEvents="none"
+        onLayout={(e) => { trackWidth.value = e.nativeEvent.layout.width; }}
         style={[
-          sliderS.fill,
-          { width: trackW, backgroundColor: btnColor, opacity: 0.30,
-            transform: [{ translateX: fillTranslateX }] },
+          sliderS.track,
+          { backgroundColor: `${btnColor}18`, borderColor: `${btnColor}45` },
+          trackStyle,
         ]}
-      />
-      {/* Texto centrado que se desvanece */}
-      <Animated.View style={[sliderS.labelRow, { opacity: labelOpacity }]} pointerEvents="none">
-        <MaterialCommunityIcons name="chevron-double-right" size={16} color={btnColor} />
-        <Text style={[sliderS.labelText, { color: btnColor }]}>{label}</Text>
-        <MaterialCommunityIcons name="chevron-double-right" size={16} color={`${btnColor}55`} />
-      </Animated.View>
-      {/* Thumb deslizable */}
-      <Animated.View
-        style={[sliderS.thumb, { backgroundColor: btnColor, transform: [{ translateX: tx }] }]}
-        {...pan.panHandlers}
       >
-        <MaterialCommunityIcons name="flag-checkered" size={22} color="#fff" />
+        <Animated.View pointerEvents="none" style={[sliderS.fill, fillStyle]} />
+        <Animated.View style={[sliderS.labelRow, labelStyle]} pointerEvents="none">
+          <MaterialCommunityIcons name="chevron-double-right" size={16} color={btnColor} />
+          <Text style={[sliderS.labelText, { color: btnColor }]}>{label}</Text>
+          <MaterialCommunityIcons name="chevron-double-right" size={16} color={`${btnColor}55`} />
+        </Animated.View>
+        <Animated.View style={[sliderS.thumb, thumbStyle]} pointerEvents="none">
+          <MaterialCommunityIcons name="flag-checkered" size={22} color="#fff" />
+        </Animated.View>
       </Animated.View>
-    </View>
+    </GestureDetector>
   );
 }));
 
@@ -625,11 +680,15 @@ const ActiveTripScreen = () => {
   // pueda leerlas sin agregarlas como dependencia del useCallback.
   const routeCoordsRef = useRef([]);
   const autocompleteTimerRef = useRef(null);
+  const navProgressRef = useRef(createInitialNavigationProgressState());
+  const trafficRefreshTimerRef = useRef(null);
+  const lastTrafficRefreshAtRef = useRef(0);
+  const finishTripInFlightRef = useRef(false);
 
   const { activeTrip, tripTimer, tripDistanceKm, setTripTimer, addTripDistance, clearActiveTrip } = useTripStore();
   const session = useAuthStore((s) => s.session);
   const { updateTripStatus } = useTrips();
-  const { startTracking, stopTracking } = useLocation();
+  const { startTracking, stopTracking, startNavigationWatch, stopNavigationWatch } = useLocation();
   const currentLocation = useLocationStore((s) => s.currentLocation);
   const heading = useLocationStore((s) => s.heading);
   const speed = useLocationStore((s) => s.speed);
@@ -658,6 +717,7 @@ const ActiveTripScreen = () => {
   const [remainingDistanceMeters, setRemainingDistanceMeters] = useState(null);
   const [remainingDurationSeconds, setRemainingDurationSeconds] = useState(null);
   const [nextStepInfo, setNextStepInfo] = useState(null);
+  const [isRerouting, setIsRerouting] = useState(false);
   const [fareRouteDistanceKm, setFareRouteDistanceKm] = useState(null);
 
   // Local flow step
@@ -769,8 +829,10 @@ const ActiveTripScreen = () => {
       return;
     }
     startTracking(activeTrip.id);
+    startNavigationWatch();
     return () => {
       stopTracking();
+      stopNavigationWatch();
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [activeTrip?.id]);
@@ -786,6 +848,9 @@ const ActiveTripScreen = () => {
     lastRerouteAtRef.current = 0;
     rerouteInFlightRef.current = false;
     rerouteEvalStateRef.current = createInitialRerouteEvalState();
+    navProgressRef.current = createInitialNavigationProgressState();
+    lastTrafficRefreshAtRef.current = 0;
+    setIsRerouting(false);
     setRoutePolyline(null);
     setRouteInfo(null);
     setRouteSteps([]);
@@ -894,6 +959,7 @@ const ActiveTripScreen = () => {
     if (now - lastRerouteAtRef.current < minCooldownMs) return;
 
     rerouteInFlightRef.current = true;
+    setIsRerouting(true);
     lastRerouteAtRef.current = now;
 
     announceReroute();
@@ -901,11 +967,13 @@ const ActiveTripScreen = () => {
     try {
       await fetchNavigationRoute(true);
       rerouteEvalStateRef.current = createInitialRerouteEvalState();
+      navProgressRef.current = createInitialNavigationProgressState();
       resetAnnouncements();
     } catch (error) {
       console.warn('Error recalculando ruta:', reason || error);
     } finally {
       rerouteInFlightRef.current = false;
+      setIsRerouting(false);
     }
   }, [fetchNavigationRoute, announceReroute, resetAnnouncements]);
 
@@ -1026,15 +1094,6 @@ const ActiveTripScreen = () => {
   // adding it to the useCallback dependency array.
   useEffect(() => { routeCoordsRef.current = routeCoords; }, [routeCoords]);
 
-  // Snap raw GPS to the nearest point on the active polyline.
-  // Used for remaining distance, step detection and reroute checks so that
-  // sidewalk GPS drift doesn't corrupt navigation state.
-  const snappedNavPoint = useMemo(() => {
-    if (!currentLocation) return null;
-    const { lat, lng } = snapOriginToRoute(currentLocation.lat, currentLocation.lng, routeCoords);
-    return { latitude: lat, longitude: lng };
-  }, [currentLocation, routeCoords]);
-
   const effectiveTariffPerKm = useMemo(() => {
     const kmRate = Number(tariffInfo.perKm);
     return Number.isFinite(kmRate) && kmRate > 0 ? kmRate : DEFAULT_TARIFF_PER_KM;
@@ -1042,23 +1101,43 @@ const ActiveTripScreen = () => {
 
   const fixedRouteTotalPrice = useMemo(() => {
     if (!tariffLoaded || !shouldUseFixedRouteFare || !Number.isFinite(fareRouteDistanceKm)) return null;
-    return Math.round(effectiveTariffPerKm * fareRouteDistanceKm);
-  }, [tariffLoaded, shouldUseFixedRouteFare, effectiveTariffPerKm, fareRouteDistanceKm]);
+    return Math.round(tariffInfo.base + effectiveTariffPerKm * fareRouteDistanceKm);
+  }, [tariffLoaded, shouldUseFixedRouteFare, effectiveTariffPerKm, fareRouteDistanceKm, tariffInfo.base]);
+
+  const confirmedPassengerFare = useMemo(
+    () => (isFreeRide ? null : resolveConfirmedPassengerFare(activeTrip)),
+    [
+      activeTrip?.notes,
+      activeTrip?.price,
+      activeTrip?.distance_km,
+      activeTrip?.commission_amount,
+      isFreeRide,
+    ],
+  );
 
   const checkoutDistanceKm = useMemo(() => {
+    if (confirmedPassengerFare) return confirmedPassengerFare.distanceKm;
     if (shouldUseFixedRouteFare && Number.isFinite(fareRouteDistanceKm) && fareRouteDistanceKm > 0) {
       return fareRouteDistanceKm;
     }
     return tripDistanceKm;
-  }, [shouldUseFixedRouteFare, fareRouteDistanceKm, tripDistanceKm]);
+  }, [confirmedPassengerFare, shouldUseFixedRouteFare, fareRouteDistanceKm, tripDistanceKm]);
 
   const checkoutTotalPrice = useMemo(() => {
+    if (confirmedPassengerFare) return confirmedPassengerFare.price;
     if (Number.isFinite(fixedRouteTotalPrice) && fixedRouteTotalPrice > 0) return fixedRouteTotalPrice;
     if (Number.isFinite(checkoutDistanceKm) && checkoutDistanceKm > 0) {
-      return Math.round(effectiveTariffPerKm * checkoutDistanceKm);
+      return Math.round(tariffInfo.base + effectiveTariffPerKm * checkoutDistanceKm);
     }
     return livePrice;
-  }, [fixedRouteTotalPrice, checkoutDistanceKm, effectiveTariffPerKm, livePrice]);
+  }, [
+    confirmedPassengerFare,
+    fixedRouteTotalPrice,
+    checkoutDistanceKm,
+    effectiveTariffPerKm,
+    tariffInfo.base,
+    livePrice,
+  ]);
 
   const grandTotalDistanceKm = useMemo(() =>
     accumulatedLegs.reduce((s, l) => s + (l.distanceKm || 0), 0) + (checkoutDistanceKm || 0),
@@ -1071,41 +1150,86 @@ const ActiveTripScreen = () => {
   );
 
   useEffect(() => {
-    if (!snappedNavPoint || routeCoords.length === 0) return;
+    if (!currentLocation || routeCoords.length === 0) return;
 
-    const remainingMeters = getRouteRemainingMeters(snappedNavPoint, routeCoords);
-    setRemainingDistanceMeters(remainingMeters);
+    const navPoint = {
+      latitude: currentLocation.lat,
+      longitude: currentLocation.lng,
+    };
+    const speedMps = Number.isFinite(currentLocation.speed)
+      ? Number(currentLocation.speed)
+      : (Number.isFinite(speed) ? Number(speed) : 0);
 
-    const totalDistanceMeters = Number(routeInfo?.distanceValue) || 0;
-    const totalDurationSeconds = Number(routeInfo?.durationValue) || 0;
-    const estimatedRemainingSeconds = totalDistanceMeters > 0 && totalDurationSeconds > 0
-      ? Math.max(0, Math.round((remainingMeters / totalDistanceMeters) * totalDurationSeconds))
+    const snapshot = computeNavigationSnapshot({
+      currentPoint: navPoint,
+      routeCoords,
+      steps: routeSteps,
+      progressState: navProgressRef.current,
+      speedMps,
+      routeDistanceMeters: Number(routeInfo?.distanceValue) || 0,
+      routeDurationSeconds: Number(routeInfo?.durationValue) || 0,
+      accuracyMeters: currentLocation.accuracy,
+    });
+
+    navProgressRef.current = snapshot.progressState;
+    setRemainingDistanceMeters(snapshot.remainingDistanceMeters);
+    setRemainingDurationSeconds(snapshot.remainingDurationSeconds);
+
+    const step = snapshot.currentStep
+      ? { ...snapshot.currentStep, distanceToStepMeters: snapshot.currentStep.distanceToStepMeters }
       : null;
-    setRemainingDurationSeconds(estimatedRemainingSeconds);
-
-    const step = getCurrentNavigationStep(snappedNavPoint, routeSteps);
     setNextStepInfo(step);
 
-    // ── Guía de voz turn-by-turn ──────────────────────────────────────────────
     if (step && Number.isFinite(step.distanceToStepMeters)) {
       announceManeuver(step, step.distanceToStepMeters);
     }
-    if (Number.isFinite(remainingMeters) && remainingMeters <= 40) {
+    if (Number.isFinite(snapshot.remainingDistanceMeters) && snapshot.remainingDistanceMeters <= 40) {
       announceDestinationArrival();
     }
-  }, [snappedNavPoint, routeCoords, routeInfo?.distanceValue, routeInfo?.durationValue, routeSteps, announceManeuver, announceDestinationArrival]);
+  }, [
+    currentLocation,
+    routeCoords,
+    routeInfo?.distanceValue,
+    routeInfo?.durationValue,
+    routeSteps,
+    speed,
+    announceManeuver,
+    announceDestinationArrival,
+  ]);
+
+  // Refresca tráfico/ETA periódicamente mientras hay navegación activa.
+  useEffect(() => {
+    const isNavigating = flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.IN_PROGRESS;
+    if (!isNavigating || !routePolyline) return undefined;
+
+    trafficRefreshTimerRef.current = setInterval(() => {
+      const now = Date.now();
+      const speedMps = Number(currentLocation?.speed) || Number(speed) || 0;
+      if (speedMps < 1 || rerouteInFlightRef.current) return;
+      if (now - lastTrafficRefreshAtRef.current < 180000) return;
+
+      lastTrafficRefreshAtRef.current = now;
+      fetchNavigationRoute(true);
+    }, 60000);
+
+    return () => {
+      if (trafficRefreshTimerRef.current) {
+        clearInterval(trafficRefreshTimerRef.current);
+        trafficRefreshTimerRef.current = null;
+      }
+    };
+  }, [flowStep, routePolyline, currentLocation?.speed, speed, fetchNavigationRoute]);
 
   useEffect(() => {
     if (!currentLocation || routeCoords.length < 2) return;
     if (Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters <= 45) return;
 
-    // Usa la posición GPS raw (no snapped) para detectar desvíos reales.
-    // El evaluador aplica umbral dinámico, histeresis y persistencia temporal.
     const currentPoint = {
       latitude: currentLocation.lat,
       longitude: currentLocation.lng,
     };
-    const deviationMeters = getDistanceToPolylineMeters(currentPoint, routeCoords);
+    const projection = projectPointOntoPolyline(currentPoint, routeCoords);
+    const deviationMeters = projection.deviationMeters;
 
     const speedMps = Number.isFinite(currentLocation.speed)
       ? Number(currentLocation.speed)
@@ -1428,11 +1552,13 @@ const ActiveTripScreen = () => {
     setRouteSteps([]);
     routeFetched.current = false;
     lastRouteKeyRef.current = '';
+    navProgressRef.current = createInitialNavigationProgressState();
     setFlowStep(FLOW_STEP.CHOOSE_DEST_MODE);
   }, [activeTrip, checkoutDistanceKm, checkoutTotalPrice]);
 
   const handleConfirmFinishTrip = useCallback(async () => {
-    if (!activeTrip || finishingTrip) return;
+    if (!activeTrip || finishingTrip || finishTripInFlightRef.current) return;
+    finishTripInFlightRef.current = true;
     try {
       setFinishingTrip(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -1458,7 +1584,7 @@ const ActiveTripScreen = () => {
 
       // Fallback de seguridad: si el destino está definido pero el tramo quedó
       // en 0 km (por race condition o fetch fallido), recalcular antes de cerrar.
-      const needsFixedFareFallback = shouldUseFixedRouteFare && (
+      const needsFixedFareFallback = shouldUseFixedRouteFare && !confirmedPassengerFare && (
         currentLegDistanceKm <= 0 || currentLegPrice <= 0
       );
 
@@ -1506,7 +1632,7 @@ const ActiveTripScreen = () => {
 
           if (Number.isFinite(fallbackDistanceKm) && fallbackDistanceKm > 0) {
             currentLegDistanceKm = fallbackDistanceKm;
-            currentLegPrice = Math.round(effectiveTariffPerKm * fallbackDistanceKm);
+            currentLegPrice = Math.round(tariffInfo.base + effectiveTariffPerKm * fallbackDistanceKm);
             setFareRouteDistanceKm(fallbackDistanceKm);
           }
         }
@@ -1514,7 +1640,12 @@ const ActiveTripScreen = () => {
 
       const distanceKm = Math.round((accumulatedDistanceKm + currentLegDistanceKm) * 10) / 10;
       const totalPrice = Math.round(accumulatedPrice + currentLegPrice);
-      const commissionAmount = Math.round(totalPrice * (tariffInfo.commission || 10) / 100);
+      const commissionAmount = (
+        accumulatedLegs.length === 0
+        && confirmedPassengerFare?.commissionAmount != null
+      )
+        ? confirmedPassengerFare.commissionAmount
+        : Math.round(totalPrice * (tariffInfo.commission || 10) / 100);
 
       const result = await updateTripStatus(activeTrip.id, TRIP_STATUS.COMPLETED, {
         distance_km: distanceKm,
@@ -1548,11 +1679,16 @@ const ActiveTripScreen = () => {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${jwt}`,
             },
-            body: JSON.stringify({ phone: passengerPhone, message: waMsg }),
+            body: JSON.stringify({
+              phone: passengerPhone,
+              message: waMsg,
+              tripId: activeTrip.id,
+            }),
           }).catch((err) => console.warn('Error enviando WhatsApp al pasajero:', err));
         }
       }
     } finally {
+      finishTripInFlightRef.current = false;
       setFinishingTrip(false);
     }
   }, [
@@ -1561,10 +1697,12 @@ const ActiveTripScreen = () => {
     accumulatedLegs,
     checkoutDistanceKm,
     checkoutTotalPrice,
+    confirmedPassengerFare,
     shouldUseFixedRouteFare,
     fareRouteDistanceKm,
     routeInfo?.distanceValue,
     effectiveTariffPerKm,
+    tariffInfo.base,
     tariffInfo.commission,
     updateTripStatus,
     stopTracking,
@@ -1920,7 +2058,23 @@ const ActiveTripScreen = () => {
         maneuverPresentation.isCritical ? s.navigationCardCritical : null,
         { top: insets.top + 8, borderColor: maneuverPresentation.border },
       ]}>
-        {/* Ícono de maniobra + distancia al próximo paso + instrucción + detalles derechos */}
+        <View style={s.navTopRow}>
+          <View style={[s.navBadge, { backgroundColor: `${maneuverPresentation.tint}14` }]}>
+            <MaterialCommunityIcons name="navigation-variant" size={12} color={maneuverPresentation.tint} />
+            <Text style={[s.navBadgeText, { color: maneuverPresentation.tint }]}>
+              {isRerouting ? 'Recalculando' : maneuverPresentation.shortLabel}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {isRerouting && (
+              <ActivityIndicator size="small" color={colors.primary} />
+            )}
+            <Text style={s.navEtaText}>
+              {isArriving ? 'Llegada' : `${etaText} · ${formatArrivalClock(remainingDurationSeconds)}`}
+            </Text>
+          </View>
+        </View>
+
         <View style={s.navMainRow}>
           <View style={[s.navIconBox, { backgroundColor: maneuverPresentation.background, borderColor: maneuverPresentation.border }]}>
             <MaterialCommunityIcons name={maneuverIcon} size={32} color={maneuverPresentation.tint} />
@@ -1957,6 +2111,22 @@ const ActiveTripScreen = () => {
               />
             </Pressable>
           </View>
+        </View>
+
+        <View style={s.navProgressTrack}>
+          <View
+            style={[
+              s.navProgressFill,
+              {
+                width: `${Math.max(4, progressPercent)}%`,
+                backgroundColor: maneuverPresentation.tint,
+              },
+            ]}
+          />
+        </View>
+        <View style={s.navProgressLabels}>
+          <Text style={s.navProgressLabel}>{remainingDistanceText} restantes</Text>
+          <Text style={s.navProgressLabel}>{progressPercent}% recorrido</Text>
         </View>
       </View>
 
@@ -2226,7 +2396,7 @@ const ActiveTripScreen = () => {
                 ref={sliderRef}
                 onConfirm={handleEndTrip}
                 label="Deslizá para finalizar viaje"
-                color={colors.danger}
+                color={colors.success}
                 disabled={finishingTrip}
               />
 
