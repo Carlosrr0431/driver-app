@@ -116,7 +116,7 @@ BEGIN
     origin_lat = NULL,
     origin_lng = NULL,
     dispatch_status = 'queued',
-    next_dispatch_at = NOW() + INTERVAL '5 seconds',
+    next_dispatch_at = NOW(),
     status_updated_at = NOW(),
     wa_context = v_context,
     cancel_reason = CASE WHEN v_is_timeout THEN 'Tiempo agotado' ELSE v_reason END
