@@ -45,6 +45,9 @@ const isApproachOnly = (trip) =>
 const isPassengerAppTrip = (trip) =>
   String(trip?.notes || '').includes('[PASSENGER_APP]');
 
+const isCoordLikeAddress = (address) =>
+  /^-?\d+\.?\d*\s*,\s*-?\d+\.?\d*$/.test(String(address || '').trim());
+
 const parsePickupFromNotes = (trip) => {
   const raw = String(trip?.notes || '');
   const jsonMatch = raw.match(/\[PICKUP_JSON:(\{[^}]+\})\]/);
@@ -72,8 +75,14 @@ const parsePickupFromNotes = (trip) => {
 // Pickup address = where the driver must go first
 const getPickupAddress = (trip) => {
   if (isPassengerAppTrip(trip)) {
-    if (trip.origin_address) return trip.origin_address;
     const fromNotes = parsePickupFromNotes(trip);
+    if (
+      fromNotes?.address
+      && (!trip.origin_address || isCoordLikeAddress(trip.origin_address))
+    ) {
+      return fromNotes.address;
+    }
+    if (trip.origin_address) return trip.origin_address;
     if (fromNotes?.address) return fromNotes.address;
     return null;
   }
