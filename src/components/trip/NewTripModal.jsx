@@ -45,9 +45,38 @@ const isApproachOnly = (trip) =>
 const isPassengerAppTrip = (trip) =>
   String(trip?.notes || '').includes('[PASSENGER_APP]');
 
+const parsePickupFromNotes = (trip) => {
+  const raw = String(trip?.notes || '');
+  const jsonMatch = raw.match(/\[PICKUP_JSON:(\{[^}]+\})\]/);
+  if (!jsonMatch) return null;
+  try {
+    const parsed = JSON.parse(jsonMatch[1]);
+    if (
+      parsed
+      && typeof parsed.address === 'string'
+      && Number.isFinite(Number(parsed.lat))
+      && Number.isFinite(Number(parsed.lng))
+    ) {
+      return {
+        address: parsed.address,
+        lat: Number(parsed.lat),
+        lng: Number(parsed.lng),
+      };
+    }
+  } catch {
+    // ignore malformed payload
+  }
+  return null;
+};
+
 // Pickup address = where the driver must go first
 const getPickupAddress = (trip) => {
-  if (isPassengerAppTrip(trip)) return trip.origin_address;
+  if (isPassengerAppTrip(trip)) {
+    if (trip.origin_address) return trip.origin_address;
+    const fromNotes = parsePickupFromNotes(trip);
+    if (fromNotes?.address) return fromNotes.address;
+    return null;
+  }
   return isApproachOnly(trip) ? trip.destination_address : trip.origin_address;
 };
 
@@ -92,6 +121,8 @@ const getCleanNotes = (trip) => {
   const cleaned = trip.notes
     .replace(/\[APPROACH_ONLY\]/gi, '')
     .replace(/\[FINAL_DEST_JSON:[^\]]*\]/g, '')
+    .replace(/\[PICKUP_JSON:[^\]]*\]/g, '')
+    .replace(/\[PASSENGER_APP\]/gi, '')
     .replace(/Creado autom[aá]ticamente desde WhatsApp[^.]*\./gi, '')
     .replace(/chofer\s*->\s*retiro pasajero[^.]*\./gi, '')
     .replace(/Destino final:[^.]*\./gi, '')

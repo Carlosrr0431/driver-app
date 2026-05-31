@@ -431,11 +431,30 @@ function resolvePickupPoint(trip, currentLocation) {
   const hasPassengerAppMarker = notesNorm.includes('[passenger_app]');
   const hasWhatsappAutoMarker = notesNorm.includes('creado automaticamente desde whatsapp');
 
-  if (hasApproachTag && hasPassengerAppMarker && hasOrigin) {
-    return {
-      point: { lat: originLat, lng: originLng, address: trip?.origin_address },
-      isApproachOnly: true,
-    };
+  if (hasApproachTag && hasPassengerAppMarker) {
+    if (hasOrigin) {
+      return {
+        point: { lat: originLat, lng: originLng, address: trip?.origin_address },
+        isApproachOnly: true,
+      };
+    }
+
+    const pickupMatch = notes.match(/\[PICKUP_JSON:(\{[^}]+\})\]/);
+    if (pickupMatch) {
+      try {
+        const parsed = JSON.parse(pickupMatch[1]);
+        const pLat = Number(parsed?.lat);
+        const pLng = Number(parsed?.lng);
+        if (Number.isFinite(pLat) && Number.isFinite(pLng)) {
+          return {
+            point: { lat: pLat, lng: pLng, address: parsed?.address || trip?.origin_address },
+            isApproachOnly: true,
+          };
+        }
+      } catch {
+        // ignore malformed pickup json
+      }
+    }
   }
 
   if (hasApproachTag && hasDestination) {

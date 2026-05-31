@@ -30,9 +30,20 @@ export const useRealtime = () => {
     const notes = String(trip.notes || '');
     const isPassengerApp = notes.includes('[PASSENGER_APP]');
     const isApproachOnly = notes.includes('[APPROACH_ONLY]');
-    const pickupAddress = isPassengerApp
+    let pickupAddress = isPassengerApp
       ? trip.origin_address
       : (isApproachOnly ? trip.destination_address : trip.origin_address);
+    if (isPassengerApp && !pickupAddress) {
+      const pickupMatch = String(trip.notes || '').match(/\[PICKUP_JSON:(\{[^}]+\})\]/);
+      if (pickupMatch) {
+        try {
+          const parsed = JSON.parse(pickupMatch[1]);
+          pickupAddress = parsed?.address || pickupAddress;
+        } catch {
+          // ignore
+        }
+      }
+    }
     await sendLocalNotification(
       '🚖 Nuevo viaje asignado',
       `${trip.passenger_name} - ${pickupAddress}`,
