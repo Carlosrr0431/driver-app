@@ -42,31 +42,47 @@ import { TRIP_ACCEPT_TIMEOUT, CANCEL_REASONS } from '../../utils/constants';
 const isApproachOnly = (trip) =>
   String(trip?.notes || '').toLowerCase().includes('[approach_only]');
 
+const isPassengerAppTrip = (trip) =>
+  String(trip?.notes || '').includes('[PASSENGER_APP]');
+
 // Pickup address = where the driver must go first
-const getPickupAddress = (trip) =>
-  isApproachOnly(trip) ? trip.destination_address : trip.origin_address;
+const getPickupAddress = (trip) => {
+  if (isPassengerAppTrip(trip)) return trip.origin_address;
+  return isApproachOnly(trip) ? trip.destination_address : trip.origin_address;
+};
 
 const parsePreloadedDestination = (trip) => {
   const raw = String(trip?.notes || '');
-  const match = raw.match(/\[FINAL_DEST_JSON:(\{[^}]+\})\]/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[1]);
-    if (
-      parsed
-      && typeof parsed.address === 'string'
-      && Number.isFinite(Number(parsed.lat))
-      && Number.isFinite(Number(parsed.lng))
-    ) {
-      return {
-        address: parsed.address,
-        lat: Number(parsed.lat),
-        lng: Number(parsed.lng),
-      };
+  const jsonMatch = raw.match(/\[FINAL_DEST_JSON:(\{[^}]+\})\]/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1]);
+      if (
+        parsed
+        && typeof parsed.address === 'string'
+        && Number.isFinite(Number(parsed.lat))
+        && Number.isFinite(Number(parsed.lng))
+      ) {
+        return {
+          address: parsed.address,
+          lat: Number(parsed.lat),
+          lng: Number(parsed.lng),
+        };
+      }
+    } catch {
+      // ignore malformed payload
     }
-  } catch {
-    // ignore malformed payload
   }
+
+  const hintMatch = raw.match(/Destino final sugerido:\s*(.+?)(?:\n|$)/i);
+  if (hintMatch?.[1]) {
+    return {
+      address: hintMatch[1].trim(),
+      lat: null,
+      lng: null,
+    };
+  }
+
   return null;
 };
 
@@ -79,6 +95,7 @@ const getCleanNotes = (trip) => {
     .replace(/Creado autom[aá]ticamente desde WhatsApp[^.]*\./gi, '')
     .replace(/chofer\s*->\s*retiro pasajero[^.]*\./gi, '')
     .replace(/Destino final:[^.]*\./gi, '')
+    .replace(/Destino final sugerido:.*/gi, '')
     .trim();
   return cleaned || null;
 };

@@ -25,6 +25,7 @@ import { useLocationStore } from '../stores/locationStore';
 import { TripMap } from '../components/map/TripMap';
 import { TRIP_STATUS, EMERGENCY_PHONE, DISPATCHER_PHONE, TRACKING_BASE_URL } from '../utils/constants';
 import { formatTimerMMSS, formatPrice, formatDistance, formatDuration } from '../utils/formatters';
+import { fetchTariffForTrip, calculateTripCommission } from '../utils/tripTariff';
 import {
   autocompleteAddressSalta,
   computeNavigationSnapshot,
@@ -65,14 +66,6 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
     Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function parseSettingNumber(rawValue) {
-  const normalized = String(rawValue ?? '')
-    .replace(',', '.')
-    .replace(/[^0-9.-]/g, '');
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function parseRouteDistanceKm(routeInfo) {
@@ -389,7 +382,7 @@ function parsePreloadedDestination(notes) {
 
 /**
  * Tarifa acordada con el pasajero por WhatsApp (precio + km ya persistidos en trips).
- * Evita recalcular con tariff_per_km al finalizar y cobrar distinto a lo confirmado.
+ * Evita recalcular con platform_tariff_per_km al finalizar y cobrar distinto a lo confirmado.
  */
 function resolveConfirmedPassengerFare(trip) {
   const preloaded = parsePreloadedDestination(trip?.notes);
@@ -435,7 +428,15 @@ function resolvePickupPoint(trip, currentLocation) {
   const notes = String(trip?.notes || '');
   const notesNorm = notes.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const hasApproachTag = notesNorm.includes('[approach_only]') || notesNorm.includes('approach_only');
+  const hasPassengerAppMarker = notesNorm.includes('[passenger_app]');
   const hasWhatsappAutoMarker = notesNorm.includes('creado automaticamente desde whatsapp');
+
+  if (hasApproachTag && hasPassengerAppMarker && hasOrigin) {
+    return {
+      point: { lat: originLat, lng: originLng, address: trip?.origin_address },
+      isApproachOnly: true,
+    };
+  }
 
   if (hasApproachTag && hasDestination) {
     return {
@@ -712,7 +713,7 @@ const ActiveTripScreen = () => {
   const [finishingTrip, setFinishingTrip] = useState(false);
   const [showCancelledModal, setShowCancelledModal] = useState(false);
   const [cancelledReason, setCancelledReason] = useState('');
-  const [tariffInfo, setTariffInfo] = useState({ base: 0, perKm: 0, commission: 15 });
+  const [tariffInfo, setTariffInfo] = useState({ base: 0, perKm: 0, commission: 0 });
   const [tariffLoaded, setTariffLoaded] = useState(false);
   const [remainingDistanceMeters, setRemainingDistanceMeters] = useState(null);
   const [remainingDurationSeconds, setRemainingDurationSeconds] = useState(null);
@@ -778,49 +779,34 @@ const ActiveTripScreen = () => {
     setIsFreeRide(false);
   }, [activeTrip?.id]);
 
-  // Fetch tariff
+  // Fetch tariff según tipo de viaje (WhatsApp vs plataforma)
   useEffect(() => {
-    const fetchTariff = async () => {
+    if (!activeTrip?.id) return undefined;
+
+    let cancelled = false;
+    const loadTariff = async () => {
       try {
-        const { data } = await supabase
-          .from('settings')
-          .select('key, value')
-          .in('key', ['tariff_per_km', 'tariff_base', 'commission_percent', 'whatsapp_driver_commission']);
-
-        const rows = Array.isArray(data) ? data : [];
-        const map = {};
-        rows.forEach((r) => {
-          const key = String(r?.key || '').trim().toLowerCase();
-          if (key) map[key] = parseSettingNumber(r?.value);
-        });
-
-        // Fallback query if key filter returned empty/incomplete values.
-        if (!Number.isFinite(map.tariff_per_km) || map.tariff_per_km <= 0) {
-          const { data: perKmRow } = await supabase
-            .from('settings')
-            .select('key, value')
-            .ilike('key', 'tariff_per_km')
-            .limit(1)
-            .maybeSingle();
-          map.tariff_per_km = parseSettingNumber(perKmRow?.value);
-        }
-
+        const tariff = await fetchTariffForTrip(supabase, activeTrip, { defaultPerKm: DEFAULT_TARIFF_PER_KM });
+        if (cancelled) return;
         setTariffInfo({
-          base: Number.isFinite(map.tariff_base) ? map.tariff_base : 0,
-          perKm: Number.isFinite(map.tariff_per_km) && map.tariff_per_km > 0 ? map.tariff_per_km : DEFAULT_TARIFF_PER_KM,
-          commission: Number.isFinite(map.whatsapp_driver_commission) && map.whatsapp_driver_commission > 0
-            ? map.whatsapp_driver_commission
-            : (Number.isFinite(map.commission_percent) && map.commission_percent > 0 ? map.commission_percent : 10),
+          base: tariff.base,
+          perKm: tariff.perKm,
+          commission: tariff.commission,
         });
       } catch (e) {
         console.warn('Error fetching tariff:', e);
-        setTariffInfo((prev) => ({ ...prev, perKm: prev.perKm > 0 ? prev.perKm : DEFAULT_TARIFF_PER_KM }));
+        if (!cancelled) {
+          setTariffInfo((prev) => ({ ...prev, perKm: prev.perKm > 0 ? prev.perKm : DEFAULT_TARIFF_PER_KM }));
+        }
       } finally {
-        setTariffLoaded(true);
+        if (!cancelled) setTariffLoaded(true);
       }
     };
-    fetchTariff();
-  }, []);
+
+    setTariffLoaded(false);
+    loadTariff();
+    return () => { cancelled = true; };
+  }, [activeTrip?.id, activeTrip?.notes]);
 
   // Start tracking
   useEffect(() => {
@@ -1355,7 +1341,8 @@ const ActiveTripScreen = () => {
         pickup_at: new Date().toISOString(),
       };
 
-      if (isApproachOnlyTrip) {
+      const isPassengerAppTrip = String(activeTrip?.notes || '').includes('[PASSENGER_APP]');
+      if (isApproachOnlyTrip && !isPassengerAppTrip) {
         const pickupLat = parseFloat(activeTrip.destination_lat);
         const pickupLng = parseFloat(activeTrip.destination_lng);
         const pickupAddress = activeTrip.destination_address;
@@ -1640,12 +1627,10 @@ const ActiveTripScreen = () => {
 
       const distanceKm = Math.round((accumulatedDistanceKm + currentLegDistanceKm) * 10) / 10;
       const totalPrice = Math.round(accumulatedPrice + currentLegPrice);
-      const commissionAmount = (
-        accumulatedLegs.length === 0
-        && confirmedPassengerFare?.commissionAmount != null
-      )
-        ? confirmedPassengerFare.commissionAmount
-        : Math.round(totalPrice * (tariffInfo.commission || 10) / 100);
+      const commissionAmount = calculateTripCommission({
+        price: totalPrice,
+        commissionPercent: tariffInfo.commission,
+      });
 
       const result = await updateTripStatus(activeTrip.id, TRIP_STATUS.COMPLETED, {
         distance_km: distanceKm,
@@ -1729,8 +1714,13 @@ const ActiveTripScreen = () => {
     const finalPrice = completedTrip.price || livePrice;
     const finalDistance = completedTrip.distance_km || tripDistanceKm;
     const finalDuration = completedTrip.duration_minutes || Math.round(tripTimer / 60);
-    const commissionPct = tariffInfo.commission;
-    const commissionAmount = Math.round(finalPrice * commissionPct / 100);
+    const storedCommission = Number(completedTrip.commission_amount);
+    const commissionAmount = Number.isFinite(storedCommission) && storedCommission >= 0
+      ? Math.round(storedCommission)
+      : calculateTripCommission({ price: finalPrice, commissionPercent: tariffInfo.commission });
+    const commissionPct = finalPrice > 0
+      ? Math.round((commissionAmount / finalPrice) * 1000) / 10
+      : tariffInfo.commission;
     const driverEarnings = finalPrice - commissionAmount;
 
     return (

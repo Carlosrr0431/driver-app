@@ -27,8 +27,12 @@ export const useRealtime = () => {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
-    const isApproachOnly = String(trip.notes || '').includes('[APPROACH_ONLY]');
-    const pickupAddress = isApproachOnly ? trip.destination_address : trip.origin_address;
+    const notes = String(trip.notes || '');
+    const isPassengerApp = notes.includes('[PASSENGER_APP]');
+    const isApproachOnly = notes.includes('[APPROACH_ONLY]');
+    const pickupAddress = isPassengerApp
+      ? trip.origin_address
+      : (isApproachOnly ? trip.destination_address : trip.origin_address);
     await sendLocalNotification(
       '🚖 Nuevo viaje asignado',
       `${trip.passenger_name} - ${pickupAddress}`,
