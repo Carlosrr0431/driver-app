@@ -1,0 +1,125 @@
+{
+  "expo": {
+    "name": "Profesional Conductor",
+    "slug": "driver-app",
+    "version": "1.0.0",
+    "runtimeVersion": "1.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/21599c2c-8f85-4d49-84d7-71202995c3e5"
+    },
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0F1A"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.remises.driverapp",
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para mostrar tu posición en el mapa y asignarte viajes cercanos.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Necesitamos tu ubicación en segundo plano para el seguimiento de viajes activos.",
+        "NSLocationAlwaysUsageDescription": "Necesitamos tu ubicación siempre activa para rastrear viajes en curso.",
+        "NSMicrophoneUsageDescription": "Necesitamos acceso al micrófono para el asistente de voz.",
+        "NSPhotoLibraryUsageDescription": "Necesitamos acceso a tus fotos para actualizar tu foto de perfil.",
+        "NSCameraUsageDescription": "Necesitamos acceso a la cámara para tomar tu foto de perfil.",
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification",
+          "audio"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.remises.driverapp",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "@maplibre/maplibre-react-native",
+        {
+          "android": {},
+          "ios": {
+            "metalEnabled": true
+          }
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "newArchEnabled": true
+          },
+          "ios": {
+            "useFrameworks": "static",
+            "buildReactNativeFromSource": true,
+            "newArchEnabled": true
+          }
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Permitir que Driver App use tu ubicación para rastrear viajes.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#DC2626"
+        }
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
+      "expo-font",
+      "expo-updates",
+      "expo-audio",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Necesitamos acceso a tus fotos para actualizar tu foto de perfil.",
+          "cameraPermission": "Necesitamos acceso a la cámara para tomar tu foto de perfil."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "21599c2c-8f85-4d49-84d7-71202995c3e5"
+      }
+    },
+    "owner": "carlosrr"
+  }
+}

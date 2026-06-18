@@ -1,0 +1,177 @@
+// Silenciar warnings de deprecación que no afectan funcionalidad
+globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
+import { LogBox } from 'react-native';
+LogBox.ignoreLogs([
+  '[expo-av]',
+  'This method is deprecated',
+  'Invalid Refresh Token',
+  'Refresh Token Not Found',
+]);
+
+import React, { useEffect, useState, useRef } from 'react';
+import { StatusBar, View, Text } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as Font from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
+import * as Notifications from 'expo-notifications';
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from '@expo-google-fonts/inter';
+import Toast from 'react-native-toast-message';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
+import AppNavigator from './src/navigation/AppNavigator';
+import { useAuth } from './src/hooks/useAuth';
+import { useAuthStore } from './src/stores/authStore';
+import { DEV_AUTO_LOGIN, DEV_DRIVER_EMAIL, DEV_DRIVER_PASSWORD } from './src/config/devDefaults';
+import { useTripStore } from './src/stores/tripStore';
+import { colors } from './src/theme/colors';
+import { navigateTo } from './src/navigation/navigationRef';
+
+try {
+  SplashScreen.preventAutoHideAsync();
+} catch (_) {}
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 2,
+      staleTime: 1000 * 60 * 5,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+const ToastContent = ({ text1, text2, borderColor }) => (
+  <View
+    style={{
+      maxWidth: '90%',
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: 14,
+      borderLeftWidth: 4,
+      borderLeftColor: borderColor,
+      borderWidth: 1,
+      borderColor: colors.border,
+      elevation: 5,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+    }}
+  >
+    <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+      {text1}
+    </Text>
+    {text2 ? (
+      <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+        {text2}
+      </Text>
+    ) : null}
+  </View>
+);
+
+const toastConfig = {
+  success: (props) => <ToastContent {...props} borderColor={colors.success} />,
+  error: (props) => <ToastContent {...props} borderColor={colors.danger} />,
+  info: (props) => <ToastContent {...props} borderColor={colors.info} />,
+};
+
+const AppContent = () => {
+  const { login } = useAuth({ enableBootstrap: true });
+  const { isAuthenticated, isLoading } = useAuthStore();
+  const devLoginAttempted = useRef(false);
+  const notificationListener = useRef();
+  const responseListener = useRef();
+
+  useEffect(() => {
+    if (!DEV_AUTO_LOGIN || devLoginAttempted.current || isLoading || isAuthenticated) {
+      return;
+    }
+    devLoginAttempted.current = true;
+    login(DEV_DRIVER_EMAIL, DEV_DRIVER_PASSWORD).catch(() => {});
+  }, [isAuthenticated, isLoading, login]);
+
+  useEffect(() => {
+    // Listen for notifications received while app is foregrounded
+    notificationListener.current = Notifications.addNotificationReceivedListener((notification) => {
+      const data = notification.request.content.data;
+      if (data?.type === 'new_trip' && data?.trip) {
+        useTripStore.getState().setPendingTrip(data.trip);
+      }
+    });
+
+    // Handle user tapping on a notification
+    responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (!data) return;
+
+      // Limpiar badge al responder a cualquier notificación
+      Notifications.setBadgeCountAsync(0).catch(() => {});
+
+      if (data.type === 'new_trip') {
+        if (data.trip) {
+          useTripStore.getState().setPendingTrip(data.trip);
+        }
+        navigateTo('Home');
+      } else if (data.type === 'dispatcher_message' || data.type === 'message') {
+        navigateTo('Home');
+      }
+    });
+
+    // Dismiss all delivered notifications to prevent re-delivery loop
+    Notifications.dismissAllNotificationsAsync().catch(() => {});
+
+    return () => {
+      if (notificationListener.current) notificationListener.current.remove();
+      if (responseListener.current) responseListener.current.remove();
+    };
+  }, []);
+
+  return <AppNavigator />;
+};
+
+export default function App() {
+  const [appReady, setAppReady] = useState(false);
+
+  useEffect(() => {
+    async function prepare() {
+      try {
+        await Font.loadAsync({
+          Inter_400Regular,
+          Inter_500Medium,
+          Inter_600SemiBold,
+          Inter_700Bold,
+        });
+      } catch (e) {
+        console.warn('Error loading fonts:', e);
+      } finally {
+        setAppReady(true);
+        try { SplashScreen.hideAsync(); } catch (_) {}
+      }
+    }
+    prepare();
+  }, []);
+
+  if (!appReady) {
+    return null;
+  }
+
+  return (
+    <ErrorBoundary>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <QueryClientProvider client={queryClient}>
+          <SafeAreaProvider>
+            <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+            <AppContent />
+            <Toast config={toastConfig} topOffset={60} />
+          </SafeAreaProvider>
+        </QueryClientProvider>
+      </GestureHandlerRootView>
+    </ErrorBoundary>
+  );
+}

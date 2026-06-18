@@ -1,0 +1,107 @@
+{
+  "name": "driver-app",
+  "version": "1.0.0",
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "start:dev-client": "expo start --dev-client",
+    "prebuild:android": "expo prebuild --platform android --clean",
+    "android": "expo run:android",
+    "android:rebuild": "expo prebuild --platform android --clean && expo run:android",
+    "ios": "expo run:ios",
+    "web": "node -e \"console.error('driver-app solo soporta Android/iOS. Web deshabilitado.'); process.exit(1);\"",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "setupFiles": [
+      "<rootDir>/jest.setup.js"
+    ],
+    "testMatch": [
+      "**/__tests__/**/*.{js,jsx}",
+      "**/*.{test,spec}.{js,jsx}"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/__tests__/helpers/"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|zustand|nativewind|date-fns|@maplibre/maplibre-react-native))"
+    ],
+    "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/src/$1"
+    },
+    "verbose": true,
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "src/**/*.{js,jsx}",
+      "!src/**/*.test.{js,jsx}",
+      "!**/node_modules/**"
+    ]
+  },
+  "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
+    "@expo/vector-icons": "^15.0.3",
+    "@gorhom/bottom-sheet": "^5.1.0",
+    "@maplibre/maplibre-react-native": "^11.3.4",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-firebase/app": "^24.0.0",
+    "@react-native-firebase/messaging": "^24.0.0",
+    "@react-native-masked-view/masked-view": "0.3.2",
+    "@react-navigation/bottom-tabs": "^7.3.0",
+    "@react-navigation/native": "^7.1.0",
+    "@react-navigation/native-stack": "^7.3.0",
+    "@supabase/supabase-js": "^2.49.0",
+    "@tanstack/react-query": "^5.72.0",
+    "babel-preset-expo": "~54.0.10",
+    "base64-arraybuffer": "^1.0.2",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "expo": "~54.0.0",
+    "expo-audio": "~1.1.1",
+    "expo-build-properties": "^56.0.19",
+    "expo-dev-client": "~6.0.20",
+    "expo-file-system": "~19.0.21",
+    "expo-font": "~14.0.11",
+    "expo-haptics": "~15.0.8",
+    "expo-image": "~3.0.11",
+    "expo-image-picker": "~17.0.10",
+    "expo-linear-gradient": "~15.0.8",
+    "expo-location": "~19.0.8",
+    "expo-notifications": "~0.32.16",
+    "expo-print": "^55.0.13",
+    "expo-sharing": "^55.0.18",
+    "expo-speech": "~14.0.8",
+    "expo-splash-screen": "~31.0.13",
+    "expo-status-bar": "~3.0.9",
+    "expo-task-manager": "~14.0.9",
+    "expo-updates": "~29.0.17",
+    "nativewind": "^4.1.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-gesture-handler": "~2.28.0",
+    "react-native-reanimated": "~4.1.1",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "react-native-skeleton-placeholder": "^5.2.4",
+    "react-native-toast-message": "^2.2.1",
+    "react-native-webview": "13.15.0",
+    "react-native-worklets": "0.5.1",
+    "tailwindcss": "^3.4.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "@testing-library/jest-native": "^5.4.3",
+    "@testing-library/react-native": "^13.3.3",
+    "@types/react": "~19.1.10",
+    "jest": "^29.7.0",
+    "jest-expo": "^55.0.16",
+    "sharp": "^0.34.5",
+    "typescript": "~5.9.2"
+  },
+  "private": true
+}

@@ -1,0 +1,476 @@
+import { useCallback, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
+import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
+import { supabase } from '../services/supabase';
+import { useLocationStore } from '../stores/locationStore';
+import { useAuthStore } from '../stores/authStore';
+import { GPS_CONFIG } from '../utils/constants';
+import Toast from 'react-native-toast-message';
+
+const BACKGROUND_LOCATION_TASK = 'background-location-task';
+
+function getDistanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+try {
+  TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+    if (error) {
+      console.error('Error en tarea de ubicación:', error);
+      return;
+    }
+    if (data) {
+      const { locations } = data;
+      const location = locations[0];
+      if (location) {
+        // Descartar lecturas con mala precisión en background también
+        const accuracy = location.coords.accuracy ?? 99;
+        if (accuracy > 30) return;
+        const { setCurrentLocation } = useLocationStore.getState();
+        setCurrentLocation({
+          lat: location.coords.latitude,
+          lng: location.coords.longitude,
+          speed: location.coords.speed ?? 0,
+          heading: location.coords.heading ?? 0,
+          accuracy,
+        });
+      }
+    }
+  });
+} catch (e) {
+  console.warn('Background location task registration failed:', e);
+}
+
+export const useLocation = () => {
+  const {
+    currentLocation,
+    isTracking,
+    speed,
+    heading,
+    permissionStatus,
+    setCurrentLocation,
+    setIsTracking,
+    setPermissionStatus,
+  } = useLocationStore();
+
+  const { driver } = useAuthStore();
+  const trackingIntervalRef = useRef(null);
+  const activeTripIdRef = useRef(null);
+  const watchSubscriptionRef = useRef(null);
+  const navWatchSubscriptionRef = useRef(null);
+  const navLastLocationRef = useRef(null);
+  const pendingBackgroundStartRef = useRef(false);
+  const isNavigationWatchActiveRef = useRef(false);
+  const lastLocationRef = useRef(null);
+  const lastSupabasePushRef = useRef(0);
+  const hasSyncedToSupabaseRef = useRef(false);
+
+  const requestPermissions = useCallback(async () => {
+    try {
+      const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+      if (foregroundStatus !== 'granted') {
+        Toast.show({
+          type: 'error',
+          text1: 'Permiso denegado',
+          text2: 'Necesitamos acceso a tu ubicación para funcionar correctamente',
+        });
+        setPermissionStatus('denied');
+        return false;
+      }
+
+      const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+      setPermissionStatus(backgroundStatus === 'granted' ? 'granted' : 'foreground-only');
+
+      return true;
+    } catch (error) {
+      console.error('Error solicitando permisos:', error);
+      return false;
+    }
+  }, []);
+
+  const updateDriverLocation = useCallback(async (location) => {
+    if (!driver?.id || !location) return;
+    try {
+      await supabase
+        .from('drivers')
+        .update({
+          current_lat: location.lat,
+          current_lng: location.lng,
+        })
+        .eq('id', driver.id);
+    } catch (error) {
+      console.error('Error actualizando ubicación del chofer:', error);
+    }
+  }, [driver]);
+
+  const pushLocationToSupabase = useCallback(async (pos, options = {}) => {
+    const { force = false } = options;
+    if (!driver?.id) return;
+    const now = Date.now();
+    if (!force && now - lastSupabasePushRef.current < 5000) return;
+    lastSupabasePushRef.current = now;
+
+    try {
+      await supabase
+        .from('driver_locations')
+        .upsert({
+          driver_id: driver.id,
+          lat: pos.lat,
+          lng: pos.lng,
+          speed: pos.speed || 0,
+          heading: pos.heading || 0,
+          is_online: true,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'driver_id' });
+    } catch (error) {
+      console.warn('Error pushing location to Supabase:', error.message);
+    }
+  }, [driver]);
+
+  const syncLocationToBackend = useCallback(async (pos, options = {}) => {
+    const { force = false } = options;
+    if (!driver?.id || !pos) return;
+    hasSyncedToSupabaseRef.current = true;
+    await updateDriverLocation(pos);
+    await pushLocationToSupabase(pos, { force });
+  }, [driver, updateDriverLocation, pushLocationToSupabase]);
+
+  const getCurrentPosition = useCallback(async (options = {}) => {
+    const { syncToSupabase = false } = options;
+    try {
+      // Verificar permisos antes de pedir ubicación
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        const granted = await requestPermissions();
+        if (!granted) return null;
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.BestForNavigation,
+      });
+
+      // Descartar lecturas con precisión GPS muy pobre (> 30 m)
+      const accuracy = location.coords.accuracy ?? 99;
+      if (accuracy > 30) return null;
+
+      const pos = {
+        lat: location.coords.latitude,
+        lng: location.coords.longitude,
+        speed: location.coords.speed ?? 0,
+        heading: location.coords.heading ?? 0,
+        accuracy,
+      };
+
+      // Filtro de movimiento: evita actualizar currentLocation cuando el auto está
+      // detenido y el GPS jittea entre la calle y la vereda.
+      const last = lastLocationRef.current;
+      if (last) {
+        const distMeters = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
+        const isMoving = pos.speed > 1.5; // m/s ≈ 5.4 km/h
+        // Parado: requiere ≥ 12 m de desplazamiento antes de aceptar el nuevo punto.
+        // En movimiento: cualquier cambio ≥ 4 m es relevante para la navegación.
+        if (distMeters < (isMoving ? 4 : 12)) return null;
+      }
+      lastLocationRef.current = pos;
+
+      setCurrentLocation(pos);
+      if (syncToSupabase) {
+        await syncLocationToBackend(pos, { force: true });
+      }
+      return pos;
+    } catch (error) {
+      console.warn('Error obteniendo posición:', error.message);
+      return null;
+    }
+  }, [requestPermissions, setCurrentLocation, syncLocationToBackend]);
+
+  const sendTrackingPoint = useCallback(async (tripId, location) => {
+    if (!tripId || !location || !driver?.id) return;
+    try {
+      await supabase.from('trip_tracking').insert({
+        trip_id: tripId,
+        driver_id: driver.id,
+        lat: location.lat,
+        lng: location.lng,
+        speed: location.speed || 0,
+        heading: location.heading || 0,
+      });
+    } catch (error) {
+      console.error('Error enviando punto de tracking:', error);
+    }
+  }, [driver]);
+
+  const maybeStartBackgroundUpdates = useCallback(async () => {
+    try {
+      const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      if (hasStarted) {
+        pendingBackgroundStartRef.current = false;
+        return true;
+      }
+
+      // Android foreground service can only be started while app is active.
+      if (AppState.currentState !== 'active') {
+        pendingBackgroundStartRef.current = true;
+        return false;
+      }
+
+      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+        accuracy: Location.Accuracy.High,
+        distanceInterval: GPS_CONFIG.DISTANCE_FILTER,
+        timeInterval: GPS_CONFIG.TRACKING_INTERVAL,
+        foregroundService: {
+          notificationTitle: 'Viaje en curso',
+          notificationBody: 'Rastreando tu ubicacion...',
+          notificationColor: '#282e69',
+        },
+        showsBackgroundLocationIndicator: true,
+      });
+
+      pendingBackgroundStartRef.current = false;
+      return true;
+    } catch (error) {
+      const message = String(error?.message || '').toLowerCase();
+      const isForegroundServiceTimingError =
+        message.includes('foreground service cannot be started when the application is in the background') ||
+        message.includes("couldn't start the foreground service");
+
+      if (isForegroundServiceTimingError) {
+        pendingBackgroundStartRef.current = true;
+        return false;
+      }
+
+      console.error('Error iniciando tracking en background:', error);
+      return false;
+    }
+  }, []);
+
+  const startTracking = useCallback(async (tripId) => {
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
+
+    activeTripIdRef.current = tripId;
+    setIsTracking(true);
+
+    trackingIntervalRef.current = setInterval(async () => {
+      const position = await getCurrentPosition();
+      if (position) {
+        await updateDriverLocation(position);
+        if (activeTripIdRef.current) {
+          await sendTrackingPoint(activeTripIdRef.current, position);
+        }
+      }
+    }, GPS_CONFIG.TRACKING_INTERVAL);
+
+    await maybeStartBackgroundUpdates();
+  }, [requestPermissions, getCurrentPosition, updateDriverLocation, sendTrackingPoint, maybeStartBackgroundUpdates]);
+
+  const stopTracking = useCallback(async () => {
+    activeTripIdRef.current = null;
+    pendingBackgroundStartRef.current = false;
+    setIsTracking(false);
+
+    if (trackingIntervalRef.current) {
+      clearInterval(trackingIntervalRef.current);
+      trackingIntervalRef.current = null;
+    }
+
+    try {
+      const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      if (hasStarted) {
+        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      }
+    } catch (error) {
+      // Task not running — safe to ignore
+    }
+  }, []);
+
+  const applyLocationUpdate = useCallback((pos, options = {}) => {
+    const {
+      minMovingMeters = 8,
+      minStoppedMeters = 15,
+      skipSupabase = false,
+      force = false,
+    } = options;
+    const last = lastLocationRef.current;
+    if (!force && last) {
+      const dist = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
+      const isMoving = pos.speed > 1.5;
+      const minDist = isMoving ? minMovingMeters : minStoppedMeters;
+      if (dist < minDist) return false;
+    }
+
+    lastLocationRef.current = pos;
+    setCurrentLocation(pos);
+    if (!skipSupabase) {
+      hasSyncedToSupabaseRef.current = true;
+      pushLocationToSupabase(pos, { force });
+      updateDriverLocation(pos);
+    }
+    return true;
+  }, [setCurrentLocation, pushLocationToSupabase, updateDriverLocation]);
+
+  const startNavigationWatch = useCallback(async () => {
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
+    if (navWatchSubscriptionRef.current) return;
+
+    isNavigationWatchActiveRef.current = true;
+    navLastLocationRef.current = lastLocationRef.current;
+
+    navWatchSubscriptionRef.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.BestForNavigation,
+        distanceInterval: 3,
+        timeInterval: 1000,
+      },
+      (location) => {
+        const accuracy = location.coords.accuracy ?? 99;
+        if (accuracy > 28) return;
+
+        const pos = {
+          lat: location.coords.latitude,
+          lng: location.coords.longitude,
+          speed: location.coords.speed ?? 0,
+          heading: location.coords.heading ?? 0,
+          accuracy,
+        };
+
+        const last = navLastLocationRef.current || lastLocationRef.current;
+        if (last) {
+          const dist = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
+          const isMoving = pos.speed > 1.2;
+          const minDist = isMoving ? 3 : 8;
+          if (dist < minDist) return;
+        }
+
+        navLastLocationRef.current = pos;
+        applyLocationUpdate(pos, { minMovingMeters: 0, minStoppedMeters: 0 });
+      },
+    );
+  }, [requestPermissions, applyLocationUpdate]);
+
+  const stopNavigationWatch = useCallback(() => {
+    isNavigationWatchActiveRef.current = false;
+    navLastLocationRef.current = null;
+    if (navWatchSubscriptionRef.current) {
+      navWatchSubscriptionRef.current.remove();
+      navWatchSubscriptionRef.current = null;
+    }
+  }, []);
+
+  const setOfflineLocation = useCallback(async () => {
+    if (!driver?.id) return;
+    try {
+      await supabase
+        .from('driver_locations')
+        .upsert({
+          driver_id: driver.id,
+          lat: currentLocation?.lat || 0,
+          lng: currentLocation?.lng || 0,
+          is_online: false,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'driver_id' });
+    } catch (error) {
+      console.warn('Error setting offline:', error.message);
+    }
+  }, [driver, currentLocation]);
+
+  const startWatching = useCallback(async () => {
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
+
+    if (watchSubscriptionRef.current) return;
+
+    watchSubscriptionRef.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.BestForNavigation,
+        distanceInterval: 8,
+        timeInterval: 3000,
+      },
+      (location) => {
+        // Descartar lecturas con mala precisión GPS (> 25 m)
+        // — estas son las que "caen" en la vereda y desvían la ruta.
+        const accuracy = location.coords.accuracy ?? 99;
+        if (accuracy > 25) return;
+
+        const pos = {
+          lat: location.coords.latitude,
+          lng: location.coords.longitude,
+          speed: location.coords.speed ?? 0,
+          heading: location.coords.heading ?? 0,
+          accuracy,
+        };
+
+        if (!hasSyncedToSupabaseRef.current) {
+          applyLocationUpdate(pos, { force: true });
+          return;
+        }
+
+        const last = lastLocationRef.current;
+        if (last) {
+          const dist = getDistanceMeters(last.lat, last.lng, pos.lat, pos.lng);
+          const isMoving = pos.speed > 1.5; // m/s ≈ 5.4 km/h
+          const minDist = isMoving ? 8 : 15;
+          if (dist < minDist) return;
+        }
+
+        applyLocationUpdate(pos);
+      }
+    );
+  }, [requestPermissions, applyLocationUpdate]);
+
+  const stopWatching = useCallback(() => {
+    if (watchSubscriptionRef.current) {
+      watchSubscriptionRef.current.remove();
+      watchSubscriptionRef.current = null;
+    }
+    hasSyncedToSupabaseRef.current = false;
+    setOfflineLocation();
+  }, [setOfflineLocation]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' && pendingBackgroundStartRef.current && activeTripIdRef.current) {
+        maybeStartBackgroundUpdates();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      if (trackingIntervalRef.current) {
+        clearInterval(trackingIntervalRef.current);
+      }
+      if (watchSubscriptionRef.current) {
+        watchSubscriptionRef.current.remove();
+        watchSubscriptionRef.current = null;
+      }
+      stopNavigationWatch();
+    };
+  }, [maybeStartBackgroundUpdates, stopNavigationWatch]);
+
+  return {
+    currentLocation,
+    isTracking,
+    speed,
+    heading,
+    permissionStatus,
+    requestPermissions,
+    getCurrentPosition,
+    startTracking,
+    stopTracking,
+    startWatching,
+    stopWatching,
+    startNavigationWatch,
+    stopNavigationWatch,
+    updateDriverLocation,
+    pushLocationToSupabase,
+    setOfflineLocation,
+  };
+};

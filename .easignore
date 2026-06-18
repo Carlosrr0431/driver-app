@@ -1,0 +1,25 @@
+# Dependencies and local cache
+node_modules/
+.expo/
+dist/
+
+# Build outputs
+android/app/build/
+android/.gradle/
+android/build/
+android/app/.cxx/
+ios/Pods/
+ios/build/
+coverage/
+
+# Local tooling and artifacts
+.tools/
+*.tsbuildinfo
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Local env files
+.env
+.env.local
