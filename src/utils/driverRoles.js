@@ -24,6 +24,14 @@ export function buildAssignedDriverAuthEmail(normalizedPhone) {
   return `assigned.${normalizedPhone}@${ASSIGNED_DRIVER_EMAIL_DOMAIN}`;
 }
 
+/** Email sintético para dueño/titular (único por número de móvil). */
+export function buildOwnerAuthEmail(normalizedPhone, driverNumber = null) {
+  if (driverNumber != null && String(driverNumber).trim() !== '') {
+    return `owner.${driverNumber}@${ASSIGNED_DRIVER_EMAIL_DOMAIN}`;
+  }
+  return `owner.${normalizedPhone}@${ASSIGNED_DRIVER_EMAIL_DOMAIN}`;
+}
+
 /** Datos compartidos del vehículo y número de móvil del dueño al crear un asignado. */
 export function buildAssignedDriverInsertPayload(owner, { fullName, phone, phoneNormalized, authEmail }) {
   const root = owner || {};

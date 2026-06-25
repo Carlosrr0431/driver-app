@@ -1,6 +1,7 @@
 import {
   buildAssignedDriverAuthEmail,
   buildAssignedDriverInsertPayload,
+  buildOwnerAuthEmail,
   isAssignedDriver,
   isFleetOwner,
   MAX_ASSIGNED_DRIVERS,
@@ -16,6 +17,10 @@ describe('choferes asignados — reglas de negocio', () => {
     expect(buildAssignedDriverAuthEmail(normalized)).toBe(
       'assigned.543878630173@profesional.test',
     );
+  });
+
+  it('genera email sintético de dueño por número de móvil', () => {
+    expect(buildOwnerAuthEmail('543874128357', 2)).toBe('owner.2@profesional.test');
   });
 
   it('identifica chofer asignado vs propietario de flota', () => {

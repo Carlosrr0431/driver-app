@@ -10,13 +10,28 @@ jest.mock('../../src/services/supabase', () => ({
 
 import {
   lookupAssignedDriverLogin,
+  lookupDriverPhoneLogin,
   linkAssignedDriverUser,
   setDriverOnlineStatus,
+  fetchFleetOwnerProfile,
 } from '../../src/services/assignedDriverService';
 
 describe('assignedDriverService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('lookupDriverPhoneLogin', () => {
+    it('normaliza el teléfono y devuelve el resultado del RPC unificado', async () => {
+      mockRpc.mockResolvedValue({ data: { found: true, login_kind: 'owner' }, error: null });
+
+      const result = await lookupDriverPhoneLogin('387 8630173');
+
+      expect(mockRpc).toHaveBeenCalledWith('lookup_driver_phone_login', {
+        p_phone: '543878630173',
+      });
+      expect(result.found).toBe(true);
+    });
   });
 
   describe('lookupAssignedDriverLogin', () => {
@@ -104,6 +119,46 @@ describe('assignedDriverService', () => {
       await expect(setDriverOnlineStatus('driver-1', true)).rejects.toThrow(
         'Otro chofer del mismo vehículo ya está en línea.',
       );
+    });
+  });
+
+  describe('fetchFleetOwnerProfile', () => {
+    it('devuelve el dueño raíz con todos los campos', async () => {
+      const ownerRow = {
+        id: 'owner-1',
+        role: 'owner',
+        driver_number: 2,
+        vehicle_plate: 'AB123CD',
+        is_assigned_driver: false,
+        owner_id: null,
+      };
+
+      const maybeSingle = jest.fn().mockResolvedValue({ data: ownerRow, error: null });
+      mockFrom.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({ maybeSingle }),
+        }),
+      });
+
+      const result = await fetchFleetOwnerProfile('owner-1');
+
+      expect(mockFrom).toHaveBeenCalledWith('drivers');
+      expect(result).toEqual(ownerRow);
+    });
+
+    it('rechaza filas que no son dueño raíz', async () => {
+      const maybeSingle = jest.fn().mockResolvedValue({
+        data: { id: 'a1', owner_id: 'owner-1', is_assigned_driver: true },
+        error: null,
+      });
+      mockFrom.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({ maybeSingle }),
+        }),
+      });
+
+      const result = await fetchFleetOwnerProfile('a1');
+      expect(result).toBeNull();
     });
   });
 });

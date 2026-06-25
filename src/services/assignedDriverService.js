@@ -4,10 +4,30 @@ import { normalizeDriverPhone } from '../utils/driverRoles';
 const DASHBOARD_URL =
   process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://profesional-dashboard.vercel.app';
 
-export async function lookupAssignedDriverLogin(phone) {
-  const { data, error } = await supabase.rpc('lookup_assigned_driver_login', {
+/** Lookup unificado: dueño o chofer asignado. */
+export async function lookupDriverPhoneLogin(phone, driverNumber = null) {
+  const params = {
     p_phone: normalizeDriverPhone(phone) || phone,
-  });
+  };
+  if (driverNumber != null && Number.isFinite(Number(driverNumber))) {
+    params.p_driver_number = Number(driverNumber);
+  }
+
+  const { data, error } = await supabase.rpc('lookup_driver_phone_login', params);
+
+  if (error) throw error;
+  return data || { found: false };
+}
+
+export async function lookupAssignedDriverLogin(phone, driverNumber = null) {
+  const params = {
+    p_phone: normalizeDriverPhone(phone) || phone,
+  };
+  if (driverNumber != null && Number.isFinite(Number(driverNumber))) {
+    params.p_driver_number = Number(driverNumber);
+  }
+
+  const { data, error } = await supabase.rpc('lookup_assigned_driver_login', params);
 
   if (error) throw error;
   return data || { found: false };
@@ -16,8 +36,8 @@ export async function lookupAssignedDriverLogin(phone) {
 /**
  * Primera configuración de contraseña vía dashboard (admin API, sin enviar emails).
  */
-export async function provisionAssignedDriverAuth({ driverId, phone, password }) {
-  const response = await fetch(`${DASHBOARD_URL}/api/auth/assigned-driver/provision`, {
+export async function provisionDriverPhoneAuth({ driverId, phone, password }) {
+  const response = await fetch(`${DASHBOARD_URL}/api/auth/driver-phone/provision`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -36,6 +56,11 @@ export async function provisionAssignedDriverAuth({ driverId, phone, password })
   }
 
   return payload;
+}
+
+/** @deprecated Usar provisionDriverPhoneAuth */
+export async function provisionAssignedDriverAuth(params) {
+  return provisionDriverPhoneAuth(params);
 }
 
 export async function linkAssignedDriverUser(driverId) {
@@ -79,5 +104,20 @@ export async function fetchOwnerVehicleProfile(ownerId) {
     .maybeSingle();
 
   if (error) throw error;
+  return data;
+}
+
+/** Perfil completo del dueño del vehículo (siempre desde BD, no del store en caché). */
+export async function fetchFleetOwnerProfile(ownerId) {
+  if (!ownerId) return null;
+
+  const { data, error } = await supabase
+    .from('drivers')
+    .select('*')
+    .eq('id', ownerId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data?.id || data.is_assigned_driver || data.owner_id) return null;
   return data;
 }
