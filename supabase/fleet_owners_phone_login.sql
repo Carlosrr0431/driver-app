@@ -40,6 +40,16 @@ CREATE INDEX IF NOT EXISTS idx_drivers_fleet_owner_phone_lookup
     AND COALESCE(is_assigned_driver, false) = false
     AND phone_normalized IS NOT NULL;
 
+-- UNIQUE solo entre titulares (asignados pueden compartir móvil con el dueño)
+ALTER TABLE public.drivers DROP CONSTRAINT IF EXISTS drivers_driver_number_key;
+
+DROP INDEX IF EXISTS idx_drivers_fleet_root_driver_number;
+CREATE UNIQUE INDEX idx_drivers_fleet_root_driver_number
+  ON public.drivers(driver_number)
+  WHERE owner_id IS NULL
+    AND COALESCE(is_assigned_driver, false) = false
+    AND driver_number IS NOT NULL;
+
 CREATE OR REPLACE FUNCTION public.build_owner_auth_email(p_phone_normalized TEXT, p_driver_number INTEGER DEFAULT NULL)
 RETURNS TEXT
 LANGUAGE sql
@@ -302,7 +312,9 @@ INSERT INTO public.drivers (
   ('LESCANO ANTONIO FEDERICO', '+5493874131924', '543874131924', public.build_owner_auth_email('543874131924', 56), 'owner', NULL, false, false, NULL, 56, 'Fiat', 'Cronos', 'AG438IR', 'Blanco', 'auto', false, 5.0, 0, 0),
   ('REYES AIXA BARBARA', '+5491152207592', '541152207592', public.build_owner_auth_email('541152207592', 61), 'owner', NULL, false, false, NULL, 61, 'Renault', 'Logan', 'AG213CX', 'Gris oscuro', 'auto', false, 5.0, 0, 0),
   ('ANDRES VICTOR', '+5493874475059', '543874475059', public.build_owner_auth_email('543874475059', 6), 'owner', NULL, false, false, NULL, 6, 'Volkswagen', 'Polo', 'AH643RB', 'Gris oscuro', 'auto', false, 5.0, 0, 0)
-ON CONFLICT (driver_number) DO UPDATE SET
+ON CONFLICT (driver_number)
+WHERE owner_id IS NULL AND COALESCE(is_assigned_driver, false) = false
+DO UPDATE SET
   full_name = EXCLUDED.full_name,
   phone = EXCLUDED.phone,
   phone_normalized = EXCLUDED.phone_normalized,
