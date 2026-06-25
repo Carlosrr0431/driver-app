@@ -3,6 +3,29 @@
 -- Ejecutar manualmente en Supabase SQL Editor (después de assigned_drivers.sql)
 -- =====================================================
 
+-- Dependencia de assigned_drivers.sql
+CREATE OR REPLACE FUNCTION public.normalize_driver_phone(p_phone TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  v_digits TEXT;
+BEGIN
+  v_digits := regexp_replace(COALESCE(p_phone, ''), '\D', '', 'g');
+  IF v_digits = '' THEN
+    RETURN NULL;
+  END IF;
+  IF v_digits LIKE '0%' THEN
+    v_digits := substring(v_digits FROM 2);
+  END IF;
+  IF length(v_digits) <= 10 AND v_digits NOT LIKE '54%' THEN
+    v_digits := '54' || v_digits;
+  END IF;
+  RETURN v_digits;
+END;
+$$;
+
 -- Columnas ya agregadas en assigned_drivers.sql; asegurar defaults para dueños nuevos
 ALTER TABLE public.drivers
   ADD COLUMN IF NOT EXISTS phone_normalized TEXT,
@@ -142,9 +165,11 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.lookup_driver_phone_login(TEXT) TO anon, authenticated;
+-- Firma completa (text, integer): el GRANT con solo (text) falla y revierte todo el script
+GRANT EXECUTE ON FUNCTION public.lookup_driver_phone_login(TEXT, INTEGER) TO anon, authenticated;
 
 -- Compatibilidad: RPC anterior delega al unificado
+DROP FUNCTION IF EXISTS public.lookup_assigned_driver_login(TEXT);
 CREATE OR REPLACE FUNCTION public.lookup_assigned_driver_login(p_phone TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -232,6 +257,7 @@ GRANT EXECUTE ON FUNCTION public.link_assigned_driver_user(UUID) TO authenticate
 -- ── Alta masiva: LISTADO DE AUTOS 2026 (hojas 1-2 + 3-4 unificadas por orden) ─
 -- Licencia municipal en comentarios. Sin user_id → primera vez configura contraseña en la app.
 
+-- Requiere UNIQUE parcial en driver_number (titulares) — ver assigned_drivers.sql / fix_driver_number_unique.sql
 INSERT INTO public.drivers (
   full_name,
   phone,
