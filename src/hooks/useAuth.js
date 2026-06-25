@@ -77,6 +77,7 @@ export const useAuth = (options = {}) => {
           profile = {
             ...profile,
             owner_name: ownerVehicle.full_name,
+            owner_phone: ownerVehicle.phone || profile.owner_phone,
             vehicle_brand: ownerVehicle.vehicle_brand || profile.vehicle_brand,
             vehicle_model: ownerVehicle.vehicle_model || profile.vehicle_model,
             vehicle_year: ownerVehicle.vehicle_year ?? profile.vehicle_year,

@@ -254,10 +254,15 @@ const ProfileScreen = () => {
           <Animated.View entering={FadeInDown.delay(160).duration(400)}>
             <SectionCard title="Datos personales" icon="account-outline">
               <FormInput label="Nombre completo" value={fullName} onChangeText={setFullName} icon="account" />
-              <FormInput label="Teléfono" value={phone} onChangeText={setPhone} icon="phone" keyboardType="phone-pad" />
-              {!assignedDriver ? (
+              <FormInput label="Teléfono (login)" value={phone} onChangeText={setPhone} icon="phone" keyboardType="phone-pad" />
+              {assignedDriver ? (
+                <>
+                  <ReadOnlyField label="Número de móvil" value={driverNumber ? String(driverNumber) : '—'} />
+                  <ReadOnlyField label="Teléfono del titular" value={driver?.owner_phone || '—'} />
+                </>
+              ) : (
                 <FormInput label="Número de móvil" value={driverNumber} onChangeText={setDriverNumber} icon="numeric" keyboardType="numeric" placeholder="Ej: 1, 2, 3..." />
-              ) : null}
+              )}
             </SectionCard>
           </Animated.View>
 

@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import {
   buildAssignedDriverAuthEmail,
+  buildAssignedDriverInsertPayload,
   MAX_ASSIGNED_DRIVERS,
   normalizeDriverPhone,
 } from '../utils/driverRoles';
@@ -218,28 +219,14 @@ export const useOwner = () => {
 
       const { data: newDriver, error: insertError } = await supabase
         .from('drivers')
-        .insert({
-          owner_id: driver.id,
-          user_id: null,
-          role: 'driver',
-          is_assigned_driver: true,
-          password_initialized: false,
-          full_name: fullName.trim(),
-          phone: phone.trim(),
-          phone_normalized: normalizedPhone,
-          auth_email: authEmail,
-          vehicle_brand: driver.vehicle_brand,
-          vehicle_model: driver.vehicle_model,
-          vehicle_year: driver.vehicle_year,
-          vehicle_plate: driver.vehicle_plate,
-          vehicle_color: driver.vehicle_color,
-          vehicle_photo_url: driver.vehicle_photo_url,
-          vehicle_type: driver.vehicle_type,
-          is_available: false,
-          rating: 5.0,
-          total_trips: 0,
-          total_km: 0,
-        })
+        .insert(
+          buildAssignedDriverInsertPayload(driver, {
+            fullName,
+            phone,
+            phoneNormalized: normalizedPhone,
+            authEmail,
+          }),
+        )
         .select()
         .single();
 

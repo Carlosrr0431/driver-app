@@ -302,3 +302,57 @@ WHERE is_assigned_driver = true
     OR auth_email LIKE 'assigned+%@%'
     OR auth_email LIKE '%@drivers.profesional.app'
   );
+
+-- ── Sincronizar vehículo y número de móvil del dueño en choferes asignados ───
+UPDATE public.drivers AS ad
+SET
+  driver_number = o.driver_number,
+  vehicle_brand = o.vehicle_brand,
+  vehicle_model = o.vehicle_model,
+  vehicle_year = o.vehicle_year,
+  vehicle_plate = o.vehicle_plate,
+  vehicle_color = o.vehicle_color,
+  vehicle_photo_url = o.vehicle_photo_url,
+  vehicle_type = COALESCE(o.vehicle_type, ad.vehicle_type, 'auto'),
+  updated_at = NOW()
+FROM public.drivers AS o
+WHERE ad.is_assigned_driver = true
+  AND ad.owner_id = o.id
+  AND (
+    ad.driver_number IS DISTINCT FROM o.driver_number
+    OR ad.vehicle_plate IS DISTINCT FROM o.vehicle_plate
+    OR ad.vehicle_brand IS DISTINCT FROM o.vehicle_brand
+    OR ad.vehicle_model IS DISTINCT FROM o.vehicle_model
+  );
+
+CREATE OR REPLACE FUNCTION public.sync_assigned_drivers_from_owner()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF COALESCE(NEW.is_assigned_driver, false) = false AND NEW.owner_id IS NULL THEN
+    UPDATE public.drivers
+    SET
+      driver_number = NEW.driver_number,
+      vehicle_brand = NEW.vehicle_brand,
+      vehicle_model = NEW.vehicle_model,
+      vehicle_year = NEW.vehicle_year,
+      vehicle_plate = NEW.vehicle_plate,
+      vehicle_color = NEW.vehicle_color,
+      vehicle_photo_url = NEW.vehicle_photo_url,
+      vehicle_type = COALESCE(NEW.vehicle_type, vehicle_type, 'auto'),
+      updated_at = NOW()
+    WHERE owner_id = NEW.id
+      AND is_assigned_driver = true;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_assigned_drivers_from_owner ON public.drivers;
+CREATE TRIGGER trg_sync_assigned_drivers_from_owner
+  AFTER UPDATE OF driver_number, vehicle_brand, vehicle_model, vehicle_year,
+    vehicle_plate, vehicle_color, vehicle_photo_url, vehicle_type
+  ON public.drivers
+  FOR EACH ROW
+  EXECUTE FUNCTION public.sync_assigned_drivers_from_owner();
