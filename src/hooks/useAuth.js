@@ -1,6 +1,8 @@
 import { useCallback, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { clearInvalidAuthSession, isInvalidRefreshTokenError } from '../services/authSession';
+import { fetchOwnerVehicleProfile } from '../services/assignedDriverService';
+import { isAssignedDriver } from '../utils/driverRoles';
 import { useAuthStore } from '../stores/authStore';
 import { registerForPushNotifications, subscribeToTokenRefresh } from '../services/notifications';
 import Toast from 'react-native-toast-message';
@@ -67,26 +69,44 @@ export const useAuth = (options = {}) => {
 
       if (error) throw error;
 
+      let profile = { ...data };
+
+      if (isAssignedDriver(profile) && profile.owner_id) {
+        const ownerVehicle = await fetchOwnerVehicleProfile(profile.owner_id);
+        if (ownerVehicle) {
+          profile = {
+            ...profile,
+            owner_name: ownerVehicle.full_name,
+            vehicle_brand: ownerVehicle.vehicle_brand || profile.vehicle_brand,
+            vehicle_model: ownerVehicle.vehicle_model || profile.vehicle_model,
+            vehicle_year: ownerVehicle.vehicle_year ?? profile.vehicle_year,
+            vehicle_plate: ownerVehicle.vehicle_plate || profile.vehicle_plate,
+            vehicle_color: ownerVehicle.vehicle_color || profile.vehicle_color,
+            vehicle_photo_url: ownerVehicle.vehicle_photo_url || profile.vehicle_photo_url,
+            vehicle_type: ownerVehicle.vehicle_type || profile.vehicle_type,
+            driver_number: profile.driver_number ?? ownerVehicle.driver_number,
+          };
+        }
+      }
+
       // If vehicle_type is not in the data (column doesn't exist yet), check settings fallback
-      if (data && !data.vehicle_type) {
+      if (profile && !profile.vehicle_type) {
         try {
           const { data: setting } = await supabase
             .from('settings')
             .select('value')
-            .eq('key', `vehicle_type_${data.id}`)
+            .eq('key', `vehicle_type_${profile.id}`)
             .single();
           if (setting?.value) {
-            data.vehicle_type = setting.value;
+            profile.vehicle_type = setting.value;
           }
         } catch (_) {}
       }
 
-      setDriver(data);
-      // Register push notifications after we have the driver profile
-      registerForPushNotifications(data.id).catch(console.warn);
-      // Keep only one onTokenRefresh listener alive globally
-      syncTokenRefreshSub(data.id);
-      return data;
+      setDriver(profile);
+      registerForPushNotifications(profile.id).catch(console.warn);
+      syncTokenRefreshSub(profile.id);
+      return profile;
     } catch (error) {
       console.error('Error obteniendo perfil del chofer:', error);
       return null;
@@ -229,6 +249,13 @@ export const useAuth = (options = {}) => {
 
   const logout = useCallback(async () => {
     try {
+      const currentDriver = useAuthStore.getState().driver;
+      if (currentDriver?.id && currentDriver?.is_available) {
+        try {
+          const { setDriverOnlineStatus } = await import('../services/assignedDriverService');
+          await setDriverOnlineStatus(currentDriver.id, false);
+        } catch (_) {}
+      }
       clearTokenRefreshSub();
       await supabase.auth.signOut();
       logoutStore();

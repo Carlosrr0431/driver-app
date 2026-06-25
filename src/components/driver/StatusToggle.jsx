@@ -17,7 +17,7 @@ import Animated, {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../../theme/colors';
-import { supabase } from '../../services/supabase';
+import { setDriverOnlineStatus } from '../../services/assignedDriverService';
 import { useAuthStore } from '../../stores/authStore';
 import Toast from 'react-native-toast-message';
 
@@ -64,12 +64,7 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      const { error } = await supabase
-        .from('drivers')
-        .update({ is_available: newStatus })
-        .eq('id', driver.id);
-
-      if (error) throw error;
+      await setDriverOnlineStatus(driver.id, newStatus);
 
       updateDriver({ is_available: newStatus });
       if (onToggle) onToggle(newStatus);
@@ -85,7 +80,7 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'No se pudo cambiar el estado',
+        text2: error.message || 'No se pudo cambiar el estado',
       });
     }
   }, [driver, isOnline]);

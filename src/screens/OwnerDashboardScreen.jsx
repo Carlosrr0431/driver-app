@@ -21,14 +21,17 @@ import { useOwner } from '../hooks/useOwner';
 import { useAuthStore } from '../stores/authStore';
 import { Avatar } from '../components/ui/Avatar';
 import { formatPrice } from '../utils/formatters';
+import { MAX_ASSIGNED_DRIVERS } from '../utils/driverRoles';
 
 const OwnerDashboardScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { driver } = useAuthStore();
-  const { useLinkedDrivers, useOwnerTodayStats, toggleDriverStatus } = useOwner();
+  const { useLinkedDrivers, useOwnerTodayStats, toggleDriverStatus, removeAssignedDriver } = useOwner();
 
   const { data: linkedDrivers = [], isLoading, refetch, isRefetching } = useLinkedDrivers();
+  const assignedDrivers = linkedDrivers.filter((d) => d.is_assigned_driver);
+  const canAddMore = assignedDrivers.length < MAX_ASSIGNED_DRIVERS;
   const { data: todayStats } = useOwnerTodayStats();
 
   const handleToggleStatus = useCallback((linkedDriver) => {
@@ -58,6 +61,28 @@ const OwnerDashboardScreen = () => {
       ],
     );
   }, [toggleDriverStatus]);
+
+  const handleRemoveDriver = useCallback((linkedDriver) => {
+    Alert.alert(
+      'Eliminar chofer asignado',
+      `¿Querés quitar a ${linkedDriver.full_name} de tu vehículo?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await removeAssignedDriver.mutateAsync(linkedDriver.id);
+              Toast.show({ type: 'success', text1: 'Chofer eliminado', text2: linkedDriver.full_name });
+            } catch (err) {
+              Toast.show({ type: 'error', text1: 'Error', text2: err.message });
+            }
+          },
+        },
+      ],
+    );
+  }, [removeAssignedDriver]);
 
   const renderDriver = useCallback(({ item, index }) => (
     <Animated.View entering={FadeInDown.delay(index * 60).duration(350)}>
@@ -113,10 +138,33 @@ const OwnerDashboardScreen = () => {
               {Number(item.rating || 5).toFixed(1)} · {item.total_trips || 0} viajes
             </Text>
           </View>
+          {item.phone ? (
+            <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+              {item.phone}
+            </Text>
+          ) : null}
+          <View style={{
+            alignSelf: 'flex-start', marginTop: 6,
+            backgroundColor: item.password_initialized ? `${colors.success}15` : `${colors.warning}15`,
+            borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3,
+          }}>
+            <Text style={{
+              fontSize: 10, fontFamily: 'Inter_600SemiBold',
+              color: item.password_initialized ? colors.success : colors.warning,
+            }}>
+              {item.password_initialized ? 'Registrado' : 'Pendiente de registro'}
+            </Text>
+          </View>
         </View>
 
-        {/* Status + chevron */}
+        {/* Status + actions */}
         <View style={{ alignItems: 'flex-end', gap: 8 }}>
+          <Pressable
+            onPress={() => handleRemoveDriver(item)}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, padding: 4 })}
+          >
+            <Ionicons name="trash-outline" size={18} color={colors.danger} />
+          </Pressable>
           <Pressable
             onPress={() => handleToggleStatus(item)}
             style={({ pressed }) => ({
@@ -145,7 +193,7 @@ const OwnerDashboardScreen = () => {
         </View>
       </Pressable>
     </Animated.View>
-  ), [navigation, handleToggleStatus]);
+  ), [navigation, handleToggleStatus, handleRemoveDriver]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -162,12 +210,13 @@ const OwnerDashboardScreen = () => {
           </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={{ color: colors.text, fontSize: 20, fontFamily: 'Inter_700Bold' }}>
-              Mis conductores
+              Choferes asignados
             </Text>
             <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 1 }}>
-              {linkedDrivers.length} conductor{linkedDrivers.length !== 1 ? 'es' : ''} vinculado{linkedDrivers.length !== 1 ? 's' : ''}
+              {assignedDrivers.length}/{MAX_ASSIGNED_DRIVERS} cupos
             </Text>
           </View>
+          {canAddMore ? (
           <Pressable
             onPress={() => navigation.navigate('CreateLinkedDriver')}
             style={({ pressed }) => ({
@@ -179,6 +228,7 @@ const OwnerDashboardScreen = () => {
           >
             <Ionicons name="add" size={22} color="#fff" />
           </Pressable>
+          ) : null}
         </Animated.View>
 
         {/* Today Stats */}
@@ -225,7 +275,7 @@ const OwnerDashboardScreen = () => {
         </View>
       ) : (
         <FlatList
-          data={linkedDrivers}
+          data={assignedDrivers}
           keyExtractor={(item) => item.id}
           renderItem={renderDriver}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 30 }}
@@ -249,10 +299,10 @@ const OwnerDashboardScreen = () => {
                 <MaterialCommunityIcons name="account-group-outline" size={34} color={colors.primary} />
               </View>
               <Text style={{ color: colors.text, fontSize: 16, fontFamily: 'Inter_600SemiBold', marginBottom: 6 }}>
-                Sin conductores vinculados
+                Sin choferes asignados
               </Text>
               <Text style={{ color: colors.textMuted, fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingHorizontal: 40, lineHeight: 20 }}>
-                Agregá conductores para gestionar sus viajes y comisiones desde acá.
+                Agregá hasta {MAX_ASSIGNED_DRIVERS} choferes con nombre y teléfono para que usen tu vehículo.
               </Text>
               <Pressable
                 onPress={() => navigation.navigate('CreateLinkedDriver')}
@@ -268,7 +318,7 @@ const OwnerDashboardScreen = () => {
                 >
                   <Ionicons name="add" size={18} color="#fff" style={{ marginRight: 6 }} />
                   <Text style={{ color: '#fff', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
-                    Agregar conductor
+                    Agregar chofer
                   </Text>
                 </LinearGradient>
               </Pressable>

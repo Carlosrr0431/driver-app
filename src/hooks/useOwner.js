@@ -1,24 +1,13 @@
 import { useCallback, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
-
-const SUPABASE_URL = 'https://xzabzbrolmkezljsyycr.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_7NIfu3DWpS_73AyUfJIpmQ_O3yG38wq';
-
-// Crea un cliente temporal sin sesión persistente para crear usuarios
-// sin afectar la sesión actual del propietario.
-function createTempClient() {
-  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
-}
+import {
+  buildAssignedDriverAuthEmail,
+  MAX_ASSIGNED_DRIVERS,
+  normalizeDriverPhone,
+} from '../utils/driverRoles';
 
 function getDateRange(filter) {
   const now = new Date();
@@ -201,7 +190,92 @@ export const useOwner = () => {
   };
 
   // ──────────────────────────────────────────────────────────
-  // Mutación: crear cuenta de conductor vinculado
+  // Mutación: invitar chofer asignado (solo nombre + teléfono)
+  // ──────────────────────────────────────────────────────────
+  const createAssignedDriver = useMutation({
+    mutationFn: async ({ fullName, phone }) => {
+      if (!driver?.id || driver?.role !== 'owner') {
+        throw new Error('Solo el propietario puede agregar choferes asignados');
+      }
+
+      const normalizedPhone = normalizeDriverPhone(phone);
+      if (!normalizedPhone || normalizedPhone.length < 8) {
+        throw new Error('Ingresá un teléfono válido');
+      }
+
+      const { count, error: countError } = await supabase
+        .from('drivers')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_id', driver.id)
+        .eq('is_assigned_driver', true);
+
+      if (countError) throw countError;
+      if ((count || 0) >= MAX_ASSIGNED_DRIVERS) {
+        throw new Error(`Máximo ${MAX_ASSIGNED_DRIVERS} choferes asignados por vehículo`);
+      }
+
+      const authEmail = buildAssignedDriverAuthEmail(normalizedPhone);
+
+      const { data: newDriver, error: insertError } = await supabase
+        .from('drivers')
+        .insert({
+          owner_id: driver.id,
+          user_id: null,
+          role: 'driver',
+          is_assigned_driver: true,
+          password_initialized: false,
+          full_name: fullName.trim(),
+          phone: phone.trim(),
+          phone_normalized: normalizedPhone,
+          auth_email: authEmail,
+          vehicle_brand: driver.vehicle_brand,
+          vehicle_model: driver.vehicle_model,
+          vehicle_year: driver.vehicle_year,
+          vehicle_plate: driver.vehicle_plate,
+          vehicle_color: driver.vehicle_color,
+          vehicle_photo_url: driver.vehicle_photo_url,
+          vehicle_type: driver.vehicle_type,
+          is_available: false,
+          rating: 5.0,
+          total_trips: 0,
+          total_km: 0,
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        if (insertError.message?.includes('idx_drivers_owner_phone_norm')) {
+          throw new Error('Ya existe un chofer asignado con ese teléfono');
+        }
+        throw new Error(insertError.message || 'Error al crear el chofer asignado');
+      }
+
+      return newDriver;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['linkedDrivers', driver?.id] });
+      queryClient.invalidateQueries({ queryKey: ['ownerTodayStats', driver?.id] });
+    },
+  });
+
+  const removeAssignedDriver = useMutation({
+    mutationFn: async (assignedDriverId) => {
+      const { error } = await supabase
+        .from('drivers')
+        .delete()
+        .eq('id', assignedDriverId)
+        .eq('owner_id', driver.id)
+        .eq('is_assigned_driver', true);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['linkedDrivers', driver?.id] });
+      queryClient.invalidateQueries({ queryKey: ['ownerTodayStats', driver?.id] });
+    },
+  });
+
+  // ──────────────────────────────────────────────────────────
+  // Mutación legacy: crear cuenta con email (compatibilidad)
   // ──────────────────────────────────────────────────────────
   const createLinkedDriver = useMutation({
     mutationFn: async ({
@@ -218,9 +292,19 @@ export const useOwner = () => {
     }) => {
       if (!driver?.id) throw new Error('No hay propietario autenticado');
 
-      // 1. Crear el usuario de autenticación con un cliente temporal
-      //    (sin afectar la sesión actual del propietario)
-      const tempClient = createTempClient();
+      const { createClient } = await import('@supabase/supabase-js');
+      const tempClient = createClient(
+        process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL,
+        process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY,
+        {
+          auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+          },
+        },
+      );
+
       const { data: signUpData, error: signUpError } = await tempClient.auth.signUp({
         email: email.trim().toLowerCase(),
         password,
@@ -236,21 +320,24 @@ export const useOwner = () => {
       const newUserId = signUpData.user?.id;
       if (!newUserId) throw new Error('No se pudo obtener el ID del nuevo usuario.');
 
-      // 2. Insertar el perfil del conductor vinculado al propietario
       const { data: newDriver, error: insertError } = await supabase
         .from('drivers')
         .insert({
           user_id: newUserId,
           owner_id: driver.id,
           role: 'driver',
+          is_assigned_driver: true,
+          password_initialized: true,
+          auth_email: email.trim().toLowerCase(),
+          phone_normalized: phone ? normalizeDriverPhone(phone) : null,
           full_name: fullName.trim(),
           phone: phone?.trim() || null,
           driver_number: driverNumber ? parseInt(driverNumber, 10) : null,
-          vehicle_brand: vehicleBrand?.trim() || null,
-          vehicle_model: vehicleModel?.trim() || null,
-          vehicle_year: vehicleYear ? parseInt(vehicleYear, 10) : null,
-          vehicle_plate: vehiclePlate?.trim() || null,
-          vehicle_color: vehicleColor?.trim() || null,
+          vehicle_brand: vehicleBrand?.trim() || driver.vehicle_brand,
+          vehicle_model: vehicleModel?.trim() || driver.vehicle_model,
+          vehicle_year: vehicleYear ? parseInt(vehicleYear, 10) : driver.vehicle_year,
+          vehicle_plate: vehiclePlate?.trim() || driver.vehicle_plate,
+          vehicle_color: vehicleColor?.trim() || driver.vehicle_color,
           is_available: false,
           rating: 5.0,
           total_trips: 0,
@@ -274,12 +361,28 @@ export const useOwner = () => {
   // ──────────────────────────────────────────────────────────
   const toggleDriverStatus = useMutation({
     mutationFn: async ({ driverId, isAvailable }) => {
+      if (isAvailable) {
+        const { error } = await supabase
+          .from('drivers')
+          .update({ is_available: true, updated_at: new Date().toISOString() })
+          .eq('id', driverId)
+          .eq('owner_id', driver.id);
+        if (error) throw error;
+        return;
+      }
+
       const { error } = await supabase
         .from('drivers')
-        .update({ is_available: isAvailable, updated_at: new Date().toISOString() })
+        .update({ is_available: false, updated_at: new Date().toISOString() })
         .eq('id', driverId)
         .eq('owner_id', driver.id);
       if (error) throw error;
+
+      await supabase
+        .from('drivers')
+        .update({ vehicle_operator_id: null, updated_at: new Date().toISOString() })
+        .eq('id', driver.id)
+        .eq('vehicle_operator_id', driverId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['linkedDrivers', driver?.id] });
@@ -313,6 +416,9 @@ export const useOwner = () => {
   // ──────────────────────────────────────────────────────────
   const becomeOwner = useCallback(async () => {
     if (!driver?.id) throw new Error('No hay conductor autenticado');
+    if (driver?.owner_id || driver?.is_assigned_driver) {
+      throw new Error('Los choferes asignados no pueden activar el modo propietario');
+    }
     const { data, error } = await supabase
       .from('drivers')
       .update({ role: 'owner', updated_at: new Date().toISOString() })
@@ -328,6 +434,8 @@ export const useOwner = () => {
     useDriverStats,
     useDriverTripHistory,
     useOwnerTodayStats,
+    createAssignedDriver,
+    removeAssignedDriver,
     createLinkedDriver,
     toggleDriverStatus,
     updateLinkedDriver,

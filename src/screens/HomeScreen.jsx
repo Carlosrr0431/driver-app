@@ -12,13 +12,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, SlideInRight } from 'react-native-reanimated';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
+import MapLibreGL from '../lib/maplibre';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { colors } from '../theme/colors';
-import { MAP_STYLE_URL } from '../utils/mapConfig';
-import { regionToInitialViewState } from '../utils/mapLibreHelpers';
+import { MAPLIBRE_STYLE } from '../utils/mapProvider';
+import DriverLocationMarker from '../components/map/DriverLocationMarker';
 import { useAuthStore } from '../stores/authStore';
 import { useTripStore } from '../stores/tripStore';
 import { useLocationStore } from '../stores/locationStore';
@@ -27,34 +27,13 @@ import { useRealtime } from '../hooks/useRealtime';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '../hooks/useLocation';
 import { supabase } from '../services/supabase';
+import { setDriverOnlineStatus } from '../services/assignedDriverService';
 import { NewTripModal } from '../components/trip/NewTripModal';
 import { VoiceChatModal } from '../components/VoiceChatModal';
 import { formatPrice, formatDistance } from '../utils/formatters';
 import { DEFAULT_REGION } from '../utils/constants';
 import Toast from 'react-native-toast-message';
 import * as Haptics from 'expo-haptics';
-
-const DriverLocationMarker = React.memo(({ location }) => (
-  <Marker id="driver-home" lngLat={[location.lng, location.lat]}>
-    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{
-        position: 'absolute',
-        width: 52, height: 52, borderRadius: 26,
-        backgroundColor: `${colors.primary}18`,
-        borderWidth: 1.5, borderColor: `${colors.primary}30`,
-      }} />
-      <View style={{
-        width: 38, height: 38, borderRadius: 19,
-        backgroundColor: colors.primary,
-        alignItems: 'center', justifyContent: 'center',
-        borderWidth: 2.5, borderColor: '#FFFFFF',
-        boxShadow: '0 3px 10px rgba(40,46,105,0.45)',
-      }}>
-        <MaterialCommunityIcons name="navigation" size={20} color="#fff" />
-      </View>
-    </View>
-  </Marker>
-));
 
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
@@ -66,7 +45,7 @@ const HomeScreen = () => {
   const { subscribeToNewTrips, subscribeToMessages, subscribeToCommissionPayments } = useRealtime();
   const queryClient = useQueryClient();
   const { requestPermissions, getCurrentPosition, startWatching, stopWatching } = useLocation();
-  const cameraRef = useRef(null);
+  const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
@@ -86,9 +65,9 @@ const HomeScreen = () => {
     let cancelled = false;
     const init = async () => {
       await requestPermissions();
-      await getCurrentPosition({ syncToSupabase: isOnline });
+      await getCurrentPosition({ syncToSupabase: isOnline, force: true });
       if (cancelled) return;
-      if (isOnline) startWatching();
+      startWatching({ mapOnly: !isOnline });
     };
     init();
     return () => {
@@ -157,12 +136,16 @@ const HomeScreen = () => {
   }, [driver?.id, checkPendingTripFromDB]);
 
   useEffect(() => {
-    if (currentLocation && cameraRef.current) {
-      cameraRef.current.easeTo({
-        center: [currentLocation.lng, currentLocation.lat],
-        zoom: 16.8,
-        duration: 800,
-      });
+    if (currentLocation && mapRef.current) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: currentLocation.lat,
+          longitude: currentLocation.lng,
+          latitudeDelta: 0.008,
+          longitudeDelta: 0.008,
+        },
+        800,
+      );
     }
   }, [currentLocation]);
 
@@ -201,8 +184,7 @@ const HomeScreen = () => {
     }
 
     try {
-      const { error } = await supabase.from('drivers').update({ is_available: newStatus }).eq('id', driver.id);
-      if (error) throw error;
+      await setDriverOnlineStatus(driver.id, newStatus);
 
       await supabase.from('driver_locations').upsert({
         driver_id: driver.id,
@@ -214,8 +196,7 @@ const HomeScreen = () => {
 
       updateDriver({ is_available: newStatus });
       if (newStatus) {
-        await getCurrentPosition({ syncToSupabase: true });
-        startWatching();
+        await getCurrentPosition({ syncToSupabase: true, force: true });
       } else {
         stopWatching();
       }
@@ -226,7 +207,7 @@ const HomeScreen = () => {
         text2: newStatus ? 'Vas a recibir viajes' : 'No recibirás viajes',
       });
     } catch (e) {
-      Toast.show({ type: 'error', text1: 'Error', text2: 'No se pudo cambiar el estado' });
+      Toast.show({ type: 'error', text1: 'Error', text2: e.message || 'No se pudo cambiar el estado' });
     }
   };
 
@@ -235,25 +216,29 @@ const HomeScreen = () => {
   };
 
   const recenter = () => {
-    if (currentLocation && cameraRef.current) {
-      cameraRef.current.easeTo({
-        center: [currentLocation.lng, currentLocation.lat],
-        zoom: 16.8,
-        duration: 500,
-      });
+    if (currentLocation && mapRef.current) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: currentLocation.lat,
+          longitude: currentLocation.lng,
+          latitudeDelta: 0.008,
+          longitudeDelta: 0.008,
+        },
+        500,
+      );
     }
   };
 
-  const initialViewState = useMemo(() => {
+  const initialRegion = useMemo(() => {
     if (currentLocation) {
-      return regionToInitialViewState({
+      return {
         latitude: currentLocation.lat,
         longitude: currentLocation.lng,
         latitudeDelta: 0.006,
         longitudeDelta: 0.006,
-      });
+      };
     }
-    return regionToInitialViewState(DEFAULT_REGION);
+    return DEFAULT_REGION;
   }, [currentLocation?.lat, currentLocation?.lng]);
 
   const allTrips = todayTrips?.pages?.flatMap((p) => p.data) || [];
@@ -265,17 +250,26 @@ const HomeScreen = () => {
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
       {/* MAPA */}
-      <Map
-        mapStyle={MAP_STYLE_URL}
+      <MapLibreGL.MapView
         style={StyleSheet.absoluteFillObject}
-        logo={false}
-        attributionPosition={{ bottom: 8, left: 8 }}
+        mapStyle={MAPLIBRE_STYLE}
+        compassEnabled={false}
+        logoEnabled={false}
+        attributionEnabled={false}
       >
-        <Camera ref={cameraRef} initialViewState={initialViewState} />
+        <MapLibreGL.Camera
+          ref={mapRef}
+          defaultSettings={{
+            centerCoordinate: initialRegion
+              ? [initialRegion.longitude, initialRegion.latitude]
+              : [-65.42, -24.78],
+            zoomLevel: 14,
+          }}
+        />
         {currentLocation && (
           <DriverLocationMarker location={currentLocation} />
         )}
-      </Map>
+      </MapLibreGL.MapView>
 
       {/* Gradiente superior */}
       <LinearGradient

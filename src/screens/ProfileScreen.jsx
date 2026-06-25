@@ -27,6 +27,7 @@ import { formatDate } from '../utils/formatters';
 import { differenceInDays, parseISO } from 'date-fns';
 import Toast from 'react-native-toast-message';
 import { useOwner } from '../hooks/useOwner';
+import { isAssignedDriver, isFleetOwner, MAX_ASSIGNED_DRIVERS } from '../utils/driverRoles';
 
 const ProfileScreen = () => {
   const insets = useSafeAreaInsets();
@@ -36,8 +37,10 @@ const ProfileScreen = () => {
   const { becomeOwner, useLinkedDrivers } = useOwner();
   const [becomingOwner, setBecomingOwner] = useState(false);
 
-  const isOwner = driver?.role === 'owner';
+  const isOwner = isFleetOwner(driver);
+  const assignedDriver = isAssignedDriver(driver);
   const { data: linkedDrivers = [] } = useLinkedDrivers();
+  const assignedDrivers = linkedDrivers.filter((d) => d.is_assigned_driver);
 
   const handleBecomeOwner = () => {
     Alert.alert(
@@ -135,19 +138,19 @@ const ProfileScreen = () => {
 
   const handleSave = async () => {
     setSaving(true);
-    const profileData = {
-      full_name: fullName, phone,
-      driver_number: driverNumber ? parseInt(driverNumber) : null,
-      vehicle_brand: vehicleBrand, vehicle_model: vehicleModel,
-      vehicle_year: vehicleYear ? parseInt(vehicleYear) : null,
-      vehicle_plate: vehiclePlate, vehicle_color: vehicleColor,
-    };
+    const profileData = assignedDriver
+      ? { full_name: fullName, phone }
+      : {
+          full_name: fullName, phone,
+          driver_number: driverNumber ? parseInt(driverNumber) : null,
+          vehicle_brand: vehicleBrand, vehicle_model: vehicleModel,
+          vehicle_year: vehicleYear ? parseInt(vehicleYear) : null,
+          vehicle_plate: vehiclePlate, vehicle_color: vehicleColor,
+        };
 
-    // Try saving vehicle_type to drivers table, fallback to settings
-    const result = await updateProfile(profileData);
+    await updateProfile(profileData);
 
-    // Save vehicle_type separately (handles missing column gracefully)
-    if (driver?.id) {
+    if (!assignedDriver && driver?.id) {
       const { error } = await supabase.from('drivers').update({ vehicle_type: vehicleType }).eq('id', driver.id);
       if (error) {
         await supabase.from('settings').upsert(
@@ -224,6 +227,26 @@ const ProfileScreen = () => {
               </Text>
             </View>
           </Animated.View>
+
+          {assignedDriver ? (
+            <Animated.View entering={FadeInDown.delay(120).duration(400)} style={{ marginBottom: 14 }}>
+              <View style={{
+                backgroundColor: `${colors.info}12`, borderRadius: 14, padding: 14,
+                borderWidth: 1, borderColor: `${colors.info}25`,
+                flexDirection: 'row', alignItems: 'center',
+              }}>
+                <MaterialCommunityIcons name="account-switch" size={20} color={colors.info} style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.info, fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
+                    Chofer asignado
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+                    Vehículo de {driver?.owner_name || 'propietario'} · solo podés tomar viajes
+                  </Text>
+                </View>
+              </View>
+            </Animated.View>
+          ) : null}
         </LinearGradient>
 
         <View style={{ paddingHorizontal: 16 }}>
@@ -232,24 +255,37 @@ const ProfileScreen = () => {
             <SectionCard title="Datos personales" icon="account-outline">
               <FormInput label="Nombre completo" value={fullName} onChangeText={setFullName} icon="account" />
               <FormInput label="Teléfono" value={phone} onChangeText={setPhone} icon="phone" keyboardType="phone-pad" />
-              <FormInput label="Número de móvil" value={driverNumber} onChangeText={setDriverNumber} icon="numeric" keyboardType="numeric" placeholder="Ej: 1, 2, 3..." />
+              {!assignedDriver ? (
+                <FormInput label="Número de móvil" value={driverNumber} onChangeText={setDriverNumber} icon="numeric" keyboardType="numeric" placeholder="Ej: 1, 2, 3..." />
+              ) : null}
             </SectionCard>
           </Animated.View>
 
           {/* Vehicle data */}
           <Animated.View entering={FadeInDown.delay(240).duration(400)}>
-            <SectionCard title="Mi vehículo" icon="car-cog">
-              <FormInput label="Marca" value={vehicleBrand} onChangeText={setVehicleBrand} icon="car" />
-              <FormInput label="Modelo" value={vehicleModel} onChangeText={setVehicleModel} icon="car-side" />
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <View style={{ flex: 1 }}>
-                  <FormInput label="Año" value={vehicleYear} onChangeText={setVehicleYear} icon="calendar" keyboardType="numeric" />
+            <SectionCard title={assignedDriver ? 'Vehículo asignado' : 'Mi vehículo'} icon="car-cog">
+              {assignedDriver ? (
+                <View style={{ gap: 10 }}>
+                  <ReadOnlyField label="Marca" value={vehicleBrand} />
+                  <ReadOnlyField label="Modelo" value={vehicleModel} />
+                  <ReadOnlyField label="Patente" value={vehiclePlate} />
+                  <ReadOnlyField label="Color" value={vehicleColor} />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <FormInput label="Color" value={vehicleColor} onChangeText={setVehicleColor} icon="palette" />
-                </View>
-              </View>
-              <FormInput label="Patente" value={vehiclePlate} onChangeText={setVehiclePlate} icon="card-text" autoCapitalize="characters" />
+              ) : (
+                <>
+                  <FormInput label="Marca" value={vehicleBrand} onChangeText={setVehicleBrand} icon="car" />
+                  <FormInput label="Modelo" value={vehicleModel} onChangeText={setVehicleModel} icon="car-side" />
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <FormInput label="Año" value={vehicleYear} onChangeText={setVehicleYear} icon="calendar" keyboardType="numeric" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <FormInput label="Color" value={vehicleColor} onChangeText={setVehicleColor} icon="palette" />
+                    </View>
+                  </View>
+                  <FormInput label="Patente" value={vehiclePlate} onChangeText={setVehiclePlate} icon="card-text" autoCapitalize="characters" />
+                </>
+              )}
             </SectionCard>
           </Animated.View>
 
@@ -276,8 +312,9 @@ const ProfileScreen = () => {
           </Animated.View>
 
           {/* Owner section */}
+          {!assignedDriver ? (
           <Animated.View entering={FadeInDown.delay(360).duration(400)}>
-            <SectionCard title="Modo propietario" icon="account-key-outline">
+            <SectionCard title="Choferes asignados" icon="account-key-outline">
               {isOwner ? (
                 <>
                   <View style={{
@@ -286,7 +323,7 @@ const ProfileScreen = () => {
                   }}>
                     <MaterialCommunityIcons name="check-circle" size={16} color={colors.success} style={{ marginRight: 8 }} />
                     <Text style={{ flex: 1, color: colors.success, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
-                      Modo propietario activo · {linkedDrivers.length} conductor{linkedDrivers.length !== 1 ? 'es' : ''} vinculado{linkedDrivers.length !== 1 ? 's' : ''}
+                      {assignedDrivers.length}/{MAX_ASSIGNED_DRIVERS} choferes asignados
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -308,10 +345,10 @@ const ProfileScreen = () => {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
-                        Gestionar conductores
+                        Gestionar choferes
                       </Text>
                       <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 1 }}>
-                        Ver viajes, comisiones y más
+                        Agregar, ver estado y viajes
                       </Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
@@ -320,7 +357,7 @@ const ProfileScreen = () => {
               ) : (
                 <>
                   <Text style={{ color: colors.textMuted, fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 20, marginBottom: 12 }}>
-                    ¿Tenés conductores que manejan tu auto? Activá el modo propietario para crear sus cuentas, ver sus viajes y comisiones.
+                    ¿Tenés choferes que manejan tu auto? Activá el modo propietario para asignar hasta {MAX_ASSIGNED_DRIVERS} choferes con nombre y teléfono.
                   </Text>
                   <TouchableOpacity
                     onPress={handleBecomeOwner}
@@ -345,6 +382,7 @@ const ProfileScreen = () => {
               )}
             </SectionCard>
           </Animated.View>
+          ) : null}
 
           {/* Actions */}
           <Animated.View entering={FadeInDown.delay(440).duration(400)} style={{ marginTop: 8, gap: 10 }}>
@@ -426,6 +464,18 @@ const FormInput = ({ label, value, onChangeText, icon, ...props }) => (
         {...props}
       />
     </View>
+  </View>
+);
+
+const ReadOnlyField = ({ label, value }) => (
+  <View style={{
+    backgroundColor: colors.surfaceLight, borderRadius: 12,
+    borderWidth: 1, borderColor: colors.border, padding: 12,
+  }}>
+    <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium' }}>{label}</Text>
+    <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_600SemiBold', marginTop: 4 }}>
+      {value || '—'}
+    </Text>
   </View>
 );
 

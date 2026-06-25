@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../theme/colors';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../hooks/useAuth';
 import { DEV_DRIVER_EMAIL, DEV_DRIVER_PASSWORD } from '../config/devDefaults';
 
@@ -25,6 +26,7 @@ const BRAND_BLUE = '#282e69';
 const BRAND_BLUE_LIGHT = '#245f8d';
 
 const LoginScreen = () => {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState(__DEV__ ? DEV_DRIVER_EMAIL : '');
   const [password, setPassword] = useState(__DEV__ ? DEV_DRIVER_PASSWORD : '');
@@ -225,6 +227,28 @@ const LoginScreen = () => {
                   </>
                 )}
               </LinearGradient>
+            </Pressable>
+
+            <Pressable
+              onPress={() => navigation.navigate('AssignedDriverLogin')}
+              disabled={isLoading}
+              style={({ pressed }) => ({
+                marginTop: 14,
+                height: 48,
+                borderRadius: 14,
+                borderWidth: 1.5,
+                borderColor: `${BRAND_BLUE}30`,
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'row',
+                gap: 8,
+                opacity: isLoading ? 0.5 : pressed ? 0.85 : 1,
+              })}
+            >
+              <Ionicons name="car-sport-outline" size={18} color={BRAND_BLUE} />
+              <Text style={{ color: BRAND_BLUE, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+                Ingresar como chofer asignado
+              </Text>
             </Pressable>
           </Animated.View>
 
