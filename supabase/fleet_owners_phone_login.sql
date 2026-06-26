@@ -265,9 +265,63 @@ $$;
 GRANT EXECUTE ON FUNCTION public.link_assigned_driver_user(UUID) TO authenticated;
 
 -- ── Alta masiva: LISTADO DE AUTOS 2026 (hojas 1-2 + 3-4 unificadas por orden) ─
--- Licencia municipal en comentarios. Sin user_id → primera vez configura contraseña en la app.
+-- Upsert sin ON CONFLICT (compatible con índice UNIQUE parcial en Supabase/PG)
 
--- Requiere UNIQUE parcial en driver_number (titulares) — ver assigned_drivers.sql / fix_driver_number_unique.sql
+WITH fleet_seed (
+  full_name,
+  phone,
+  phone_normalized,
+  auth_email,
+  driver_number,
+  vehicle_brand,
+  vehicle_model,
+  vehicle_plate,
+  vehicle_color
+) AS (
+  VALUES
+    ('SOTO JUAN RICARDO', '+5493874128357', '543874128357', public.build_owner_auth_email('543874128357', 2), 2, 'Fiat', 'Cronos', 'AF793GJ', 'Blanco'),
+    ('ORTEGA OLIVIA GABRIELA', '+5493872204587', '543872204587', public.build_owner_auth_email('543872204587', 3), 3, 'Fiat', 'Cronos', 'AG334QS', 'Gris plata'),
+    ('JUAN YAÑEZ', '+549387519169', '54387519169', public.build_owner_auth_email('54387519169', 5), 5, 'Fiat', 'Cronos', 'AH112KH', 'Blanco'),
+    ('FRIAS NORMA GRACIELA', '+5493873639899', '543873639899', public.build_owner_auth_email('543873639899', 10), 10, 'Fiat', 'Cronos', 'AH068JO', 'Gris plata'),
+    ('ALVAREZ MARCELA FERNANDA', '+5493875391985', '543875391985', public.build_owner_auth_email('543875391985', 11), 11, 'Fiat', 'Cronos', 'AG829WT', 'Negro'),
+    ('SERGIO JAIRO YURQUINA', '+5493875388397', '543875388397', public.build_owner_auth_email('543875388397', 13), 13, 'Fiat', 'Cronos', 'AG458LF', 'Gris plata'),
+    ('LOTO PABLO NICOLAS', '+5493875780025', '543875780025', public.build_owner_auth_email('543875780025', 14), 14, 'Fiat', 'Cronos', 'AG752CR', 'Gris plata'),
+    ('CRUZ CRISTIAN ALFREDO', '+5493875638266', '543875638266', public.build_owner_auth_email('543875638266', 17), 17, 'Fiat', 'Cronos', 'AD842XE', 'Blanco'),
+    ('VELA ALEXIS NAHUEL', '+5493874883302', '543874883302', public.build_owner_auth_email('543874883302', 18), 18, 'Renault', 'Logan', 'AF943MH', 'Blanco'),
+    ('CRESPO MARTINEZ', '+5493874680952', '543874680952', public.build_owner_auth_email('543874680952', 19), 19, 'Volkswagen', 'Polo Track', 'AH455NH', 'Gris oscuro'),
+    ('CARDOZO YANES JUAN GABRIEL', '+5493874658565', '543874658565', public.build_owner_auth_email('543874658565', 22), 22, 'Fiat', 'Cronos', 'AG496OT', 'Negro'),
+    ('PEDRO HERRERA', '+5493874561711', '543874561711', public.build_owner_auth_email('543874561711', 28), 28, 'Fiat', 'Cronos', 'AI108GU', 'Gris plata'),
+    ('RIOS MARTIN FEDERICO', '+5493874131924', '543874131924', public.build_owner_auth_email('543874131924', 31), 31, 'Volkswagen', 'Voyage', 'AB197BY', 'Gris oscuro'),
+    ('LESCANO ADRIANA SOLEDAD', '+5493874046740', '543874046740', public.build_owner_auth_email('543874046740', 32), 32, 'Volkswagen', 'Polo Track', 'AC628PE', 'Gris oscuro'),
+    ('GALARZA NELSON EMANUEL', '+5493874876330', '543874876330', public.build_owner_auth_email('543874876330', 33), 33, 'Fiat', 'Cronos', 'AH030IG', 'Gris plata'),
+    ('ARAMAYO NICOLAS JOSE', '+5493875893712', '543875893712', public.build_owner_auth_email('543875893712', 47), 47, 'Fiat', 'Cronos', 'AC739QQ', 'Blanco'),
+    ('HOYOS SILVIA GABRIELA', '+5493875638266', '543875638266', public.build_owner_auth_email('543875638266', 48), 48, 'Fiat', 'Cronos', 'AD566OM', 'Gris oscuro'),
+    ('DIAZ MARCIO ALEJANDRO', '+5493876035255', '543876035255', public.build_owner_auth_email('543876035255', 49), 49, 'Renault', 'Logan', 'AF566IQ', 'Gris plata'),
+    ('DIAZ ARMANDO DANIEL', '+549387519169', '54387519169', public.build_owner_auth_email('54387519169', 50), 50, 'Fiat', 'Cronos', 'AH161DK', 'Gris oscuro'),
+    ('CARDOZO YANES JUAN GABRIEL', '+549387519169', '54387519169', public.build_owner_auth_email('54387519169', 55), 55, 'Fiat', 'Cronos', 'AF834SC', 'Gris oscuro'),
+    ('LESCANO ANTONIO FEDERICO', '+5493874131924', '543874131924', public.build_owner_auth_email('543874131924', 56), 56, 'Fiat', 'Cronos', 'AG438IR', 'Blanco'),
+    ('REYES AIXA BARBARA', '+5491152207592', '541152207592', public.build_owner_auth_email('541152207592', 61), 61, 'Renault', 'Logan', 'AG213CX', 'Gris oscuro'),
+    ('ANDRES VICTOR', '+5493874475059', '543874475059', public.build_owner_auth_email('543874475059', 6), 6, 'Volkswagen', 'Polo', 'AH643RB', 'Gris oscuro')
+),
+updated AS (
+  UPDATE public.drivers AS d
+  SET
+    full_name = s.full_name,
+    phone = s.phone,
+    phone_normalized = s.phone_normalized,
+    auth_email = s.auth_email,
+    role = 'owner',
+    vehicle_brand = s.vehicle_brand,
+    vehicle_model = s.vehicle_model,
+    vehicle_plate = s.vehicle_plate,
+    vehicle_color = s.vehicle_color,
+    updated_at = NOW()
+  FROM fleet_seed AS s
+  WHERE d.driver_number = s.driver_number
+    AND d.owner_id IS NULL
+    AND COALESCE(d.is_assigned_driver, false) = false
+  RETURNING d.driver_number
+)
 INSERT INTO public.drivers (
   full_name,
   phone,
@@ -288,43 +342,35 @@ INSERT INTO public.drivers (
   rating,
   total_trips,
   total_km
-) VALUES
-  ('SOTO JUAN RICARDO', '+5493874128357', '543874128357', public.build_owner_auth_email('543874128357', 2), 'owner', NULL, false, false, NULL, 2, 'Fiat', 'Cronos', 'AF793GJ', 'Blanco', 'auto', false, 5.0, 0, 0),
-  ('ORTEGA OLIVIA GABRIELA', '+5493872204587', '543872204587', public.build_owner_auth_email('543872204587', 3), 'owner', NULL, false, false, NULL, 3, 'Fiat', 'Cronos', 'AG334QS', 'Gris plata', 'auto', false, 5.0, 0, 0),
-  ('JUAN YAÑEZ', '+549387519169', '54387519169', public.build_owner_auth_email('54387519169', 5), 'owner', NULL, false, false, NULL, 5, 'Fiat', 'Cronos', 'AH112KH', 'Blanco', 'auto', false, 5.0, 0, 0),
-  ('FRIAS NORMA GRACIELA', '+5493873639899', '543873639899', public.build_owner_auth_email('543873639899', 10), 'owner', NULL, false, false, NULL, 10, 'Fiat', 'Cronos', 'AH068JO', 'Gris plata', 'auto', false, 5.0, 0, 0),
-  ('ALVAREZ MARCELA FERNANDA', '+5493875391985', '543875391985', public.build_owner_auth_email('543875391985', 11), 'owner', NULL, false, false, NULL, 11, 'Fiat', 'Cronos', 'AG829WT', 'Negro', 'auto', false, 5.0, 0, 0),
-  ('SERGIO JAIRO YURQUINA', '+5493875388397', '543875388397', public.build_owner_auth_email('543875388397', 13), 'owner', NULL, false, false, NULL, 13, 'Fiat', 'Cronos', 'AG458LF', 'Gris plata', 'auto', false, 5.0, 0, 0),
-  ('LOTO PABLO NICOLAS', '+5493875780025', '543875780025', public.build_owner_auth_email('543875780025', 14), 'owner', NULL, false, false, NULL, 14, 'Fiat', 'Cronos', 'AG752CR', 'Gris plata', 'auto', false, 5.0, 0, 0),
-  ('CRUZ CRISTIAN ALFREDO', '+5493875638266', '543875638266', public.build_owner_auth_email('543875638266', 17), 'owner', NULL, false, false, NULL, 17, 'Fiat', 'Cronos', 'AD842XE', 'Blanco', 'auto', false, 5.0, 0, 0),
-  ('VELA ALEXIS NAHUEL', '+5493874883302', '543874883302', public.build_owner_auth_email('543874883302', 18), 'owner', NULL, false, false, NULL, 18, 'Renault', 'Logan', 'AF943MH', 'Blanco', 'auto', false, 5.0, 0, 0),
-  ('CRESPO MARTINEZ', '+5493874680952', '543874680952', public.build_owner_auth_email('543874680952', 19), 'owner', NULL, false, false, NULL, 19, 'Volkswagen', 'Polo Track', 'AH455NH', 'Gris oscuro', 'auto', false, 5.0, 0, 0),
-  ('CARDOZO YANES JUAN GABRIEL', '+5493874658565', '543874658565', public.build_owner_auth_email('543874658565', 22), 'owner', NULL, false, false, NULL, 22, 'Fiat', 'Cronos', 'AG496OT', 'Negro', 'auto', false, 5.0, 0, 0),
-  ('PEDRO HERRERA', '+5493874561711', '543874561711', public.build_owner_auth_email('543874561711', 28), 'owner', NULL, false, false, NULL, 28, 'Fiat', 'Cronos', 'AI108GU', 'Gris plata', 'auto', false, 5.0, 0, 0),
-  ('RIOS MARTIN FEDERICO', '+5493874131924', '543874131924', public.build_owner_auth_email('543874131924', 31), 'owner', NULL, false, false, NULL, 31, 'Volkswagen', 'Voyage', 'AB197BY', 'Gris oscuro', 'auto', false, 5.0, 0, 0),
-  ('LESCANO ADRIANA SOLEDAD', '+5493874046740', '543874046740', public.build_owner_auth_email('543874046740', 32), 'owner', NULL, false, false, NULL, 32, 'Volkswagen', 'Polo Track', 'AC628PE', 'Gris oscuro', 'auto', false, 5.0, 0, 0),
-  ('GALARZA NELSON EMANUEL', '+5493874876330', '543874876330', public.build_owner_auth_email('543874876330', 33), 'owner', NULL, false, false, NULL, 33, 'Fiat', 'Cronos', 'AH030IG', 'Gris plata', 'auto', false, 5.0, 0, 0),
-  ('ARAMAYO NICOLAS JOSE', '+5493875893712', '543875893712', public.build_owner_auth_email('543875893712', 47), 'owner', NULL, false, false, NULL, 47, 'Fiat', 'Cronos', 'AC739QQ', 'Blanco', 'auto', false, 5.0, 0, 0),
-  ('HOYOS SILVIA GABRIELA', '+5493875638266', '543875638266', public.build_owner_auth_email('543875638266', 48), 'owner', NULL, false, false, NULL, 48, 'Fiat', 'Cronos', 'AD566OM', 'Gris oscuro', 'auto', false, 5.0, 0, 0),
-  ('DIAZ MARCIO ALEJANDRO', '+5493876035255', '543876035255', public.build_owner_auth_email('543876035255', 49), 'owner', NULL, false, false, NULL, 49, 'Renault', 'Logan', 'AF566IQ', 'Gris plata', 'auto', false, 5.0, 0, 0),
-  ('DIAZ ARMANDO DANIEL', '+549387519169', '54387519169', public.build_owner_auth_email('54387519169', 50), 'owner', NULL, false, false, NULL, 50, 'Fiat', 'Cronos', 'AH161DK', 'Gris oscuro', 'auto', false, 5.0, 0, 0),
-  ('CARDOZO YANES JUAN GABRIEL', '+549387519169', '54387519169', public.build_owner_auth_email('54387519169', 55), 'owner', NULL, false, false, NULL, 55, 'Fiat', 'Cronos', 'AF834SC', 'Gris oscuro', 'auto', false, 5.0, 0, 0),
-  ('LESCANO ANTONIO FEDERICO', '+5493874131924', '543874131924', public.build_owner_auth_email('543874131924', 56), 'owner', NULL, false, false, NULL, 56, 'Fiat', 'Cronos', 'AG438IR', 'Blanco', 'auto', false, 5.0, 0, 0),
-  ('REYES AIXA BARBARA', '+5491152207592', '541152207592', public.build_owner_auth_email('541152207592', 61), 'owner', NULL, false, false, NULL, 61, 'Renault', 'Logan', 'AG213CX', 'Gris oscuro', 'auto', false, 5.0, 0, 0),
-  ('ANDRES VICTOR', '+5493874475059', '543874475059', public.build_owner_auth_email('543874475059', 6), 'owner', NULL, false, false, NULL, 6, 'Volkswagen', 'Polo', 'AH643RB', 'Gris oscuro', 'auto', false, 5.0, 0, 0)
-ON CONFLICT (driver_number)
-WHERE owner_id IS NULL AND COALESCE(is_assigned_driver, false) = false
-DO UPDATE SET
-  full_name = EXCLUDED.full_name,
-  phone = EXCLUDED.phone,
-  phone_normalized = EXCLUDED.phone_normalized,
-  auth_email = EXCLUDED.auth_email,
-  role = EXCLUDED.role,
-  vehicle_brand = EXCLUDED.vehicle_brand,
-  vehicle_model = EXCLUDED.vehicle_model,
-  vehicle_plate = EXCLUDED.vehicle_plate,
-  vehicle_color = EXCLUDED.vehicle_color,
-  updated_at = NOW();
+)
+SELECT
+  s.full_name,
+  s.phone,
+  s.phone_normalized,
+  s.auth_email,
+  'owner',
+  NULL,
+  false,
+  false,
+  NULL,
+  s.driver_number,
+  s.vehicle_brand,
+  s.vehicle_model,
+  s.vehicle_plate,
+  s.vehicle_color,
+  'auto',
+  false,
+  5.0,
+  0,
+  0
+FROM fleet_seed AS s
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM public.drivers AS d
+  WHERE d.driver_number = s.driver_number
+    AND d.owner_id IS NULL
+    AND COALESCE(d.is_assigned_driver, false) = false
+);
 
 -- Backfill auth_email / phone_normalized en dueños existentes sin cuenta Auth
 UPDATE public.drivers d
