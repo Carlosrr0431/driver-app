@@ -27,7 +27,7 @@ import { formatDate } from '../utils/formatters';
 import { differenceInDays, parseISO } from 'date-fns';
 import Toast from 'react-native-toast-message';
 import { useOwner } from '../hooks/useOwner';
-import { isAssignedDriver, isFleetOwner, MAX_ASSIGNED_DRIVERS } from '../utils/driverRoles';
+import { isAssignedDriver, isFleetOwner, usesPhoneLogin, formatPhoneForDisplay, MAX_ASSIGNED_DRIVERS } from '../utils/driverRoles';
 
 const ProfileScreen = () => {
   const insets = useSafeAreaInsets();
@@ -39,6 +39,7 @@ const ProfileScreen = () => {
 
   const isOwner = isFleetOwner(driver);
   const assignedDriver = isAssignedDriver(driver);
+  const phoneLogin = usesPhoneLogin(driver);
   const { data: linkedDrivers = [] } = useLinkedDrivers();
   const assignedDrivers = linkedDrivers.filter((d) => d.is_assigned_driver);
 
@@ -139,14 +140,20 @@ const ProfileScreen = () => {
   const handleSave = async () => {
     setSaving(true);
     const profileData = assignedDriver
-      ? { full_name: fullName, phone }
+      ? { full_name: fullName }
       : {
-          full_name: fullName, phone,
-          driver_number: driverNumber ? parseInt(driverNumber) : null,
-          vehicle_brand: vehicleBrand, vehicle_model: vehicleModel,
-          vehicle_year: vehicleYear ? parseInt(vehicleYear) : null,
-          vehicle_plate: vehiclePlate, vehicle_color: vehicleColor,
+          full_name: fullName,
+          driver_number: driverNumber ? parseInt(driverNumber, 10) : null,
+          vehicle_brand: vehicleBrand,
+          vehicle_model: vehicleModel,
+          vehicle_year: vehicleYear ? parseInt(vehicleYear, 10) : null,
+          vehicle_plate: vehiclePlate,
+          vehicle_color: vehicleColor,
         };
+
+    if (!phoneLogin) {
+      profileData.phone = phone;
+    }
 
     await updateProfile(profileData);
 
@@ -229,7 +236,7 @@ const ProfileScreen = () => {
           </Animated.View>
 
           {assignedDriver ? (
-            <Animated.View entering={FadeInDown.delay(120).duration(400)} style={{ marginBottom: 14 }}>
+            <Animated.View entering={FadeInDown.delay(120).duration(400)} style={{ marginTop: 14 }}>
               <View style={{
                 backgroundColor: `${colors.info}12`, borderRadius: 14, padding: 14,
                 borderWidth: 1, borderColor: `${colors.info}25`,
@@ -241,7 +248,28 @@ const ProfileScreen = () => {
                     Chofer asignado
                   </Text>
                   <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
-                    Vehículo de {driver?.owner_name || 'propietario'} · solo podés tomar viajes
+                    Vehículo de {driver?.owner_name || 'propietario'} · Móvil {driverNumber || '—'}
+                  </Text>
+                </View>
+              </View>
+            </Animated.View>
+          ) : null}
+
+          {isOwner ? (
+            <Animated.View entering={FadeInDown.delay(120).duration(400)} style={{ marginTop: 14 }}>
+              <View style={{
+                backgroundColor: `${colors.success}12`, borderRadius: 14, padding: 14,
+                borderWidth: 1, borderColor: `${colors.success}25`,
+                flexDirection: 'row', alignItems: 'center',
+              }}>
+                <MaterialCommunityIcons name="account-tie" size={20} color={colors.success} style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.success, fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
+                    Titular del móvil
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+                    Móvil {driverNumber || '—'}
+                    {vehiclePlate ? ` · ${vehiclePlate}` : ''}
                   </Text>
                 </View>
               </View>
@@ -254,15 +282,43 @@ const ProfileScreen = () => {
           <Animated.View entering={FadeInDown.delay(160).duration(400)}>
             <SectionCard title="Datos personales" icon="account-outline">
               <FormInput label="Nombre completo" value={fullName} onChangeText={setFullName} icon="account" />
-              <FormInput label="Teléfono (login)" value={phone} onChangeText={setPhone} icon="phone" keyboardType="phone-pad" />
-              {assignedDriver ? (
-                <>
-                  <ReadOnlyField label="Número de móvil" value={driverNumber ? String(driverNumber) : '—'} />
-                  <ReadOnlyField label="Teléfono del titular" value={driver?.owner_phone || '—'} />
-                </>
+              {phoneLogin ? (
+                <ReadOnlyField
+                  label="Teléfono de ingreso"
+                  value={formatPhoneForDisplay(driver?.phone) || driver?.phone || '—'}
+                />
+              ) : (
+                <FormInput label="Teléfono" value={phone} onChangeText={setPhone} icon="phone" keyboardType="phone-pad" />
+              )}
+              {assignedDriver || isOwner ? (
+                <ReadOnlyField label="Número de móvil" value={driverNumber ? String(driverNumber) : '—'} />
               ) : (
                 <FormInput label="Número de móvil" value={driverNumber} onChangeText={setDriverNumber} icon="numeric" keyboardType="numeric" placeholder="Ej: 1, 2, 3..." />
               )}
+              {assignedDriver ? (
+                <ReadOnlyField label="Teléfono del titular" value={driver?.owner_phone ? formatPhoneForDisplay(driver.owner_phone) : '—'} />
+              ) : null}
+              {phoneLogin ? (
+                <View style={{
+                  flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                  backgroundColor: colors.surfaceLight, borderRadius: 12, padding: 12,
+                  borderWidth: 1, borderColor: colors.border,
+                }}>
+                  <View>
+                    <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_500Medium' }}>
+                      Acceso a la app
+                    </Text>
+                    <Text style={{ color: colors.text, fontSize: 13, fontFamily: 'Inter_500Medium', marginTop: 4 }}>
+                      Ingreso con teléfono y contraseña
+                    </Text>
+                  </View>
+                  <Badge
+                    label={driver?.password_initialized === false ? 'Pendiente' : 'Activo'}
+                    color={driver?.password_initialized === false ? colors.warning : colors.success}
+                    size="md"
+                  />
+                </View>
+              ) : null}
             </SectionCard>
           </Animated.View>
 
@@ -328,7 +384,7 @@ const ProfileScreen = () => {
                   }}>
                     <MaterialCommunityIcons name="check-circle" size={16} color={colors.success} style={{ marginRight: 8 }} />
                     <Text style={{ flex: 1, color: colors.success, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
-                      {assignedDrivers.length}/{MAX_ASSIGNED_DRIVERS} choferes asignados
+                      {assignedDrivers.length}/{MAX_ASSIGNED_DRIVERS} choferes asignados · ingresan con su teléfono
                     </Text>
                   </View>
                   <TouchableOpacity

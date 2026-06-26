@@ -64,8 +64,20 @@ export function isAssignedDriver(driver) {
   return Boolean(driver?.owner_id) || driver?.is_assigned_driver === true;
 }
 
+/** Titular raíz de flota (dueño del móvil), sin importar role legacy. */
+export function isFleetRoot(driver) {
+  return Boolean(driver?.id) && !isAssignedDriver(driver) && !driver?.owner_id;
+}
+
 export function isFleetOwner(driver) {
-  return driver?.role === 'owner' && !driver?.owner_id;
+  return isFleetRoot(driver) && driver?.role === 'owner';
+}
+
+/** Ingresa con teléfono (titular o chofer asignado), no con email. */
+export function usesPhoneLogin(driver) {
+  if (!driver?.id) return false;
+  if (isAssignedDriver(driver)) return true;
+  return isFleetOwner(driver) || Boolean(driver?.phone_normalized && driver?.auth_email);
 }
 
 export const MAX_ASSIGNED_DRIVERS = 3;

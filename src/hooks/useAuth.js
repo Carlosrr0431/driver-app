@@ -2,7 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { clearInvalidAuthSession, isInvalidRefreshTokenError } from '../services/authSession';
 import { fetchOwnerVehicleProfile } from '../services/assignedDriverService';
-import { isAssignedDriver } from '../utils/driverRoles';
+import { isAssignedDriver, normalizeDriverPhone } from '../utils/driverRoles';
 import { useAuthStore } from '../stores/authStore';
 import { registerForPushNotifications, subscribeToTokenRefresh } from '../services/notifications';
 import Toast from 'react-native-toast-message';
@@ -278,9 +278,17 @@ export const useAuth = (options = {}) => {
     try {
       if (!driver?.id) return { success: false };
 
+      const payload = { ...updates };
+      if (payload.phone != null) {
+        const normalized = normalizeDriverPhone(payload.phone);
+        if (normalized) {
+          payload.phone_normalized = normalized;
+        }
+      }
+
       const { data, error } = await supabase
         .from('drivers')
-        .update(updates)
+        .update(payload)
         .eq('id', driver.id)
         .select()
         .single();

@@ -4,6 +4,7 @@ import {
   buildOwnerAuthEmail,
   isAssignedDriver,
   isFleetOwner,
+  usesPhoneLogin,
   MAX_ASSIGNED_DRIVERS,
   normalizeDriverPhone,
 } from '../../src/utils/driverRoles';
@@ -25,9 +26,15 @@ describe('choferes asignados — reglas de negocio', () => {
 
   it('identifica chofer asignado vs propietario de flota', () => {
     expect(isAssignedDriver({ owner_id: 'owner-1' })).toBe(true);
-    expect(isFleetOwner({ role: 'owner' })).toBe(true);
-    expect(isFleetOwner({ role: 'owner', owner_id: 'owner-1' })).toBe(false);
+    expect(isFleetOwner({ id: 'o1', role: 'owner' })).toBe(true);
+    expect(isFleetOwner({ id: 'o1', role: 'owner', owner_id: 'owner-1' })).toBe(false);
     expect(isAssignedDriver({ role: 'owner' })).toBe(false);
+    expect(usesPhoneLogin({
+      id: 'o1',
+      role: 'owner',
+      phone_normalized: '543874128357',
+      auth_email: 'owner.2@profesional.test',
+    })).toBe(true);
   });
 
   it('limita la flota a 3 choferes asignados', () => {

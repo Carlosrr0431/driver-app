@@ -6,9 +6,13 @@ import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth 
 import {
   buildAssignedDriverAuthEmail,
   buildAssignedDriverInsertPayload,
+  buildOwnerAuthEmail,
+  isAssignedDriver,
+  isFleetOwner,
   MAX_ASSIGNED_DRIVERS,
   normalizeDriverPhone,
 } from '../utils/driverRoles';
+import { fetchFleetOwnerProfile } from '../services/assignedDriverService';
 
 function getDateRange(filter) {
   const now = new Date();
@@ -217,10 +221,15 @@ export const useOwner = () => {
 
       const authEmail = buildAssignedDriverAuthEmail(normalizedPhone);
 
+      const ownerRow = await fetchFleetOwnerProfile(driver.id);
+      if (!ownerRow) {
+        throw new Error('No se encontró el perfil del vehículo. Reintentá en unos segundos.');
+      }
+
       const { data: newDriver, error: insertError } = await supabase
         .from('drivers')
         .insert(
-          buildAssignedDriverInsertPayload(driver, {
+          buildAssignedDriverInsertPayload(ownerRow, {
             fullName,
             phone,
             phoneNormalized: normalizedPhone,
@@ -307,6 +316,8 @@ export const useOwner = () => {
       const newUserId = signUpData.user?.id;
       if (!newUserId) throw new Error('No se pudo obtener el ID del nuevo usuario.');
 
+      const ownerRow = (await fetchFleetOwnerProfile(driver.id)) || driver;
+
       const { data: newDriver, error: insertError } = await supabase
         .from('drivers')
         .insert({
@@ -319,12 +330,14 @@ export const useOwner = () => {
           phone_normalized: phone ? normalizeDriverPhone(phone) : null,
           full_name: fullName.trim(),
           phone: phone?.trim() || null,
-          driver_number: driverNumber ? parseInt(driverNumber, 10) : null,
-          vehicle_brand: vehicleBrand?.trim() || driver.vehicle_brand,
-          vehicle_model: vehicleModel?.trim() || driver.vehicle_model,
-          vehicle_year: vehicleYear ? parseInt(vehicleYear, 10) : driver.vehicle_year,
-          vehicle_plate: vehiclePlate?.trim() || driver.vehicle_plate,
-          vehicle_color: vehicleColor?.trim() || driver.vehicle_color,
+          driver_number: driverNumber ? parseInt(driverNumber, 10) : ownerRow.driver_number,
+          vehicle_brand: vehicleBrand?.trim() || ownerRow.vehicle_brand,
+          vehicle_model: vehicleModel?.trim() || ownerRow.vehicle_model,
+          vehicle_year: vehicleYear ? parseInt(vehicleYear, 10) : ownerRow.vehicle_year,
+          vehicle_plate: vehiclePlate?.trim() || ownerRow.vehicle_plate,
+          vehicle_color: vehicleColor?.trim() || ownerRow.vehicle_color,
+          vehicle_photo_url: ownerRow.vehicle_photo_url,
+          vehicle_type: ownerRow.vehicle_type || 'auto',
           is_available: false,
           rating: 5.0,
           total_trips: 0,
@@ -406,15 +419,26 @@ export const useOwner = () => {
     if (driver?.owner_id || driver?.is_assigned_driver) {
       throw new Error('Los choferes asignados no pueden activar el modo propietario');
     }
+    const normalizedPhone = normalizeDriverPhone(driver.phone);
+    const patch = {
+      role: 'owner',
+      updated_at: new Date().toISOString(),
+    };
+    if (normalizedPhone) {
+      patch.phone_normalized = normalizedPhone;
+      if (!driver.auth_email) {
+        patch.auth_email = buildOwnerAuthEmail(normalizedPhone, driver.driver_number);
+      }
+    }
     const { data, error } = await supabase
       .from('drivers')
-      .update({ role: 'owner', updated_at: new Date().toISOString() })
+      .update(patch)
       .eq('id', driver.id)
       .select()
       .single();
     if (error) throw error;
     return data;
-  }, [driver?.id]);
+  }, [driver?.id, driver?.auth_email, driver?.driver_number, driver?.is_assigned_driver, driver?.owner_id, driver?.phone]);
 
   return {
     useLinkedDrivers,
