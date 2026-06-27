@@ -665,6 +665,7 @@ export default function CommissionPaymentScreen() {
   const returnHandled = useRef(false);
   const approvedDetailsLoadedForPaymentId = useRef(null);
   const autoStartTriggered = useRef(false);
+  const webViewRef = useRef(null);
 
   const saveApprovedPayment = (payment) => {
     if (!payment || typeof payment !== 'object') return;
@@ -1058,9 +1059,14 @@ export default function CommissionPaymentScreen() {
         resolvePaymentFromProvider();
         return;
       }
-      // Para transferencias pendientes, mantenerse en Pagotic (WebView).
+      // Para transferencias pendientes, mantenerse dentro del checkout de Pagotic.
       setShowVerifyingOverlay(false);
       setPhase('webview');
+      try {
+        webViewRef.current?.goBack?.();
+      } catch {
+        // noop
+      }
     } catch {
       // mensaje no válido, ignorar
     }
@@ -1091,6 +1097,11 @@ export default function CommissionPaymentScreen() {
         // WebView de Pagotic para que siga viendo los datos de transferencia.
         setShowVerifyingOverlay(false);
         setPhase('webview');
+        try {
+          webViewRef.current?.goBack?.();
+        } catch {
+          // noop
+        }
       }
     } catch {
       setShowVerifyingOverlay(false);
@@ -1125,6 +1136,13 @@ export default function CommissionPaymentScreen() {
       } else {
         setShowVerifyingOverlay(false);
         setPhase('webview');
+        if (navState?.canGoBack) {
+          try {
+            webViewRef.current?.goBack?.();
+          } catch {
+            // noop
+          }
+        }
       }
     } catch {
       setShowVerifyingOverlay(false);
@@ -1149,6 +1167,11 @@ export default function CommissionPaymentScreen() {
       // Si falla el return_url en estado pendiente, mantener Pagotic visible.
       setShowVerifyingOverlay(false);
       setPhase('webview');
+      try {
+        webViewRef.current?.goBack?.();
+      } catch {
+        // noop
+      }
     } catch {
       setShowVerifyingOverlay(false);
       setPhase('webview');
@@ -1313,6 +1336,7 @@ export default function CommissionPaymentScreen() {
     return (
       <View style={[styles.screen, { paddingTop: insets.top }]}>
         <WebView
+          ref={webViewRef}
           source={{ uri: formUrl }}
           injectedJavaScript={INJECTED_JS}
           onMessage={handlePayperticMessage}
