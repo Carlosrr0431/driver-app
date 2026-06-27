@@ -648,13 +648,12 @@ export default function CommissionPaymentScreen() {
   const isOverdue = commissionData?.isOverdue || false;
   const balanceColor = isOverdue ? '#282e69' : '#D97706';
 
-  // Estados: 'idle' | 'loading' | 'webview' | 'verifying' | 'pending_confirmation' | 'approved' | 'rejected'
+  // Estados: 'idle' | 'loading' | 'webview' | 'verifying' | 'approved' | 'rejected'
   const [phase, setPhase] = useState('idle');
   const [formUrl, setFormUrl] = useState(null);
   const [paymentId, setPaymentId] = useState(null);
   const [startupError, setStartupError] = useState(null);
   const [approvedPayment, setApprovedPayment] = useState(null);
-  const [pendingPayment, setPendingPayment] = useState(null);
   const [rejectedPayment, setRejectedPayment] = useState(null);
   const [isFetchingPaymentDetails, setIsFetchingPaymentDetails] = useState(false);
   const [isSharingReceipt, setIsSharingReceipt] = useState(false);
@@ -687,7 +686,6 @@ export default function CommissionPaymentScreen() {
     setPaymentId(null);
     setStartupError(null);
     setApprovedPayment(null);
-    setPendingPayment(null);
     setRejectedPayment(null);
     setIsFetchingPaymentDetails(false);
     setIsSharingReceipt(false);
@@ -715,16 +713,7 @@ export default function CommissionPaymentScreen() {
       paymentId: payment?.id || paymentId || null,
     });
     setShowVerifyingOverlay(false);
-    setPendingPayment(null);
     setPhase('rejected');
-  };
-
-  const markAsPendingConfirmation = (payment = null) => {
-    if (payment && typeof payment === 'object') {
-      setPendingPayment(payment);
-    }
-    setShowVerifyingOverlay(false);
-    setPhase('pending_confirmation');
   };
 
   const resolvePaymentFromProvider = async ({ fallbackMessage = null } = {}) => {
@@ -747,15 +736,16 @@ export default function CommissionPaymentScreen() {
           return;
         }
 
-        // Transferencias y otros medios asincrónicos pueden volver como pendientes/issued.
-        // En ese caso salimos del WebView y mostramos pantalla nativa de espera.
-        markAsPendingConfirmation(payment);
+        // Transferencia pendiente (issued/pending): quedarse en Pagotic mostrando CVU/CBU.
+        setShowVerifyingOverlay(false);
+        setPhase('webview');
         return;
       } catch {
         if (fallbackMessage) {
           markAsRejected(null, fallbackMessage);
         } else {
-          markAsPendingConfirmation();
+          setShowVerifyingOverlay(false);
+          setPhase('webview');
         }
         return;
       }
@@ -764,7 +754,8 @@ export default function CommissionPaymentScreen() {
     if (fallbackMessage) {
       markAsRejected(null, fallbackMessage);
     } else {
-      markAsPendingConfirmation();
+      setShowVerifyingOverlay(false);
+      setPhase('webview');
     }
   };
 
@@ -780,7 +771,6 @@ export default function CommissionPaymentScreen() {
     sendPaymentSuccessNotification(formatPrice(amount));
 
     queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
-    setPendingPayment(null);
     setPhase('approved');
   };
 
@@ -894,10 +884,6 @@ export default function CommissionPaymentScreen() {
         return true;
       }
 
-      if (payment && typeof payment === 'object') {
-        setPendingPayment(payment);
-      }
-
       if (showPendingToast) {
         const statusLabels = {
           issued: 'Transferencia registrada, esperando acreditación bancaria.',
@@ -952,7 +938,7 @@ export default function CommissionPaymentScreen() {
   // la app lo detecta aunque Paypertic no redirija al return_url
   useEffect(() => {
     const shouldSubscribe =
-      phase === 'webview' || phase === 'verifying' || phase === 'pending_confirmation';
+      phase === 'webview' || phase === 'verifying';
     if (!shouldSubscribe || !driver?.id) return;
 
     const channel = supabase
@@ -992,7 +978,7 @@ export default function CommissionPaymentScreen() {
   // Validación puntual al abrir y al volver de background, sin polling.
   useEffect(() => {
     const shouldVerify =
-      phase === 'webview' || phase === 'verifying' || phase === 'pending_confirmation';
+      phase === 'webview' || phase === 'verifying';
     if (!shouldVerify || !driver?.id) return;
 
     const runVerification = async (showPendingToast = false) => {
@@ -1072,10 +1058,9 @@ export default function CommissionPaymentScreen() {
         resolvePaymentFromProvider();
         return;
       }
-
-      setPhase('verifying');
-      setShowVerifyingOverlay(true);
-      resolvePaymentFromProvider();
+      // Para transferencias pendientes, mantenerse en Pagotic (WebView).
+      setShowVerifyingOverlay(false);
+      setPhase('webview');
     } catch {
       // mensaje no válido, ignorar
     }
@@ -1092,19 +1077,24 @@ export default function CommissionPaymentScreen() {
 
     try {
       const urlObj = new URL(url);
-      const status = urlObj.searchParams.get('status');
+      const status = String(urlObj.searchParams.get('status') || '').toLowerCase();
 
       if (status === 'back') {
         returnHandled.current = true;
         resetToIdle();
-      } else {
+      } else if (status === 'approved' || status === 'paid' || isRejectedPaymentStatus(status)) {
         setPhase('verifying');
         setShowVerifyingOverlay(true);
         resolvePaymentFromProvider();
+      } else {
+        // Bloqueamos la navegación al return_url pero dejamos el usuario en el
+        // WebView de Pagotic para que siga viendo los datos de transferencia.
+        setShowVerifyingOverlay(false);
+        setPhase('webview');
       }
     } catch {
-      setShowVerifyingOverlay(true);
-      resolvePaymentFromProvider();
+      setShowVerifyingOverlay(false);
+      setPhase('webview');
     }
 
     return false; // bloquea la carga de la página de retorno
@@ -1121,21 +1111,24 @@ export default function CommissionPaymentScreen() {
 
     try {
       const urlObj = new URL(url);
-      const status = urlObj.searchParams.get('status');
+      const status = String(urlObj.searchParams.get('status') || '').toLowerCase();
 
       if (status === 'back') {
         returnHandled.current = true;
         resetToIdle();
         return;
       }
-
-      setPhase('verifying');
-      setShowVerifyingOverlay(true);
-      resolvePaymentFromProvider();
+      if (status === 'approved' || status === 'paid' || isRejectedPaymentStatus(status)) {
+        setPhase('verifying');
+        setShowVerifyingOverlay(true);
+        resolvePaymentFromProvider();
+      } else {
+        setShowVerifyingOverlay(false);
+        setPhase('webview');
+      }
     } catch {
-      setPhase('verifying');
-      setShowVerifyingOverlay(true);
-      resolvePaymentFromProvider();
+      setShowVerifyingOverlay(false);
+      setPhase('webview');
     }
   };
 
@@ -1144,18 +1137,21 @@ export default function CommissionPaymentScreen() {
     if (!url.startsWith(RETURN_URL_PREFIX)) return;
     if (returnHandled.current) return;
 
-    // Fallback defensivo para Android: si el return_url responde con código
-    // HTTP no exitoso y el WebView muestra "Página no disponible", seguimos
-    // igual con la verificación del pago sin interrumpir al usuario.
-    setPhase('verifying');
-    setShowVerifyingOverlay(true);
-    resolvePaymentFromProvider();
-  };
-
-  const handleManualPendingCheck = async () => {
-    const handled = await verifyPaymentByProviderStatus(true);
-    if (!handled) {
-      await verifyPaymentByDriverBalance(true);
+    try {
+      const urlObj = new URL(url);
+      const status = String(urlObj.searchParams.get('status') || '').toLowerCase();
+      if (status === 'approved' || status === 'paid' || isRejectedPaymentStatus(status)) {
+        setPhase('verifying');
+        setShowVerifyingOverlay(true);
+        resolvePaymentFromProvider();
+        return;
+      }
+      // Si falla el return_url en estado pendiente, mantener Pagotic visible.
+      setShowVerifyingOverlay(false);
+      setPhase('webview');
+    } catch {
+      setShowVerifyingOverlay(false);
+      setPhase('webview');
     }
   };
 
@@ -1163,7 +1159,6 @@ export default function CommissionPaymentScreen() {
     returnHandled.current = false;
     approvedDetailsLoadedForPaymentId.current = null;
     setApprovedPayment(null);
-    setPendingPayment(null);
     setRejectedPayment(null);
     setStartupError(null);
     setWebviewLoaded(false);
@@ -1308,71 +1303,6 @@ export default function CommissionPaymentScreen() {
       <View style={styles.screen}>
         <View style={[styles.resultContainer, { paddingTop: insets.top + 14 }]}>
           <VerifyingPaymentCard />
-        </View>
-      </View>
-    );
-  }
-
-  if (phase === 'pending_confirmation') {
-    const transferInfo = pendingPayment?.transfer_info || {};
-    const paymentReference = pendingPayment?.external_transaction_id || paymentId || 'No disponible';
-    const transferRows = [
-      { label: 'CVU', value: transferInfo?.cvu },
-      { label: 'CBU', value: transferInfo?.cbu },
-      { label: 'Alias', value: transferInfo?.alias },
-      { label: 'Titular', value: transferInfo?.holder_name },
-      { label: 'Banco', value: transferInfo?.bank_name },
-      { label: 'Referencia', value: transferInfo?.reference || paymentReference },
-      { label: 'Vencimiento', value: formatPaymentDate(transferInfo?.expiration_date) },
-    ].filter((row) => row.value && row.value !== 'No disponible');
-
-    return (
-      <View style={styles.screen}>
-        <View style={[styles.resultContainer, { paddingTop: insets.top + 14 }]}>
-          <View style={styles.resultCard}>
-            <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
-              <MaterialCommunityIcons name="clock-time-four-outline" size={44} color={colors.primary} />
-            </View>
-            <Text style={styles.resultTitle}>Transferencia en proceso</Text>
-            <Text style={styles.resultSubtitle}>
-              Recibimos la operación. Estamos esperando la acreditación del proveedor.
-            </Text>
-
-            <View style={styles.transferInfoBox}>
-              {transferRows.length > 0 ? (
-                transferRows.map((row) => (
-                  <View key={row.label} style={styles.receiptRow}>
-                    <Text style={styles.receiptLabel}>{row.label}</Text>
-                    <Text style={styles.receiptValueSmall}>{row.value}</Text>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.transferInfoHint}>
-                  Aun no recibimos los datos bancarios de destino. Tocá "Verificar ahora" en unos segundos.
-                </Text>
-              )}
-            </View>
-
-            <Pressable
-              onPress={handleManualPendingCheck}
-              style={({ pressed }) => [styles.pdfButton, pressed && { opacity: 0.9 }]}
-            >
-              <MaterialCommunityIcons
-                name="refresh"
-                size={20}
-                color="#FFFFFF"
-                style={{ marginRight: 8 }}
-              />
-              <Text style={styles.actionButtonText}>Verificar ahora</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => navigation.goBack()}
-              style={({ pressed }) => [styles.secondaryActionButton, pressed && { opacity: 0.9 }]}
-            >
-              <Text style={styles.secondaryActionButtonText}>Volver al inicio</Text>
-            </Pressable>
-          </View>
         </View>
       </View>
     );
