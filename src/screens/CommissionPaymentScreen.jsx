@@ -40,6 +40,40 @@ const RETURN_URL_PREFIX = 'https://profesional-dashboard.vercel.app/api/payperti
 const INJECTED_JS = `
   (function() {
     var handled = false;
+    var copyNotifiedAt = 0;
+    var notifyClipboardCopy = function(text) {
+      try {
+        var now = Date.now();
+        if (now - copyNotifiedAt < 600) return;
+        copyNotifiedAt = now;
+        var value = (text || '').toString().trim();
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'clipboard_copied',
+          value: value.slice(0, 120)
+        }));
+      } catch(e) {}
+    };
+
+    try {
+      if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+        var originalWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+        navigator.clipboard.writeText = function(value) {
+          notifyClipboardCopy(value);
+          return originalWriteText(value);
+        };
+      }
+    } catch(e) {}
+
+    document.addEventListener('copy', function() {
+      try {
+        var selected = '';
+        if (window.getSelection) {
+          selected = String(window.getSelection() || '').trim();
+        }
+        notifyClipboardCopy(selected);
+      } catch(e) {}
+    });
+
     var notifyIfReturnUrl = function() {
       try {
         var href = window.location.href || '';
@@ -666,6 +700,7 @@ export default function CommissionPaymentScreen() {
   const approvedDetailsLoadedForPaymentId = useRef(null);
   const autoStartTriggered = useRef(false);
   const webViewRef = useRef(null);
+  const lastClipboardToastAt = useRef(0);
 
   const saveApprovedPayment = (payment) => {
     if (!payment || typeof payment !== 'object') return;
@@ -1041,6 +1076,20 @@ export default function CommissionPaymentScreen() {
       // El JS inyectado detectó que el contenido real ya está renderizado
       if (data.type === 'content_ready') {
         setWebviewLoaded(true);
+        return;
+      }
+
+      if (data.type === 'clipboard_copied') {
+        const now = Date.now();
+        if (now - lastClipboardToastAt.current >= 1200) {
+          lastClipboardToastAt.current = now;
+          Toast.show({
+            type: 'success',
+            text1: 'Copiado al portapapeles',
+            text2: data.value ? `Dato copiado: ${String(data.value).slice(0, 32)}...` : 'Dato de pago copiado.',
+            visibilityTime: 1800,
+          });
+        }
         return;
       }
 
