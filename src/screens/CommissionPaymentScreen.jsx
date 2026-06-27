@@ -654,6 +654,7 @@ export default function CommissionPaymentScreen() {
   const [paymentId, setPaymentId] = useState(null);
   const [startupError, setStartupError] = useState(null);
   const [approvedPayment, setApprovedPayment] = useState(null);
+  const [pendingPayment, setPendingPayment] = useState(null);
   const [rejectedPayment, setRejectedPayment] = useState(null);
   const [isFetchingPaymentDetails, setIsFetchingPaymentDetails] = useState(false);
   const [isSharingReceipt, setIsSharingReceipt] = useState(false);
@@ -686,6 +687,7 @@ export default function CommissionPaymentScreen() {
     setPaymentId(null);
     setStartupError(null);
     setApprovedPayment(null);
+    setPendingPayment(null);
     setRejectedPayment(null);
     setIsFetchingPaymentDetails(false);
     setIsSharingReceipt(false);
@@ -713,10 +715,14 @@ export default function CommissionPaymentScreen() {
       paymentId: payment?.id || paymentId || null,
     });
     setShowVerifyingOverlay(false);
+    setPendingPayment(null);
     setPhase('rejected');
   };
 
-  const markAsPendingConfirmation = () => {
+  const markAsPendingConfirmation = (payment = null) => {
+    if (payment && typeof payment === 'object') {
+      setPendingPayment(payment);
+    }
     setShowVerifyingOverlay(false);
     setPhase('pending_confirmation');
   };
@@ -743,7 +749,7 @@ export default function CommissionPaymentScreen() {
 
         // Transferencias y otros medios asincrónicos pueden volver como pendientes/issued.
         // En ese caso salimos del WebView y mostramos pantalla nativa de espera.
-        markAsPendingConfirmation();
+        markAsPendingConfirmation(payment);
         return;
       } catch {
         if (fallbackMessage) {
@@ -774,6 +780,7 @@ export default function CommissionPaymentScreen() {
     sendPaymentSuccessNotification(formatPrice(amount));
 
     queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver?.id] });
+    setPendingPayment(null);
     setPhase('approved');
   };
 
@@ -885,6 +892,10 @@ export default function CommissionPaymentScreen() {
       if (isRejectedPaymentStatus(status)) {
         markAsRejected(payment);
         return true;
+      }
+
+      if (payment && typeof payment === 'object') {
+        setPendingPayment(payment);
       }
 
       if (showPendingToast) {
@@ -1152,6 +1163,7 @@ export default function CommissionPaymentScreen() {
     returnHandled.current = false;
     approvedDetailsLoadedForPaymentId.current = null;
     setApprovedPayment(null);
+    setPendingPayment(null);
     setRejectedPayment(null);
     setStartupError(null);
     setWebviewLoaded(false);
@@ -1302,6 +1314,18 @@ export default function CommissionPaymentScreen() {
   }
 
   if (phase === 'pending_confirmation') {
+    const transferInfo = pendingPayment?.transfer_info || {};
+    const paymentReference = pendingPayment?.external_transaction_id || paymentId || 'No disponible';
+    const transferRows = [
+      { label: 'CVU', value: transferInfo?.cvu },
+      { label: 'CBU', value: transferInfo?.cbu },
+      { label: 'Alias', value: transferInfo?.alias },
+      { label: 'Titular', value: transferInfo?.holder_name },
+      { label: 'Banco', value: transferInfo?.bank_name },
+      { label: 'Referencia', value: transferInfo?.reference || paymentReference },
+      { label: 'Vencimiento', value: formatPaymentDate(transferInfo?.expiration_date) },
+    ].filter((row) => row.value && row.value !== 'No disponible');
+
     return (
       <View style={styles.screen}>
         <View style={[styles.resultContainer, { paddingTop: insets.top + 14 }]}>
@@ -1313,6 +1337,21 @@ export default function CommissionPaymentScreen() {
             <Text style={styles.resultSubtitle}>
               Recibimos la operación. Estamos esperando la acreditación del proveedor.
             </Text>
+
+            <View style={styles.transferInfoBox}>
+              {transferRows.length > 0 ? (
+                transferRows.map((row) => (
+                  <View key={row.label} style={styles.receiptRow}>
+                    <Text style={styles.receiptLabel}>{row.label}</Text>
+                    <Text style={styles.receiptValueSmall}>{row.value}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.transferInfoHint}>
+                  Aun no recibimos los datos bancarios de destino. Tocá "Verificar ahora" en unos segundos.
+                </Text>
+              )}
+            </View>
 
             <Pressable
               onPress={handleManualPendingCheck}
@@ -1512,6 +1551,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
     gap: 9,
     marginBottom: 14,
+  },
+  transferInfoBox: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#F9FAFB',
+    gap: 9,
+    marginBottom: 12,
+  },
+  transferInfoHint: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 18,
   },
   receiptRow: {
     flexDirection: 'row',
