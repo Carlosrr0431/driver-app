@@ -71,9 +71,10 @@ const INJECTED_JS = `
     document.addEventListener('DOMContentLoaded', notifyIfReturnUrl);
     notifyIfReturnUrl();
 
-    // Detectar cuando el contenido real está renderizado (cubre SPAs que renderizan post-onLoad)
+    // Detectar cuando el contenido real ya está renderizado.
+    // Poll cada 80ms, máximo 3s de espera.
     var contentNotified = false;
-    var maxWait = 9000;
+    var maxWait = 3000;
     var started = Date.now();
     var checkContent = setInterval(function() {
       try {
@@ -81,16 +82,16 @@ const INJECTED_JS = `
         var elapsed = Date.now() - started;
         var body = document.body;
         var ready = body &&
-          body.scrollHeight > 150 &&
+          body.scrollHeight > 100 &&
           body.innerText &&
-          body.innerText.trim().length > 20;
+          body.innerText.trim().length > 10;
         if (ready || elapsed >= maxWait) {
           clearInterval(checkContent);
           contentNotified = true;
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'content_ready' }));
         }
       } catch(e) { clearInterval(checkContent); }
-    }, 250);
+    }, 80);
   })();
   true;
 `;
@@ -333,6 +334,96 @@ const VerifyingPaymentCard = () => (
   </View>
 );
 
+// Banner minimalista que flota sobre el WebView sin tapar el contenido (CVU, etc.)
+const PaymentVerifyingBanner = React.memo(function PaymentVerifyingBanner() {
+  const dot1 = useRef(new Animated.Value(0.35)).current;
+  const dot2 = useRef(new Animated.Value(0.35)).current;
+  const dot3 = useRef(new Animated.Value(0.35)).current;
+
+  useEffect(() => {
+    const makeDot = (anim, delay) => {
+      setTimeout(() => {
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(anim, { toValue: 1, duration: 450, useNativeDriver: true }),
+            Animated.timing(anim, { toValue: 0.35, duration: 450, useNativeDriver: true }),
+          ])
+        ).start();
+      }, delay);
+    };
+    makeDot(dot1, 0);
+    makeDot(dot2, 200);
+    makeDot(dot3, 400);
+  }, []);
+
+  return (
+    <View style={verifyingBannerStyles.wrapper}>
+      <View style={verifyingBannerStyles.card}>
+        <View style={verifyingBannerStyles.dotsCol}>
+          <Animated.View style={[verifyingBannerStyles.dot, { opacity: dot1 }]} />
+          <Animated.View style={[verifyingBannerStyles.dot, { opacity: dot2 }]} />
+          <Animated.View style={[verifyingBannerStyles.dot, { opacity: dot3 }]} />
+        </View>
+        <View style={verifyingBannerStyles.textGroup}>
+          <Text style={verifyingBannerStyles.title}>Esperando confirmación de pago</Text>
+          <Text style={verifyingBannerStyles.subtitle}>
+            Verificando en tiempo real con el proveedor...
+          </Text>
+        </View>
+        <ActivityIndicator size="small" color={colors.primary} />
+      </View>
+    </View>
+  );
+});
+
+const verifyingBannerStyles = StyleSheet.create({
+  wrapper: {
+    position: 'absolute',
+    bottom: 28,
+    left: 12,
+    right: 12,
+  },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    boxShadow: '0 6px 24px rgba(40,46,105,0.18)',
+  },
+  dotsCol: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 3,
+    paddingVertical: 2,
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: colors.primary,
+  },
+  textGroup: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: colors.text,
+    marginBottom: 2,
+  },
+  subtitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: colors.textMuted,
+    lineHeight: 15,
+  },
+});
+
 const PaymentRejectedCard = React.memo(function PaymentRejectedCard({
   title,
   message,
@@ -557,7 +648,7 @@ export default function CommissionPaymentScreen() {
   const isOverdue = commissionData?.isOverdue || false;
   const balanceColor = isOverdue ? '#282e69' : '#D97706';
 
-  // Estados: 'idle' | 'loading' | 'webview' | 'approved' | 'rejected'
+  // Estados: 'idle' | 'loading' | 'webview' | 'verifying' | 'pending_confirmation' | 'approved' | 'rejected'
   const [phase, setPhase] = useState('idle');
   const [formUrl, setFormUrl] = useState(null);
   const [paymentId, setPaymentId] = useState(null);
@@ -625,6 +716,11 @@ export default function CommissionPaymentScreen() {
     setPhase('rejected');
   };
 
+  const markAsPendingConfirmation = () => {
+    setShowVerifyingOverlay(false);
+    setPhase('pending_confirmation');
+  };
+
   const resolvePaymentFromProvider = async ({ fallbackMessage = null } = {}) => {
     if (returnHandled.current) return;
 
@@ -645,12 +741,15 @@ export default function CommissionPaymentScreen() {
           return;
         }
 
-        // Aún pendiente: mantener verificación activa sin marcar rechazo.
-        setShowVerifyingOverlay(true);
+        // Transferencias y otros medios asincrónicos pueden volver como pendientes/issued.
+        // En ese caso salimos del WebView y mostramos pantalla nativa de espera.
+        markAsPendingConfirmation();
         return;
       } catch {
         if (fallbackMessage) {
           markAsRejected(null, fallbackMessage);
+        } else {
+          markAsPendingConfirmation();
         }
         return;
       }
@@ -658,6 +757,8 @@ export default function CommissionPaymentScreen() {
 
     if (fallbackMessage) {
       markAsRejected(null, fallbackMessage);
+    } else {
+      markAsPendingConfirmation();
     }
   };
 
@@ -787,11 +888,16 @@ export default function CommissionPaymentScreen() {
       }
 
       if (showPendingToast) {
+        const statusLabels = {
+          issued: 'Transferencia registrada, esperando acreditación bancaria.',
+          pending: 'El pago está pendiente de confirmación.',
+          in_process: 'El pago está siendo procesado.',
+        };
         Toast.show({
           type: 'info',
           text1: 'Pago en proceso',
-          text2: `Estado actual: ${status || 'pending'}`,
-          visibilityTime: 3000,
+          text2: statusLabels[status] || `Estado: ${status || 'pendiente'}`,
+          visibilityTime: 3500,
         });
       }
     } catch {
@@ -834,7 +940,9 @@ export default function CommissionPaymentScreen() {
   // Escuchar Supabase Realtime: cuando el webhook registra el pago en commission_payments,
   // la app lo detecta aunque Paypertic no redirija al return_url
   useEffect(() => {
-    if (phase !== 'webview' || !driver?.id) return;
+    const shouldSubscribe =
+      phase === 'webview' || phase === 'verifying' || phase === 'pending_confirmation';
+    if (!shouldSubscribe || !driver?.id) return;
 
     const channel = supabase
       .channel(`commission-payment-${driver.id}`)
@@ -872,7 +980,9 @@ export default function CommissionPaymentScreen() {
 
   // Validación puntual al abrir y al volver de background, sin polling.
   useEffect(() => {
-    if (phase !== 'webview' || !driver?.id) return;
+    const shouldVerify =
+      phase === 'webview' || phase === 'verifying' || phase === 'pending_confirmation';
+    if (!shouldVerify || !driver?.id) return;
 
     const runVerification = async (showPendingToast = false) => {
       const statusHandled = await verifyPaymentByProviderStatus(showPendingToast);
@@ -946,30 +1056,55 @@ export default function CommissionPaymentScreen() {
       }
 
       if (data.status === 'approved' || data.status === 'paid') {
+        setPhase('verifying');
+        setShowVerifyingOverlay(true);
         resolvePaymentFromProvider();
         return;
       }
 
+      setPhase('verifying');
+      setShowVerifyingOverlay(true);
       resolvePaymentFromProvider();
     } catch {
       // mensaje no válido, ignorar
     }
   };
 
+  // Intercepta la navegación ANTES de que el WebView cargue la URL.
+  // Cuando Paypertic redirige al return_url, retornamos false para bloquear
+  // la carga y manejamos el resultado directamente en la app.
+  // Esto evita el error ERR_HTTP_RESPONSE_CODE_FAILURE si el servidor no responde.
+  const handleShouldStartLoadWithRequest = (request) => {
+    const url = request.url || '';
+    if (!url.startsWith(RETURN_URL_PREFIX)) return true;
+    if (returnHandled.current) return false;
+
+    try {
+      const urlObj = new URL(url);
+      const status = urlObj.searchParams.get('status');
+
+      if (status === 'back') {
+        returnHandled.current = true;
+        resetToIdle();
+      } else {
+        setPhase('verifying');
+        setShowVerifyingOverlay(true);
+        resolvePaymentFromProvider();
+      }
+    } catch {
+      setShowVerifyingOverlay(true);
+      resolvePaymentFromProvider();
+    }
+
+    return false; // bloquea la carga de la página de retorno
+  };
+
   const handleNavigationChange = (navState) => {
     const url = navState.url || '';
 
-    // En cuanto el WebView sale del formulario de pago, mostramos overlay "Verificando"
-    if (
-      navState.loading &&
-      formUrl &&
-      url &&
-      url !== formUrl &&
-      !returnHandled.current
-    ) {
-      setShowVerifyingOverlay(true);
-    }
-
+    // Fallback: si por alguna razón onShouldStartLoadWithRequest no bloqueó la
+    // navegación (algunos builds de react-native-webview en Android lo ignoran),
+    // manejamos igualmente el return_url aquí.
     if (!url.startsWith(RETURN_URL_PREFIX)) return;
     if (returnHandled.current) return;
 
@@ -983,14 +1118,33 @@ export default function CommissionPaymentScreen() {
         return;
       }
 
-      if (status === 'approved' || status === 'paid') {
-        resolvePaymentFromProvider();
-        return;
-      }
-
+      setPhase('verifying');
+      setShowVerifyingOverlay(true);
       resolvePaymentFromProvider();
     } catch {
+      setPhase('verifying');
+      setShowVerifyingOverlay(true);
       resolvePaymentFromProvider();
+    }
+  };
+
+  const handleWebViewHttpError = (syntheticEvent) => {
+    const url = syntheticEvent?.nativeEvent?.url || '';
+    if (!url.startsWith(RETURN_URL_PREFIX)) return;
+    if (returnHandled.current) return;
+
+    // Fallback defensivo para Android: si el return_url responde con código
+    // HTTP no exitoso y el WebView muestra "Página no disponible", seguimos
+    // igual con la verificación del pago sin interrumpir al usuario.
+    setPhase('verifying');
+    setShowVerifyingOverlay(true);
+    resolvePaymentFromProvider();
+  };
+
+  const handleManualPendingCheck = async () => {
+    const handled = await verifyPaymentByProviderStatus(true);
+    if (!handled) {
+      await verifyPaymentByDriverBalance(true);
     }
   };
 
@@ -1137,6 +1291,54 @@ export default function CommissionPaymentScreen() {
     );
   }
 
+  if (phase === 'verifying') {
+    return (
+      <View style={styles.screen}>
+        <View style={[styles.resultContainer, { paddingTop: insets.top + 14 }]}>
+          <VerifyingPaymentCard />
+        </View>
+      </View>
+    );
+  }
+
+  if (phase === 'pending_confirmation') {
+    return (
+      <View style={styles.screen}>
+        <View style={[styles.resultContainer, { paddingTop: insets.top + 14 }]}>
+          <View style={styles.resultCard}>
+            <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
+              <MaterialCommunityIcons name="clock-time-four-outline" size={44} color={colors.primary} />
+            </View>
+            <Text style={styles.resultTitle}>Transferencia en proceso</Text>
+            <Text style={styles.resultSubtitle}>
+              Recibimos la operación. Estamos esperando la acreditación del proveedor.
+            </Text>
+
+            <Pressable
+              onPress={handleManualPendingCheck}
+              style={({ pressed }) => [styles.pdfButton, pressed && { opacity: 0.9 }]}
+            >
+              <MaterialCommunityIcons
+                name="refresh"
+                size={20}
+                color="#FFFFFF"
+                style={{ marginRight: 8 }}
+              />
+              <Text style={styles.actionButtonText}>Verificar ahora</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => navigation.goBack()}
+              style={({ pressed }) => [styles.secondaryActionButton, pressed && { opacity: 0.9 }]}
+            >
+              <Text style={styles.secondaryActionButtonText}>Volver al inicio</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   // ── WebView con formulario de Paypertic ────────────────────────────────────
   if (phase === 'webview' && formUrl) {
     return (
@@ -1145,13 +1347,23 @@ export default function CommissionPaymentScreen() {
           source={{ uri: formUrl }}
           injectedJavaScript={INJECTED_JS}
           onMessage={handlePayperticMessage}
+          onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
           onNavigationStateChange={handleNavigationChange}
-          onLoad={() => setTimeout(() => setWebviewLoaded(true), 5000)}
+          onHttpError={handleWebViewHttpError}
+          onLoadEnd={() => {
+            // Fallback: si el JS inyectado no disparó content_ready en 1.5s,
+            // mostramos el WebView igual para no bloquear al usuario.
+            setTimeout(() => setWebviewLoaded(true), 1500);
+          }}
           javaScriptEnabled
           domStorageEnabled
           thirdPartyCookiesEnabled
           setSupportMultipleWindows={false}
-          onError={() => {
+          onError={(syntheticEvent) => {
+            const { url } = syntheticEvent.nativeEvent;
+            // Si el error es en la URL de retorno, ya fue manejado por
+            // onShouldStartLoadWithRequest; ignoramos este error.
+            if (url && url.startsWith(RETURN_URL_PREFIX)) return;
             setFormUrl(null);
             setPaymentId(null);
             setPhase('idle');
@@ -1160,10 +1372,19 @@ export default function CommissionPaymentScreen() {
           }}
           style={{ flex: 1 }}
         />
-        {(!webviewLoaded || showVerifyingOverlay) && (
+
+        {/* Overlay completo de carga inicial: cubre la pantalla hasta que Paypertic renderice */}
+        {!webviewLoaded && (
           <View style={[StyleSheet.absoluteFill, styles.webviewOverlay]}>
             {showVerifyingOverlay ? <VerifyingPaymentCard /> : <PaymentLoadingCard />}
           </View>
+        )}
+
+        {/* Banner flotante de verificación: aparece sobre el WebView SIN tapar el contenido.
+            Permite al usuario ver y copiar los datos de CBU/CVU en pagos por transferencia
+            mientras la app espera confirmación en tiempo real. */}
+        {webviewLoaded && showVerifyingOverlay && (
+          <PaymentVerifyingBanner />
         )}
       </View>
     );
