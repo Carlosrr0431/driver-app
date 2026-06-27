@@ -1199,6 +1199,55 @@ export default function CommissionPaymentScreen() {
     }
   };
 
+  const handleWebViewLoadStart = (syntheticEvent) => {
+    const url = syntheticEvent?.nativeEvent?.url || '';
+    if (!url.startsWith(RETURN_URL_PREFIX)) return;
+    if (returnHandled.current) return;
+
+    try {
+      const urlObj = new URL(url);
+      const status = String(urlObj.searchParams.get('status') || '').toLowerCase();
+
+      if (status === 'back') {
+        returnHandled.current = true;
+        resetToIdle();
+        return;
+      }
+
+      if (status === 'approved' || status === 'paid' || isRejectedPaymentStatus(status)) {
+        setPhase('verifying');
+        setShowVerifyingOverlay(true);
+        resolvePaymentFromProvider();
+        return;
+      }
+
+      // Fallback fuerte para Android: cortar inmediatamente la navegación al
+      // return_url pendiente para evitar el flash de pantalla blanca.
+      try {
+        webViewRef.current?.stopLoading?.();
+      } catch {
+        // noop
+      }
+      setShowVerifyingOverlay(false);
+      setPhase('webview');
+      setTimeout(() => {
+        try {
+          webViewRef.current?.goBack?.();
+        } catch {
+          // noop
+        }
+      }, 0);
+    } catch {
+      try {
+        webViewRef.current?.stopLoading?.();
+      } catch {
+        // noop
+      }
+      setShowVerifyingOverlay(false);
+      setPhase('webview');
+    }
+  };
+
   const handleWebViewHttpError = (syntheticEvent) => {
     const url = syntheticEvent?.nativeEvent?.url || '';
     if (!url.startsWith(RETURN_URL_PREFIX)) return;
@@ -1389,6 +1438,7 @@ export default function CommissionPaymentScreen() {
           source={{ uri: formUrl }}
           injectedJavaScript={INJECTED_JS}
           onMessage={handlePayperticMessage}
+          onLoadStart={handleWebViewLoadStart}
           onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
           onNavigationStateChange={handleNavigationChange}
           onHttpError={handleWebViewHttpError}
