@@ -701,6 +701,48 @@ export default function CommissionPaymentScreen() {
   const autoStartTriggered = useRef(false);
   const webViewRef = useRef(null);
   const lastClipboardToastAt = useRef(0);
+  const returnMaskTimeoutRef = useRef(null);
+  const [maskPendingReturn, setMaskPendingReturn] = useState(false);
+
+  const clearReturnMaskTimer = () => {
+    if (returnMaskTimeoutRef.current) {
+      clearTimeout(returnMaskTimeoutRef.current);
+      returnMaskTimeoutRef.current = null;
+    }
+  };
+
+  const restoreCheckoutView = () => {
+    setShowVerifyingOverlay(false);
+    setPhase('webview');
+    setMaskPendingReturn(true);
+    clearReturnMaskTimer();
+
+    try {
+      webViewRef.current?.stopLoading?.();
+    } catch {
+      // noop
+    }
+
+    // Ejecutar back más de una vez reduce casos donde Android deja una pantalla
+    // intermedia blanca antes de volver al checkout.
+    try {
+      webViewRef.current?.goBack?.();
+    } catch {
+      // noop
+    }
+    setTimeout(() => {
+      try {
+        webViewRef.current?.goBack?.();
+      } catch {
+        // noop
+      }
+    }, 40);
+
+    returnMaskTimeoutRef.current = setTimeout(() => {
+      setMaskPendingReturn(false);
+      returnMaskTimeoutRef.current = null;
+    }, 700);
+  };
 
   const saveApprovedPayment = (payment) => {
     if (!payment || typeof payment !== 'object') return;
@@ -728,6 +770,8 @@ export default function CommissionPaymentScreen() {
     setIsDownloadingReceipt(false);
     setWebviewLoaded(false);
     setShowVerifyingOverlay(false);
+    setMaskPendingReturn(false);
+    clearReturnMaskTimer();
     approvedDetailsLoadedForPaymentId.current = null;
   };
 
@@ -773,15 +817,13 @@ export default function CommissionPaymentScreen() {
         }
 
         // Transferencia pendiente (issued/pending): quedarse en Pagotic mostrando CVU/CBU.
-        setShowVerifyingOverlay(false);
-        setPhase('webview');
+        restoreCheckoutView();
         return;
       } catch {
         if (fallbackMessage) {
           markAsRejected(null, fallbackMessage);
         } else {
-          setShowVerifyingOverlay(false);
-          setPhase('webview');
+          restoreCheckoutView();
         }
         return;
       }
@@ -790,8 +832,7 @@ export default function CommissionPaymentScreen() {
     if (fallbackMessage) {
       markAsRejected(null, fallbackMessage);
     } else {
-      setShowVerifyingOverlay(false);
-      setPhase('webview');
+      restoreCheckoutView();
     }
   };
 
@@ -1109,13 +1150,7 @@ export default function CommissionPaymentScreen() {
         return;
       }
       // Para transferencias pendientes, mantenerse dentro del checkout de Pagotic.
-      setShowVerifyingOverlay(false);
-      setPhase('webview');
-      try {
-        webViewRef.current?.goBack?.();
-      } catch {
-        // noop
-      }
+      restoreCheckoutView();
     } catch {
       // mensaje no válido, ignorar
     }
@@ -1144,17 +1179,10 @@ export default function CommissionPaymentScreen() {
       } else {
         // Bloqueamos la navegación al return_url pero dejamos el usuario en el
         // WebView de Pagotic para que siga viendo los datos de transferencia.
-        setShowVerifyingOverlay(false);
-        setPhase('webview');
-        try {
-          webViewRef.current?.goBack?.();
-        } catch {
-          // noop
-        }
+        restoreCheckoutView();
       }
     } catch {
-      setShowVerifyingOverlay(false);
-      setPhase('webview');
+      restoreCheckoutView();
     }
 
     return false; // bloquea la carga de la página de retorno
@@ -1183,19 +1211,10 @@ export default function CommissionPaymentScreen() {
         setShowVerifyingOverlay(true);
         resolvePaymentFromProvider();
       } else {
-        setShowVerifyingOverlay(false);
-        setPhase('webview');
-        if (navState?.canGoBack) {
-          try {
-            webViewRef.current?.goBack?.();
-          } catch {
-            // noop
-          }
-        }
+        restoreCheckoutView();
       }
     } catch {
-      setShowVerifyingOverlay(false);
-      setPhase('webview');
+      restoreCheckoutView();
     }
   };
 
@@ -1223,28 +1242,9 @@ export default function CommissionPaymentScreen() {
 
       // Fallback fuerte para Android: cortar inmediatamente la navegación al
       // return_url pendiente para evitar el flash de pantalla blanca.
-      try {
-        webViewRef.current?.stopLoading?.();
-      } catch {
-        // noop
-      }
-      setShowVerifyingOverlay(false);
-      setPhase('webview');
-      setTimeout(() => {
-        try {
-          webViewRef.current?.goBack?.();
-        } catch {
-          // noop
-        }
-      }, 0);
+      restoreCheckoutView();
     } catch {
-      try {
-        webViewRef.current?.stopLoading?.();
-      } catch {
-        // noop
-      }
-      setShowVerifyingOverlay(false);
-      setPhase('webview');
+      restoreCheckoutView();
     }
   };
 
@@ -1263,16 +1263,9 @@ export default function CommissionPaymentScreen() {
         return;
       }
       // Si falla el return_url en estado pendiente, mantener Pagotic visible.
-      setShowVerifyingOverlay(false);
-      setPhase('webview');
-      try {
-        webViewRef.current?.goBack?.();
-      } catch {
-        // noop
-      }
+      restoreCheckoutView();
     } catch {
-      setShowVerifyingOverlay(false);
-      setPhase('webview');
+      restoreCheckoutView();
     }
   };
 
@@ -1311,6 +1304,8 @@ export default function CommissionPaymentScreen() {
     autoStartTriggered.current = true;
     startPaymentFlow();
   }, [autoStart, balance]);
+
+  useEffect(() => () => clearReturnMaskTimer(), []);
 
 
   // ── Pantalla rechazado ───────────────────────────────────────────────────
@@ -1477,6 +1472,12 @@ export default function CommissionPaymentScreen() {
             mientras la app espera confirmación en tiempo real. */}
         {webviewLoaded && showVerifyingOverlay && (
           <PaymentVerifyingBanner />
+        )}
+
+        {maskPendingReturn && (
+          <View style={[StyleSheet.absoluteFill, styles.pendingReturnMask]}>
+            <ActivityIndicator color={colors.primary} size="small" />
+          </View>
         )}
       </View>
     );
@@ -1714,6 +1715,11 @@ const styles = StyleSheet.create({
   webviewOverlay: {
     backgroundColor: colors.background,
     paddingHorizontal: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pendingReturnMask: {
+    backgroundColor: colors.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
