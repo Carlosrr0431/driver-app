@@ -152,8 +152,7 @@ const isPayperticApprovedPayment = (payment) => {
     'success',
     'succeeded',
   ]);
-  if (approvedStatuses.has(normalizedStatus)) return true;
-  return Boolean(payment?.paid_date || payment?.accreditation_date);
+  return approvedStatuses.has(normalizedStatus);
 };
 
 const formatPaymentDate = (value) => {
