@@ -229,6 +229,23 @@ export function projectPointOntoPolyline(point, routeCoords = []) {
   return best;
 }
 
+/**
+ * Une la polilínea al punto GPS actual con un segmento corto si hay hueco visible.
+ */
+export function prependDriverConnector(driverPoint, routeCoords = [], thresholdMeters = 8) {
+  if (!Array.isArray(routeCoords) || routeCoords.length < 2) return routeCoords || [];
+
+  const lat = Number(driverPoint?.lat ?? driverPoint?.latitude);
+  const lng = Number(driverPoint?.lng ?? driverPoint?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return routeCoords;
+
+  const driver = { latitude: lat, longitude: lng };
+  const gapMeters = getDistanceMeters(driver, routeCoords[0]);
+  if (gapMeters <= thresholdMeters) return routeCoords;
+
+  return [driver, ...routeCoords];
+}
+
 function buildStepEndDistances(steps = [], routeLengthMeters = 0) {
   if (!Array.isArray(steps) || steps.length === 0) return [];
 

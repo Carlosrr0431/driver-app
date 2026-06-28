@@ -14,9 +14,9 @@ describe('choferes asignados — reglas de negocio', () => {
     const phone = '3878630173';
     const normalized = normalizeDriverPhone(phone);
 
-    expect(normalized).toBe('543878630173');
+    expect(normalized).toBe('5493878630173');
     expect(buildAssignedDriverAuthEmail(normalized)).toBe(
-      'assigned.543878630173@profesional.test',
+      'assigned.5493878630173@profesional.test',
     );
   });
 

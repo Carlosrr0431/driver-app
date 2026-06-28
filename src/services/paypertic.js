@@ -50,7 +50,8 @@ export async function createPaymentSession(amount) {
  *   process_date?: string,
  *   paid_date?: string,
  *   external_transaction_id?: string,
- *   receipt_url?: string | null
+ *   receipt_url?: string | null,
+ *   form_url?: string | null,
  * }}
  */
 export async function getPaymentStatus(paymentId) {

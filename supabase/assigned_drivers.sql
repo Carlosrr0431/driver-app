@@ -51,8 +51,26 @@ BEGIN
   IF v_digits LIKE '0%' THEN
     v_digits := substring(v_digits FROM 2);
   END IF;
-  IF length(v_digits) <= 10 AND v_digits NOT LIKE '54%' THEN
+  IF v_digits LIKE '54%' THEN
+    IF length(substring(v_digits FROM 3)) = 11 AND substring(v_digits FROM 3) LIKE '9%' THEN
+      RETURN v_digits;
+    END IF;
+    IF length(substring(v_digits FROM 3)) = 10 THEN
+      RETURN '549' || substring(v_digits FROM 3);
+    END IF;
+    RETURN v_digits;
+  END IF;
+  IF length(v_digits) = 11 AND v_digits LIKE '9%' THEN
+    RETURN '54' || v_digits;
+  END IF;
+  IF length(v_digits) = 10 THEN
+    RETURN '549' || v_digits;
+  END IF;
+  IF length(v_digits) < 10 THEN
     v_digits := '54' || v_digits;
+    IF length(v_digits) = 12 THEN
+      RETURN '549' || substring(v_digits FROM 3);
+    END IF;
   END IF;
   RETURN v_digits;
 END;
@@ -324,7 +342,6 @@ SET
   driver_number = o.driver_number,
   vehicle_brand = o.vehicle_brand,
   vehicle_model = o.vehicle_model,
-  vehicle_year = o.vehicle_year,
   vehicle_plate = o.vehicle_plate,
   vehicle_color = o.vehicle_color,
   vehicle_photo_url = o.vehicle_photo_url,
@@ -351,7 +368,6 @@ BEGIN
       driver_number = NEW.driver_number,
       vehicle_brand = NEW.vehicle_brand,
       vehicle_model = NEW.vehicle_model,
-      vehicle_year = NEW.vehicle_year,
       vehicle_plate = NEW.vehicle_plate,
       vehicle_color = NEW.vehicle_color,
       vehicle_photo_url = NEW.vehicle_photo_url,
@@ -366,7 +382,7 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_sync_assigned_drivers_from_owner ON public.drivers;
 CREATE TRIGGER trg_sync_assigned_drivers_from_owner
-  AFTER UPDATE OF driver_number, vehicle_brand, vehicle_model, vehicle_year,
+  AFTER UPDATE OF driver_number, vehicle_brand, vehicle_model,
     vehicle_plate, vehicle_color, vehicle_photo_url, vehicle_type
   ON public.drivers
   FOR EACH ROW
@@ -386,7 +402,6 @@ BEGIN
       NEW.driver_number := COALESCE(NEW.driver_number, v_owner.driver_number);
       NEW.vehicle_brand := COALESCE(NEW.vehicle_brand, v_owner.vehicle_brand);
       NEW.vehicle_model := COALESCE(NEW.vehicle_model, v_owner.vehicle_model);
-      NEW.vehicle_year := COALESCE(NEW.vehicle_year, v_owner.vehicle_year);
       NEW.vehicle_plate := COALESCE(NEW.vehicle_plate, v_owner.vehicle_plate);
       NEW.vehicle_color := COALESCE(NEW.vehicle_color, v_owner.vehicle_color);
       NEW.vehicle_photo_url := COALESCE(NEW.vehicle_photo_url, v_owner.vehicle_photo_url);

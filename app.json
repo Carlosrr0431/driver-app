@@ -65,15 +65,7 @@
       ]
     },
     "plugins": [
-      [
-        "@maplibre/maplibre-react-native",
-        {
-          "android": {},
-          "ios": {
-            "metalEnabled": true
-          }
-        }
-      ],
+      "expo-dev-client",
       [
         "expo-build-properties",
         {
@@ -102,6 +94,7 @@
           "color": "#DC2626"
         }
       ],
+      "@maplibre/maplibre-react-native",
       "@react-native-firebase/app",
       "@react-native-firebase/messaging",
       "expo-font",

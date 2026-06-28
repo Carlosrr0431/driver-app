@@ -1,36 +1,38 @@
 /**
- * Componente: DriverMarker
- * Marcador del conductor para MapLibre.
+ * Marcador del conductor para MapLibre Native.
+ * Se renderiza dentro de <MapLibreGL.MarkerView>.
  */
 import React from 'react';
 import { View } from 'react-native';
-import { Marker } from '@maplibre/maplibre-react-native';
+import MapLibreGL from '../../lib/maplibre';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
+import { DRIVER_PUCK_SIZE_IDLE } from './driverPuckSizes';
 
 export const DriverMarker = ({ coordinate, heading = 0 }) => {
-  const lat = Number(coordinate?.latitude ?? coordinate?.lat);
-  const lng = Number(coordinate?.longitude ?? coordinate?.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (!coordinate?.latitude || !coordinate?.longitude) return null;
 
   const rotation = Number.isFinite(heading) ? heading : 0;
+  const size = Math.round(DRIVER_PUCK_SIZE_IDLE * 0.82);
 
   return (
-    <Marker id="driver-marker" lngLat={[lng, lat]}>
+    <MapLibreGL.MarkerView
+      id={`driver-marker-${coordinate.latitude}-${coordinate.longitude}`}
+      coordinate={[coordinate.longitude, coordinate.latitude]}
+      anchor={{ x: 0.5, y: 0.5 }}
+    >
       <View style={{
-        width: 38,
-        height: 38,
-        borderRadius: 19,
+        width: size,
+        height: size,
+        borderRadius: size / 2,
         backgroundColor: colors.primary,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 2.5,
-        borderColor: '#FFFFFF',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2.5, borderColor: '#FFFFFF',
         transform: [{ rotate: `${rotation}deg` }],
-        boxShadow: '0 3px 10px rgba(40,46,105,0.45)',
+        elevation: 5,
       }}>
-        <MaterialCommunityIcons name="navigation" size={20} color="#fff" />
+        <MaterialCommunityIcons name="navigation" size={Math.round(size * 0.52)} color="#fff" />
       </View>
-    </Marker>
+    </MapLibreGL.MarkerView>
   );
 };

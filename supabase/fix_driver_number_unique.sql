@@ -23,7 +23,6 @@ SET
   driver_number = o.driver_number,
   vehicle_brand = o.vehicle_brand,
   vehicle_model = o.vehicle_model,
-  vehicle_year = o.vehicle_year,
   vehicle_plate = o.vehicle_plate,
   vehicle_color = o.vehicle_color,
   vehicle_photo_url = o.vehicle_photo_url,

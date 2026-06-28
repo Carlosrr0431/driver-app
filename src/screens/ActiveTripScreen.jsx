@@ -31,7 +31,7 @@ import {
   autocompleteAddressSalta,
   getPlaceDetails,
 } from '../services/nominatim';
-import { getDirections } from '../services/routing';
+import { getDirections, getRouteSummary } from '../services/routing';
 import {
   computeNavigationSnapshot,
   createInitialNavigationProgressState,
@@ -81,6 +81,43 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
     Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const FREE_RIDE_TRACK_MIN_METERS = 10;
+const FREE_RIDE_TRACK_MAX_SEGMENT_METERS = 2000;
+
+function toGpsTrackPoint(location) {
+  const lat = Number(location?.lat ?? location?.latitude);
+  const lng = Number(location?.lng ?? location?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { latitude: lat, longitude: lng };
+}
+
+/** Misma lógica de muestreo que addTripDistance: evita ruido GPS y saltos irreales. */
+function appendGpsTrackPoint(track, location, lastSample) {
+  const nextPoint = toGpsTrackPoint(location);
+  if (!nextPoint) return { track, lastSample };
+
+  if (!lastSample) {
+    return { track: [nextPoint], lastSample: nextPoint };
+  }
+
+  const distM = haversineMeters(
+    lastSample.latitude,
+    lastSample.longitude,
+    nextPoint.latitude,
+    nextPoint.longitude,
+  );
+
+  if (distM < FREE_RIDE_TRACK_MIN_METERS) {
+    return { track, lastSample };
+  }
+
+  if (distM > FREE_RIDE_TRACK_MAX_SEGMENT_METERS) {
+    return { track, lastSample: nextPoint };
+  }
+
+  return { track: [...track, nextPoint], lastSample: nextPoint };
 }
 
 function parseRouteDistanceKm(routeInfo) {
@@ -286,11 +323,11 @@ function extractRoadNameFromInstruction(instruction) {
     .trim();
 
   const patterns = [
-    // Allow dots so abbreviations like "C. Tadeo Tadía" are captured whole
     /(?:por|direcci[oó]n a|hacia)\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+)/i,
     /en\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+?)(?:\s+hacia|\s+con\s+direcci[oó]n|\s*,|$)/i,
     /(?:continua|continuá|sigue|seguí)\s+por\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+)/i,
     /(?:incorp[oó]rate|incorporate)\s+a\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+)/i,
+    /(?:onto|on)\s+([A-Z0-9ÁÉÍÓÚÑ][^,]+)/i,
   ];
 
   for (const pattern of patterns) {
@@ -808,9 +845,10 @@ const ActiveTripScreen = () => {
   const routeCoordsRef = useRef([]);
   const autocompleteTimerRef = useRef(null);
   const navProgressRef = useRef(createInitialNavigationProgressState());
-  const trafficRefreshTimerRef = useRef(null);
-  const lastTrafficRefreshAtRef = useRef(0);
   const finishTripInFlightRef = useRef(false);
+  const freeRideTrackRef = useRef([]);
+  const freeRideTrackSampleRef = useRef(null);
+  const [freeRideTrackCoords, setFreeRideTrackCoords] = useState([]);
 
   const { activeTrip, tripTimer, tripDistanceKm, setTripTimer, addTripDistance, clearActiveTrip, driverFlowStep, driverFlowTripId, setDriverFlowStep } = useTripStore();
   const session = useAuthStore((s) => s.session);
@@ -830,6 +868,7 @@ const ActiveTripScreen = () => {
   const speed = useLocationStore((s) => s.speed);
 
   const [routePolyline, setRoutePolyline] = useState(null);
+  const [routePolylineCoords, setRoutePolylineCoords] = useState([]);
   const [routeInfo, setRouteInfo] = useState(null);
   const [routeSteps, setRouteSteps] = useState([]);
   const [showSummary, setShowSummary] = useState(false);
@@ -844,6 +883,7 @@ const ActiveTripScreen = () => {
   const [remainingDurationSeconds, setRemainingDurationSeconds] = useState(null);
   const [nextStepInfo, setNextStepInfo] = useState(null);
   const [isRerouting, setIsRerouting] = useState(false);
+  const [routeRevision, setRouteRevision] = useState(0);
   const [fareRouteDistanceKm, setFareRouteDistanceKm] = useState(null);
 
   const flowStep = useMemo(() => {
@@ -867,7 +907,7 @@ const ActiveTripScreen = () => {
   const [destinationSet, setDestinationSet] = useState(false);
   const [destinationOptions, setDestinationOptions] = useState([]);
   const [isFreeRide, setIsFreeRide] = useState(false);
-  /** false = norte arriba; true = mapa gira con la ruta (modo navegación 3D). */
+  /** true = mapa gira siguiendo la polilínea; false = norte geográfico arriba. */
   const [isNorth3DEnabled, setIsNorth3DEnabled] = useState(true);
   const [textDestInput, setTextDestInput] = useState('');
   const [textDestProcessing, setTextDestProcessing] = useState(false);
@@ -901,6 +941,10 @@ const ActiveTripScreen = () => {
       );
       if (hasDbDestination) {
         setDestinationSet(true);
+      } else {
+        setDestinationSet(true);
+        setIsFreeRide(true);
+        setIsNorth3DEnabled(false);
       }
       setDriverFlowStep(FLOW_STEP.IN_PROGRESS, activeTrip.id);
       return;
@@ -933,7 +977,7 @@ const ActiveTripScreen = () => {
   }, [flowStep, destinationSet, activeTrip?.id]);
 
   useEffect(() => {
-    // Cada viaje inicia con modo 3D Norte-arriba activo por defecto.
+    // Cada viaje inicia siguiendo la dirección de la polilínea (ruta hacia arriba).
     setIsNorth3DEnabled(true);
   }, [activeTrip?.id]);
 
@@ -999,7 +1043,6 @@ const ActiveTripScreen = () => {
     rerouteInFlightRef.current = false;
     rerouteEvalStateRef.current = createInitialRerouteEvalState();
     navProgressRef.current = createInitialNavigationProgressState();
-    lastTrafficRefreshAtRef.current = 0;
     setIsRerouting(false);
     setRoutePolyline(null);
     setRouteInfo(null);
@@ -1085,6 +1128,26 @@ const ActiveTripScreen = () => {
 
   const hasPlannedMultiStopRoute = tripWaypoints.length > 0;
 
+  const isFreeRideActive = useMemo(() => {
+    if (isFreeRide) return true;
+    if (flowStep !== FLOW_STEP.IN_PROGRESS || hasPlannedMultiStopRoute) return false;
+    if (tripFinalDestination) return false;
+    const destLat = Number(activeTrip?.destination_lat);
+    const destLng = Number(activeTrip?.destination_lng);
+    const hasDestAddress = Boolean(String(activeTrip?.destination_address || '').trim());
+    const hasDestCoords = hasDestAddress && Number.isFinite(destLat) && Number.isFinite(destLng);
+    return activeTrip?.status === TRIP_STATUS.IN_PROGRESS && !hasDestCoords;
+  }, [
+    isFreeRide,
+    flowStep,
+    hasPlannedMultiStopRoute,
+    tripFinalDestination,
+    activeTrip?.status,
+    activeTrip?.destination_address,
+    activeTrip?.destination_lat,
+    activeTrip?.destination_lng,
+  ]);
+
   const activeNavTarget = useMemo(() => {
     if (
       flowStep === FLOW_STEP.IN_PROGRESS
@@ -1120,13 +1183,15 @@ const ActiveTripScreen = () => {
     || visitedWaypointCount >= tripWaypoints.length;
 
   const fetchNavigationRoute = useCallback(async (forceRefresh = false) => {
-    if (!activeTrip || !currentLocation) return;
+    if (!activeTrip || !currentLocation || isFreeRideActive) return;
 
     try {
       const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
       // Snap the origin to the existing polyline (if loaded) so the new route
       // always departs from the road, not from a sidewalk GPS position.
-      const origin = snapOriginToRoute(currentLocation.lat, currentLocation.lng, routeCoordsRef.current);
+      const origin = forceRefresh
+        ? { lat: currentLocation.lat, lng: currentLocation.lng }
+        : snapOriginToRoute(currentLocation.lat, currentLocation.lng, routeCoordsRef.current);
       const destination = (flowStep === FLOW_STEP.IN_PROGRESS || destinationSet)
         ? {
           lat: activeNavTarget?.lat ?? parseFloat(activeTrip.destination_lat),
@@ -1153,8 +1218,14 @@ const ActiveTripScreen = () => {
         return;
       }
 
-      const result = await getDirections(origin, destination);
-      setRoutePolyline(result.polyline);
+      const result = await getDirections(origin, destination, { bypassCache: forceRefresh });
+      const nextCoords = Array.isArray(result.polylineCoords) && result.polylineCoords.length > 0
+        ? result.polylineCoords
+        : (result.polyline ? decodePolyline(result.polyline) : []);
+
+      setRoutePolyline(result.polyline || null);
+      setRoutePolylineCoords(nextCoords);
+      setRouteRevision((prev) => prev + 1);
       setRouteInfo({
         distance: result.distance,
         duration: result.duration,
@@ -1175,6 +1246,7 @@ const ActiveTripScreen = () => {
     activeNavTarget?.lat,
     activeNavTarget?.lng,
     visitedWaypointCount,
+    isFreeRideActive,
   ]);
 
   const triggerAdaptiveReroute = useCallback(async (reason, cooldownMs = 5000) => {
@@ -1208,6 +1280,28 @@ const ActiveTripScreen = () => {
     fetchNavigationRoute();
   }, [fetchNavigationRoute]);
 
+  const freeRideRouteClearedRef = useRef(false);
+  useEffect(() => {
+    freeRideRouteClearedRef.current = false;
+  }, [activeTrip?.id]);
+
+  useEffect(() => {
+    if (!isFreeRideActive || freeRideRouteClearedRef.current) return;
+    freeRideRouteClearedRef.current = true;
+    setRoutePolyline(null);
+    setRoutePolylineCoords([]);
+    setRouteInfo(null);
+    setRouteSteps([]);
+    setRemainingDistanceMeters(null);
+    setRemainingDurationSeconds(null);
+    setNextStepInfo(null);
+    setRouteRevision((prev) => prev + 1);
+    navProgressRef.current = createInitialNavigationProgressState();
+    rerouteEvalStateRef.current = createInitialRerouteEvalState();
+    routeFetched.current = true;
+    lastRouteKeyRef.current = `free-${activeTrip?.id || 'ride'}`;
+  }, [isFreeRideActive, activeTrip?.id]);
+
   // Timer - only in_progress
   useEffect(() => {
     if (flowStep === FLOW_STEP.IN_PROGRESS) {
@@ -1226,18 +1320,58 @@ const ActiveTripScreen = () => {
     }
   }, [currentLocation]);
 
+  useEffect(() => {
+    freeRideTrackRef.current = [];
+    freeRideTrackSampleRef.current = null;
+    setFreeRideTrackCoords([]);
+  }, [activeTrip?.id]);
+
+  useEffect(() => {
+    if (!isFreeRideActive) {
+      freeRideTrackRef.current = [];
+      freeRideTrackSampleRef.current = null;
+      setFreeRideTrackCoords([]);
+      return;
+    }
+    if (!currentLocation) return;
+    if (freeRideTrackRef.current.length > 0) return;
+    const seedPoint = toGpsTrackPoint(currentLocation);
+    if (!seedPoint) return;
+    freeRideTrackRef.current = [seedPoint];
+    freeRideTrackSampleRef.current = seedPoint;
+    setFreeRideTrackCoords([seedPoint]);
+  }, [isFreeRideActive, currentLocation]);
+
+  useEffect(() => {
+    if (!isFreeRideActive || flowStep !== FLOW_STEP.IN_PROGRESS || !currentLocation) return;
+
+    const { track, lastSample } = appendGpsTrackPoint(
+      freeRideTrackRef.current,
+      currentLocation,
+      freeRideTrackSampleRef.current,
+    );
+
+    if (track === freeRideTrackRef.current && lastSample === freeRideTrackSampleRef.current) {
+      return;
+    }
+
+    freeRideTrackRef.current = track;
+    freeRideTrackSampleRef.current = lastSample;
+    setFreeRideTrackCoords(track);
+  }, [currentLocation, isFreeRideActive, flowStep]);
+
   // Live price
   const livePrice = useMemo(() => {
     return Math.round(tariffInfo.base + tariffInfo.perKm * tripDistanceKm);
   }, [tripDistanceKm, tariffInfo]);
 
-  const routeCoords = useMemo(
-    () => (routePolyline ? decodePolyline(routePolyline) : []),
-    [routePolyline]
-  );
+  const routeCoords = useMemo(() => {
+    if (routePolylineCoords.length > 0) return routePolylineCoords;
+    return routePolyline ? decodePolyline(routePolyline) : [];
+  }, [routePolyline, routePolylineCoords]);
 
   const shouldUseFixedRouteFare = useMemo(() => {
-    if (!destinationSet || isFreeRide) return false;
+    if (!destinationSet || isFreeRideActive) return false;
     const originLat = parseFloat(activeTrip?.origin_lat);
     const originLng = parseFloat(activeTrip?.origin_lng);
     const destLat = parseFloat(activeTrip?.destination_lat);
@@ -1252,14 +1386,47 @@ const ActiveTripScreen = () => {
     activeTrip?.destination_lat,
     activeTrip?.destination_lng,
     destinationSet,
-    isFreeRide,
+    isFreeRideActive,
   ]);
+
+  const confirmedPassengerFare = useMemo(
+    () => (isFreeRideActive ? null : resolveConfirmedPassengerFare(activeTrip)),
+    [
+      activeTrip?.notes,
+      activeTrip?.price,
+      activeTrip?.distance_km,
+      activeTrip?.commission_amount,
+      isFreeRideActive,
+    ],
+  );
+
+  /** Solo pedir OSRM si hace falta calcular km para tarifa fija (sin precio/km ya en el viaje). */
+  const needsOsrmFareRouteSummary = useMemo(() => {
+    if (!shouldUseFixedRouteFare || !tariffLoaded) return false;
+    if (confirmedPassengerFare?.price > 0) return false;
+    if (Number.isFinite(confirmedPassengerFare?.distanceKm) && confirmedPassengerFare.distanceKm > 0) {
+      return false;
+    }
+    return true;
+  }, [shouldUseFixedRouteFare, tariffLoaded, confirmedPassengerFare]);
 
   useEffect(() => {
     if (!activeTrip || !shouldUseFixedRouteFare) {
       setFareRouteDistanceKm(null);
       fareRouteKeyRef.current = '';
-      return;
+      return undefined;
+    }
+
+    const confirmedKm = Number(confirmedPassengerFare?.distanceKm);
+    if (Number.isFinite(confirmedKm) && confirmedKm > 0) {
+      setFareRouteDistanceKm(confirmedKm);
+      return undefined;
+    }
+
+    if (!needsOsrmFareRouteSummary) {
+      setFareRouteDistanceKm(null);
+      fareRouteKeyRef.current = '';
+      return undefined;
     }
 
     const origin = {
@@ -1279,14 +1446,14 @@ const ActiveTripScreen = () => {
       Number(destination.lng).toFixed(6),
     ].join('|');
 
-    if (fareRouteKeyRef.current === fareKey) return;
+    if (fareRouteKeyRef.current === fareKey) return undefined;
     fareRouteKeyRef.current = fareKey;
 
     let cancelled = false;
 
     const fetchFareRouteDistance = async () => {
       try {
-        const result = await getDirections(origin, destination);
+        const result = await getRouteSummary(origin, destination);
         if (cancelled) return;
 
         const parsedKm = parseRouteDistanceKm({
@@ -1315,6 +1482,8 @@ const ActiveTripScreen = () => {
     activeTrip?.destination_lat,
     activeTrip?.destination_lng,
     shouldUseFixedRouteFare,
+    needsOsrmFareRouteSummary,
+    confirmedPassengerFare?.distanceKm,
   ]);
 
   // Keep ref in sync so fetchNavigationRoute can read routeCoords without
@@ -1330,17 +1499,6 @@ const ActiveTripScreen = () => {
     if (!tariffLoaded || !shouldUseFixedRouteFare || !Number.isFinite(fareRouteDistanceKm)) return null;
     return Math.round(tariffInfo.base + effectiveTariffPerKm * fareRouteDistanceKm);
   }, [tariffLoaded, shouldUseFixedRouteFare, effectiveTariffPerKm, fareRouteDistanceKm, tariffInfo.base]);
-
-  const confirmedPassengerFare = useMemo(
-    () => (isFreeRide ? null : resolveConfirmedPassengerFare(activeTrip)),
-    [
-      activeTrip?.notes,
-      activeTrip?.price,
-      activeTrip?.distance_km,
-      activeTrip?.commission_amount,
-      isFreeRide,
-    ],
-  );
 
   const checkoutDistanceKm = useMemo(() => {
     if (confirmedPassengerFare) return confirmedPassengerFare.distanceKm;
@@ -1415,7 +1573,7 @@ const ActiveTripScreen = () => {
   ]);
 
   useEffect(() => {
-    if (!currentLocation || routeCoords.length === 0) return;
+    if (isFreeRideActive || !currentLocation || routeCoords.length === 0) return;
 
     const navPoint = {
       latitude: currentLocation.lat,
@@ -1451,42 +1609,24 @@ const ActiveTripScreen = () => {
     routeInfo?.durationValue,
     routeSteps,
     speed,
+    isFreeRideActive,
   ]);
 
-  // Recalcula ruta periódicamente en viajes largos (OSRM no tiene tráfico en vivo).
   useEffect(() => {
-    const isNavigating = flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.IN_PROGRESS;
-    if (!isNavigating || !routePolyline) return undefined;
-
-    trafficRefreshTimerRef.current = setInterval(() => {
-      const now = Date.now();
-      const speedMps = Number(currentLocation?.speed) || Number(speed) || 0;
-      if (speedMps < 1 || rerouteInFlightRef.current) return;
-      if (
-        Number.isFinite(remainingDistanceMeters)
-        && remainingDistanceMeters <= FINISH_TRIP_MAX_DISTANCE_METERS
-      ) {
-        return;
-      }
-      if (now - lastTrafficRefreshAtRef.current < 180000) return;
-
-      lastTrafficRefreshAtRef.current = now;
-      fetchNavigationRoute(true);
-    }, 60000);
-
-    return () => {
-      if (trafficRefreshTimerRef.current) {
-        clearInterval(trafficRefreshTimerRef.current);
-        trafficRefreshTimerRef.current = null;
-      }
-    };
-  }, [flowStep, routePolyline, currentLocation?.speed, speed, fetchNavigationRoute, remainingDistanceMeters]);
-
-  useEffect(() => {
-    if (!currentLocation || routeCoords.length < 2) return;
+    if (isFreeRideActive || !currentLocation || routeCoords.length < 2) return;
     if (
       Number.isFinite(remainingDistanceMeters)
       && remainingDistanceMeters <= FINISH_TRIP_MAX_DISTANCE_METERS
+    ) {
+      return;
+    }
+    if (flowStep === FLOW_STEP.AT_PICKUP) return;
+    if (
+      flowStep === FLOW_STEP.GOING_TO_PICKUP
+      && (
+        (Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters <= 60)
+        || (Number.isFinite(distanceToPickup) && distanceToPickup <= FINISH_TRIP_MAX_DISTANCE_METERS)
+      )
     ) {
       return;
     }
@@ -1522,9 +1662,12 @@ const ActiveTripScreen = () => {
     currentLocation,
     routeCoords,
     speed,
+    flowStep,
+    distanceToPickup,
     nextStepInfo?.distanceToStepMeters,
     remainingDistanceMeters,
     triggerAdaptiveReroute,
+    isFreeRideActive,
   ]);
 
   // Distance to pickup
@@ -1561,7 +1704,7 @@ const ActiveTripScreen = () => {
   }, [currentLocation, activeNavTarget]);
 
   const hasActiveTripDestination = useMemo(() => {
-    if (isFreeRide) return true;
+    if (isFreeRideActive) return true;
     if (tripFinalDestination?.lat != null && tripFinalDestination?.lng != null) return true;
     const destLat = Number(activeTrip?.destination_lat);
     const destLng = Number(activeTrip?.destination_lng);
@@ -1573,21 +1716,30 @@ const ActiveTripScreen = () => {
     activeTrip?.destination_lat,
     activeTrip?.destination_lng,
     tripFinalDestination,
-    isFreeRide,
+    isFreeRideActive,
   ]);
 
-  const isNearDestinationByRoute = Number.isFinite(remainingDistanceMeters)
+  const isNearFinalDestinationByRoute = Number.isFinite(remainingDistanceMeters)
     && remainingDistanceMeters <= FINISH_TRIP_MAX_DISTANCE_METERS;
 
-  const isNearDestinationByCoords = Number.isFinite(distanceToFinalDestination)
+  const isNearFinalDestinationByCoords = Number.isFinite(distanceToFinalDestination)
     && distanceToFinalDestination <= FINISH_TRIP_MAX_DISTANCE_METERS;
 
   const isNearActiveNavTarget = Number.isFinite(distanceToActiveNavTarget)
     && distanceToActiveNavTarget <= FINISH_TRIP_MAX_DISTANCE_METERS;
 
-  const isNearDestination = isNearDestinationByRoute
-    || isNearDestinationByCoords
-    || isNearActiveNavTarget;
+  // Solo se puede finalizar cuando ya no quedan paradas intermedias pendientes.
+  const isNavigatingToFinalDestination = !hasPlannedMultiStopRoute
+    || allPlannedWaypointsVisited;
+
+  const isNearFinalDestination = isFreeRideActive
+    ? false
+    : isNavigatingToFinalDestination
+      && (isNearFinalDestinationByRoute || isNearFinalDestinationByCoords);
+
+  const isNearDestination = isFreeRideActive
+    ? false
+    : (isNearFinalDestination || isNearActiveNavTarget);
 
   useEffect(() => {
     if (!isNearDestination) return;
@@ -1600,13 +1752,14 @@ const ActiveTripScreen = () => {
   const canArriveAtWaypoint = flowStep === FLOW_STEP.IN_PROGRESS
     && hasPlannedMultiStopRoute
     && !allPlannedWaypointsVisited
+    && activeNavTarget?.kind === 'waypoint'
     && Number.isFinite(distanceToActiveNavTarget)
     && distanceToActiveNavTarget <= FINISH_TRIP_MAX_DISTANCE_METERS;
 
   const canFinishTripNearby = flowStep === FLOW_STEP.IN_PROGRESS
-    && allPlannedWaypointsVisited
     && hasActiveTripDestination
-    && isNearDestination;
+    && isNavigatingToFinalDestination
+    && (isFreeRideActive || isNearFinalDestination);
 
   const canConfirmPickupNearby = Number.isFinite(distanceToPickup)
     && distanceToPickup <= FINISH_TRIP_MAX_DISTANCE_METERS;
@@ -1617,9 +1770,9 @@ const ActiveTripScreen = () => {
 
   useEffect(() => {
     const isNavigating = flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.IN_PROGRESS;
-    if (!isNavigating || isRerouting || !nextStepInfo) return;
+    if (!isNavigating || isRerouting || isFreeRideActive || !nextStepInfo) return;
     announceManeuver(nextStepInfo, nextStepInfo.distanceToStepMeters);
-  }, [flowStep, isRerouting, nextStepInfo, announceManeuver]);
+  }, [flowStep, isRerouting, isFreeRideActive, nextStepInfo, announceManeuver]);
 
   useEffect(() => {
     if (flowStep !== FLOW_STEP.GOING_TO_PICKUP || !canConfirmPickupArriving) return;
@@ -1627,9 +1780,9 @@ const ActiveTripScreen = () => {
   }, [flowStep, canConfirmPickupArriving, announcePickupArrival]);
 
   useEffect(() => {
-    if (flowStep !== FLOW_STEP.IN_PROGRESS || !isNearDestination) return;
+    if (flowStep !== FLOW_STEP.IN_PROGRESS || !isNearFinalDestination) return;
     announceDestinationArrival();
-  }, [flowStep, isNearDestination, announceDestinationArrival]);
+  }, [flowStep, isNearFinalDestination, announceDestinationArrival]);
 
   const nextNextStepInfo = useMemo(() => {
     if (!nextStepInfo || !Array.isArray(routeSteps) || routeSteps.length === 0) return null;
@@ -1784,7 +1937,7 @@ const ActiveTripScreen = () => {
     setTextDestProcessing(true);
     autocompleteTimerRef.current = setTimeout(async () => {
       try {
-        const results = await autocompleteAddressSalta(query, 6);
+        const results = await autocompleteAddressSalta(query, 4);
         setDestinationOptions(results);
       } catch {
         setDestinationOptions([]);
@@ -1811,9 +1964,10 @@ const ActiveTripScreen = () => {
     flowLockRef.current = null;
     setIsFreeRide(true);
     setDestinationSet(true);
+    setIsNorth3DEnabled(false);
     setFlowStep(FLOW_STEP.IN_PROGRESS);
     await updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS);
-  }, [activeTrip, updateTripStatus]);
+  }, [activeTrip, updateTripStatus, setFlowStep]);
 
   // Select a destination from the options
   const selectDestination = useCallback(async (option) => {
@@ -1878,19 +2032,31 @@ const ActiveTripScreen = () => {
   const handleConfirmWaypointArrival = useCallback(() => {
     if (!hasPlannedMultiStopRoute || allPlannedWaypointsVisited) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const nextWaypoint = tripWaypoints[visitedWaypointCount];
     setVisitedWaypointCount((count) => count + 1);
     routeFetched.current = false;
     lastRouteKeyRef.current = '';
     setRoutePolyline(null);
+    setRoutePolylineCoords([]);
     setRouteInfo(null);
     setRouteSteps([]);
+    setRemainingDistanceMeters(null);
+    setRemainingDurationSeconds(null);
+    setNextStepInfo(null);
     navProgressRef.current = createInitialNavigationProgressState();
+    rerouteEvalStateRef.current = createInitialRerouteEvalState();
     resetAnnouncements();
+
+    const hasMoreWaypoints = visitedWaypointCount + 1 < tripWaypoints.length;
+    const nextLabel = hasMoreWaypoints
+      ? `Parada ${visitedWaypointCount + 2}`
+      : (tripFinalDestination?.address || 'destino final');
+
     Toast.show({
       type: 'success',
       text1: 'Parada completada',
-      text2: nextWaypoint?.address || 'Continuá al siguiente punto.',
+      text2: hasMoreWaypoints
+        ? `Continuá hacia ${nextLabel}.`
+        : `Continuá hacia el destino final: ${nextLabel}.`,
       visibilityTime: 3500,
     });
   }, [
@@ -1898,6 +2064,7 @@ const ActiveTripScreen = () => {
     allPlannedWaypointsVisited,
     tripWaypoints,
     visitedWaypointCount,
+    tripFinalDestination?.address,
     resetAnnouncements,
   ]);
 
@@ -2160,7 +2327,9 @@ const ActiveTripScreen = () => {
   if (!activeTrip) return null;
 
   const isInProgress = flowStep === FLOW_STEP.IN_PROGRESS;
-  const { point: pickupPoint, isApproachOnly: isApproachOnlyTrip } = resolvePickupPoint(activeTrip, currentLocation);
+  const isNavigatingToPickup = flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.AT_PICKUP;
+  const isNavigating = isNavigatingToPickup || isInProgress;
+  const { point: pickupPoint, isApproachOnly: isApproachOnlyPickup } = resolvePickupPoint(activeTrip, currentLocation);
   const tripOriginPoint = {
     lat: parseFloat(activeTrip.origin_lat),
     lng: parseFloat(activeTrip.origin_lng),
@@ -2169,17 +2338,23 @@ const ActiveTripScreen = () => {
   const hasTripOrigin = Number.isFinite(tripOriginPoint.lat) && Number.isFinite(tripOriginPoint.lng);
   const useTripOriginRoute = flowStep === FLOW_STEP.SET_DESTINATION || flowStep === FLOW_STEP.IN_PROGRESS || destinationSet;
   const maneuverPresentation = getManeuverPresentation(
-    nextStepInfo?.maneuver,
-    remainingDistanceMeters,
+    isFreeRideActive ? null : nextStepInfo?.maneuver,
+    isFreeRideActive ? null : remainingDistanceMeters,
     nextStepInfo?.distanceToStepMeters,
   );
-  const isArriving = Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters <= 40;
-  const navigationDistanceText = isArriving
-    ? 'Llegaste'
-    : formatRemainingDistance(nextStepInfo?.distanceToStepMeters);
-  const remainingDistanceText = formatRemainingDistance(remainingDistanceMeters);
+  const isArriving = !isFreeRideActive
+    && Number.isFinite(remainingDistanceMeters)
+    && remainingDistanceMeters <= 40;
+  const navigationDistanceText = isFreeRideActive
+    ? formatDistance(tripDistanceKm)
+    : (isArriving
+      ? 'Llegaste'
+      : formatRemainingDistance(nextStepInfo?.distanceToStepMeters));
+  const remainingDistanceText = isFreeRideActive
+    ? 'En curso'
+    : formatRemainingDistance(remainingDistanceMeters);
   const etaText = formatEta(remainingDurationSeconds);
-  const maneuverIcon = maneuverPresentation.icon;
+  const maneuverIcon = isFreeRideActive ? 'car-cruise-control' : maneuverPresentation.icon;
   const totalRouteDistanceMeters = Number(routeInfo?.distanceValue) || 0;
   const traveledDistanceMeters = Number.isFinite(remainingDistanceMeters) && totalRouteDistanceMeters > 0
     ? Math.max(0, totalRouteDistanceMeters - remainingDistanceMeters)
@@ -2380,14 +2555,20 @@ const ActiveTripScreen = () => {
         origin={mapOrigin}
         destination={mapDestination}
         polyline={routePolyline}
+        routeCoords={routeCoords}
+        routeSteps={routeSteps}
+        routeRevision={routeRevision}
+        isRerouting={isRerouting}
         heading={heading}
-        navigationMode={isInProgress || flowStep === FLOW_STEP.GOING_TO_PICKUP}
-        threeDEnabled={(isInProgress || flowStep === FLOW_STEP.GOING_TO_PICKUP) && isNorth3DEnabled}
+        navigationMode={isNavigating}
+        threeDEnabled={isNavigating && isNorth3DEnabled && !isFreeRideActive}
+        freeRideMode={isFreeRideActive && isInProgress}
+        traveledRouteCoords={freeRideTrackCoords}
         onToggleThreeD={() => setIsNorth3DEnabled((prev) => !prev)}
         onToggleVoiceMute={toggleVoiceMute}
         isVoiceMuted={isVoiceMuted}
         controlsBottomOffset={mapControlsBottomOffset}
-        remainingDistanceMeters={remainingDistanceMeters}
+        remainingDistanceMeters={isFreeRideActive ? null : remainingDistanceMeters}
         routeEndVariant={flowStep === FLOW_STEP.GOING_TO_PICKUP ? 'pickup' : 'destination'}
         style={StyleSheet.absoluteFillObject}
       />
@@ -2401,7 +2582,7 @@ const ActiveTripScreen = () => {
           <View style={[s.navBadge, { backgroundColor: `${maneuverPresentation.tint}14` }]}>
             <MaterialCommunityIcons name="navigation-variant" size={12} color={maneuverPresentation.tint} />
             <Text style={[s.navBadgeText, { color: maneuverPresentation.tint }]}>
-              {isRerouting ? 'Recalculando' : maneuverPresentation.shortLabel}
+              {isRerouting ? 'Recalculando' : (isFreeRideActive ? 'Sin destino' : maneuverPresentation.shortLabel)}
             </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -2409,7 +2590,9 @@ const ActiveTripScreen = () => {
               <ActivityIndicator size="small" color={colors.primary} />
             )}
             <Text style={s.navEtaText}>
-              {isArriving ? 'Llegada' : `${etaText} · ${formatArrivalClock(remainingDurationSeconds)}`}
+              {isFreeRideActive
+                ? 'Tarifa por km'
+                : (isArriving ? 'Llegada' : `${etaText} · ${formatArrivalClock(remainingDurationSeconds)}`)}
             </Text>
           </View>
         </View>
@@ -2749,9 +2932,7 @@ const ActiveTripScreen = () => {
                     Llegué a parada {visitedWaypointCount + 1}
                   </Text>
                 </TouchableOpacity>
-              ) : null}
-
-              {canFinishTripNearby ? (
+              ) : canFinishTripNearby ? (
                 <SliderButton
                   ref={sliderRef}
                   onConfirm={handleEndTrip}

@@ -282,7 +282,6 @@ export const useOwner = () => {
       driverNumber,
       vehicleBrand,
       vehicleModel,
-      vehicleYear,
       vehiclePlate,
       vehicleColor,
     }) => {
@@ -333,7 +332,6 @@ export const useOwner = () => {
           driver_number: driverNumber ? parseInt(driverNumber, 10) : ownerRow.driver_number,
           vehicle_brand: vehicleBrand?.trim() || ownerRow.vehicle_brand,
           vehicle_model: vehicleModel?.trim() || ownerRow.vehicle_model,
-          vehicle_year: vehicleYear ? parseInt(vehicleYear, 10) : ownerRow.vehicle_year,
           vehicle_plate: vehiclePlate?.trim() || ownerRow.vehicle_plate,
           vehicle_color: vehicleColor?.trim() || ownerRow.vehicle_color,
           vehicle_photo_url: ownerRow.vehicle_photo_url,

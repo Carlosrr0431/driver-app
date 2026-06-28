@@ -19,8 +19,26 @@ BEGIN
   IF v_digits LIKE '0%' THEN
     v_digits := substring(v_digits FROM 2);
   END IF;
-  IF length(v_digits) <= 10 AND v_digits NOT LIKE '54%' THEN
+  IF v_digits LIKE '54%' THEN
+    IF length(substring(v_digits FROM 3)) = 11 AND substring(v_digits FROM 3) LIKE '9%' THEN
+      RETURN v_digits;
+    END IF;
+    IF length(substring(v_digits FROM 3)) = 10 THEN
+      RETURN '549' || substring(v_digits FROM 3);
+    END IF;
+    RETURN v_digits;
+  END IF;
+  IF length(v_digits) = 11 AND v_digits LIKE '9%' THEN
+    RETURN '54' || v_digits;
+  END IF;
+  IF length(v_digits) = 10 THEN
+    RETURN '549' || v_digits;
+  END IF;
+  IF length(v_digits) < 10 THEN
     v_digits := '54' || v_digits;
+    IF length(v_digits) = 12 THEN
+      RETURN '549' || substring(v_digits FROM 3);
+    END IF;
   END IF;
   RETURN v_digits;
 END;
@@ -308,13 +326,25 @@ updated AS (
   SET
     full_name = s.full_name,
     phone = s.phone,
-    phone_normalized = s.phone_normalized,
-    auth_email = s.auth_email,
+    phone_normalized = public.normalize_driver_phone(s.phone),
+    auth_email = public.build_owner_auth_email(public.normalize_driver_phone(s.phone), s.driver_number),
     role = 'owner',
     vehicle_brand = s.vehicle_brand,
     vehicle_model = s.vehicle_model,
     vehicle_plate = s.vehicle_plate,
     vehicle_color = s.vehicle_color,
+    user_id = NULL,
+    password_initialized = false,
+    is_available = false,
+    current_lat = NULL,
+    current_lng = NULL,
+    total_trips = 0,
+    total_km = 0,
+    pending_commission = 0,
+    last_commission_payment_at = NULL,
+    push_token = NULL,
+    gps_simulation_active = false,
+    vehicle_operator_id = NULL,
     updated_at = NOW()
   FROM fleet_seed AS s
   WHERE d.driver_number = s.driver_number
@@ -346,8 +376,8 @@ INSERT INTO public.drivers (
 SELECT
   s.full_name,
   s.phone,
-  s.phone_normalized,
-  s.auth_email,
+  public.normalize_driver_phone(s.phone),
+  public.build_owner_auth_email(public.normalize_driver_phone(s.phone), s.driver_number),
   'owner',
   NULL,
   false,

@@ -18,7 +18,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
 import { colors } from '../theme/colors';
 import { formatPrice } from '../utils/formatters';
 import { createPaymentSession, getPaymentStatus } from '../services/paypertic';
@@ -124,11 +123,36 @@ const extractReceiptUrl = (payment) => {
   return validUrl ? validUrl.trim() : null;
 };
 
-const formatPaymentDate = (value) => {
-  if (!value) return 'No disponible';
+const parsePayperticDate = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    const normalized = value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+};
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'No disponible';
+/** Paypertic no expone PDF por API; el comprobante oficial está en form_url del checkout. */
+const getPayperticFormUrl = (payment, fallbackPaymentId) => {
+  const fromPayment = payment?.form_url;
+  if (typeof fromPayment === 'string' && fromPayment.startsWith('http')) return fromPayment.trim();
+  const id = payment?.id || fallbackPaymentId;
+  if (id) return `https://checkout.paypertic.com/app/${id}`;
+  return null;
+};
+
+const getPaymentPaidAt = (payment) =>
+  payment?.paid_date ||
+  payment?.accreditation_date ||
+  payment?.process_date ||
+  payment?.last_update_date ||
+  null;
+
+const formatPaymentDate = (value) => {
+  const date = parsePayperticDate(value);
+  if (!date) return 'No disponible';
 
   return date.toLocaleString('es-AR', {
     day: '2-digit',
@@ -258,7 +282,7 @@ const loadingCardStyles = StyleSheet.create({
 
 const generateReceiptHTML = (payment, balance) => {
   const amount = Number(payment?.final_amount) || balance;
-  const paidAt = payment?.paid_date || payment?.process_date;
+  const paidAt = getPaymentPaidAt(payment);
   const providerPaymentId = payment?.id || 'No disponible';
   const paymentReference = payment?.external_transaction_id || 'No disponible';
   const dateStr = formatPaymentDate(paidAt);
@@ -636,6 +660,114 @@ const rejectedCardStyles = StyleSheet.create({
   },
 });
 
+const PaymentApprovedCard = React.memo(function PaymentApprovedCard({
+  payment,
+  fallbackAmount,
+  isLoadingDetails,
+  onGeneratePDF,
+  onShareReceipt,
+  onDownloadReceipt,
+  onGoBack,
+  isGeneratingPDF,
+  isSharingReceipt,
+  isDownloadingReceipt,
+}) {
+  const amount = Number(payment?.final_amount) || fallbackAmount;
+  const paidAt = getPaymentPaidAt(payment);
+  const providerPaymentId = payment?.id || '—';
+  const paymentReference = payment?.external_transaction_id || '—';
+  const receiptUrl = extractReceiptUrl(payment);
+  const formUrl = getPayperticFormUrl(payment, null);
+  const showPayperticReceipt = Boolean(receiptUrl || formUrl);
+
+  return (
+    <View style={styles.resultCard}>
+      <View style={[styles.iconCircle, { backgroundColor: '#DCFCE7' }]}>
+        <MaterialCommunityIcons name="check-circle" size={48} color="#16A34A" />
+      </View>
+
+      <Text style={styles.resultTitle}>Pago acreditado</Text>
+      <Text style={styles.resultSubtitle}>
+        Tu comisión quedó registrada correctamente. Podés descargar el comprobante en PDF.
+      </Text>
+
+      <View style={[styles.receiptBox, { borderColor: '#BBF7D0' }]}>
+        <View style={styles.receiptRow}>
+          <Text style={styles.receiptLabel}>Monto</Text>
+          <Text style={styles.receiptValue}>{formatPrice(amount)}</Text>
+        </View>
+        <View style={styles.receiptRow}>
+          <Text style={styles.receiptLabel}>Fecha</Text>
+          <Text style={styles.receiptValue}>{formatPaymentDate(paidAt)}</Text>
+        </View>
+        <View style={styles.receiptRow}>
+          <Text style={styles.receiptLabel}>ID de pago</Text>
+          <Text style={styles.receiptValueSmall} numberOfLines={2}>{providerPaymentId}</Text>
+        </View>
+        <View style={styles.receiptRow}>
+          <Text style={styles.receiptLabel}>Referencia</Text>
+          <Text style={styles.receiptValueSmall} numberOfLines={2}>{paymentReference}</Text>
+        </View>
+      </View>
+
+      {isLoadingDetails ? (
+        <View style={styles.infoInline}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          <Text style={styles.infoInlineText}>Actualizando comprobante...</Text>
+        </View>
+      ) : null}
+
+      <Pressable
+        onPress={onGeneratePDF}
+        style={({ pressed }) => [styles.pdfButton, pressed && { opacity: 0.9 }]}
+        disabled={isGeneratingPDF}
+      >
+        {isGeneratingPDF ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <>
+            <MaterialCommunityIcons name="file-pdf-box" size={22} color="#FFFFFF" style={{ marginRight: 8 }} />
+            <Text style={styles.actionButtonText}>Descargar comprobante PDF</Text>
+          </>
+        )}
+      </Pressable>
+
+      {showPayperticReceipt ? (
+        <Pressable
+          onPress={onDownloadReceipt}
+          style={({ pressed }) => [styles.secondaryActionButton, pressed && { opacity: 0.9 }]}
+          disabled={isDownloadingReceipt}
+        >
+          {isDownloadingReceipt ? (
+            <ActivityIndicator color={colors.text} />
+          ) : (
+            <Text style={styles.secondaryActionButtonText}>Ver comprobante Paypertic</Text>
+          )}
+        </Pressable>
+      ) : null}
+
+      <Pressable
+        onPress={onShareReceipt}
+        style={({ pressed }) => [styles.secondaryActionButton, pressed && { opacity: 0.9 }]}
+        disabled={isSharingReceipt}
+      >
+        {isSharingReceipt ? (
+          <ActivityIndicator color={colors.text} />
+        ) : (
+          <Text style={styles.secondaryActionButtonText}>Compartir datos del pago</Text>
+        )}
+      </Pressable>
+
+      <Pressable
+        onPress={onGoBack}
+        style={({ pressed }) => [styles.secondaryActionButton, { marginTop: 4 }, pressed && { opacity: 0.9 }]}
+      >
+        <Text style={styles.secondaryActionButtonText}>Volver al inicio</Text>
+      </Pressable>
+    </View>
+  );
+});
+
 export default function CommissionPaymentScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -674,14 +806,12 @@ export default function CommissionPaymentScreen() {
     setWebviewLoaded(true);
   };
 
-  // Registra el pago en la app pero mantiene el WebView de Pagotic visible
-  // (comprobante, recibo y UI oficial del checkout).
+  // Registra el pago y muestra comprobante nativo (PDF), no el checkout de Pagotic.
   const recordPaymentSuccess = async (payment = null) => {
     const alreadyRecorded = paymentSuccessRecordedRef.current;
     paymentSuccessRecordedRef.current = true;
     setPaymentSuccessRecorded(true);
     setShowVerifyingOverlay(false);
-    setPhase('webview');
 
     let resolvedPayment = payment;
     if (!resolvedPayment && paymentId) {
@@ -693,8 +823,19 @@ export default function CommissionPaymentScreen() {
     }
 
     if (resolvedPayment) {
-      saveApprovedPayment(resolvedPayment);
+      saveApprovedPayment({
+        ...resolvedPayment,
+        form_url: resolvedPayment.form_url || formUrl || getPayperticFormUrl(resolvedPayment, paymentId),
+      });
+    } else if (paymentId || formUrl) {
+      saveApprovedPayment({
+        id: paymentId,
+        final_amount: balance,
+        form_url: formUrl || getPayperticFormUrl(null, paymentId),
+      });
     }
+
+    setPhase('approved');
 
     if (!alreadyRecorded) {
       const amount = Number(resolvedPayment?.final_amount) || balance;
@@ -801,17 +942,20 @@ export default function CommissionPaymentScreen() {
       setIsGeneratingPDF(true);
       const html = generateReceiptHTML(approvedPayment, balance);
       const { uri } = await Print.printToFileAsync({ html, base64: false });
-      const destUri = `${FileSystem.cacheDirectory}comprobante_comision_${Date.now()}.pdf`;
-      await FileSystem.moveAsync({ from: uri, to: destUri });
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
-        await Sharing.shareAsync(destUri, {
+        await Sharing.shareAsync(uri, {
           mimeType: 'application/pdf',
           dialogTitle: 'Comprobante de pago',
           UTI: 'com.adobe.pdf',
         });
       } else {
-        Toast.show({ type: 'info', text1: 'El comprobante fue generado', text2: 'Tu dispositivo no admite compartir archivos.', visibilityTime: 3500 });
+        Toast.show({
+          type: 'info',
+          text1: 'Comprobante generado',
+          text2: 'Tu dispositivo no admite compartir archivos.',
+          visibilityTime: 3500,
+        });
       }
     } catch (e) {
       Toast.show({ type: 'error', text1: 'No se pudo generar el PDF', text2: e?.message, visibilityTime: 4000 });
@@ -821,7 +965,7 @@ export default function CommissionPaymentScreen() {
   };
 
   const handleShareReceipt = async () => {    const amount = Number(approvedPayment?.final_amount) || balance;
-    const paidAt = approvedPayment?.paid_date || approvedPayment?.process_date;
+    const paidAt = getPaymentPaidAt(approvedPayment);
     const paymentReference = approvedPayment?.external_transaction_id || 'No disponible';
     const providerPaymentId = approvedPayment?.id || paymentId || 'No disponible';
     const receiptUrl = extractReceiptUrl(approvedPayment);
@@ -857,12 +1001,14 @@ export default function CommissionPaymentScreen() {
 
   const handleDownloadReceipt = async () => {
     const receiptUrl = extractReceiptUrl(approvedPayment);
+    const payperticFormUrl = getPayperticFormUrl(approvedPayment, paymentId);
+    const targetUrl = receiptUrl || payperticFormUrl;
 
-    if (!receiptUrl) {
+    if (!targetUrl) {
       Toast.show({
         type: 'info',
         text1: 'Comprobante no disponible',
-        text2: 'Tu medio de pago no devolvió un enlace de descarga.',
+        text2: 'Generá el PDF local o intentá más tarde.',
         visibilityTime: 3500,
       });
       return;
@@ -870,18 +1016,18 @@ export default function CommissionPaymentScreen() {
 
     try {
       setIsDownloadingReceipt(true);
-      const canOpen = await Linking.canOpenURL(receiptUrl);
+      const canOpen = await Linking.canOpenURL(targetUrl);
 
       if (!canOpen) {
         throw new Error('No se puede abrir el comprobante');
       }
 
-      await Linking.openURL(receiptUrl);
+      await Linking.openURL(targetUrl);
     } catch {
       Toast.show({
         type: 'error',
         text1: 'No se pudo abrir el comprobante',
-        text2: 'Probá compartir el enlace o reintentar más tarde.',
+        text2: 'Probá descargar el PDF local o reintentá más tarde.',
         visibilityTime: 3500,
       });
     } finally {
@@ -998,7 +1144,24 @@ export default function CommissionPaymentScreen() {
     };
   }, [phase, driver?.id, queryClient]);
 
-  // Validación puntual al abrir y al volver de background, sin polling.
+  // Polling mientras el chofer completa transferencia o vuelve del banco.
+  useEffect(() => {
+    if (phase !== 'webview' || !paymentId || paymentSuccessRecordedRef.current) return;
+
+    const runPoll = async () => {
+      const statusHandled = await verifyPaymentByProviderStatus(false);
+      if (!statusHandled && !paymentSuccessRecordedRef.current) {
+        await verifyPaymentByDriverBalance(false);
+      }
+    };
+
+    runPoll();
+    const intervalId = setInterval(runPoll, 2500);
+
+    return () => clearInterval(intervalId);
+  }, [phase, paymentId, driver?.id]);
+
+  // Validación al montar y al volver de background (banco / Pagotic).
   useEffect(() => {
     const shouldVerify = phase === 'webview';
     if (!shouldVerify || !driver?.id) return;
@@ -1014,7 +1177,7 @@ export default function CommissionPaymentScreen() {
 
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        runVerification(false);
+        runVerification(true);
       }
     });
 
@@ -1024,7 +1187,7 @@ export default function CommissionPaymentScreen() {
   }, [phase, driver?.id, paymentId]);
 
   useEffect(() => {
-    if (!paymentSuccessRecorded || !paymentId) return;
+    if (phase !== 'approved' || !paymentId) return;
     if (approvedDetailsLoadedForPaymentId.current === String(paymentId)) return;
 
     let active = true;
@@ -1051,7 +1214,7 @@ export default function CommissionPaymentScreen() {
     return () => {
       active = false;
     };
-  }, [paymentSuccessRecorded, paymentId]);
+  }, [phase, paymentId]);
 
   const handlePayperticMessage = (event) => {
     try {
@@ -1089,6 +1252,21 @@ export default function CommissionPaymentScreen() {
 
   const startPaymentFlow = async () => {
     returnHandled.current = false;
+
+    if (paymentId && !paymentSuccessRecordedRef.current) {
+      try {
+        const existing = await getPaymentStatus(paymentId);
+        const existingStatus = (existing?.status || '').toLowerCase();
+        if (existingStatus === 'approved' || existingStatus === 'paid') {
+          setFormUrl(null);
+          await recordPaymentSuccess(existing);
+          return;
+        }
+      } catch {
+        // seguir con nueva sesión si no se pudo consultar
+      }
+    }
+
     paymentSuccessRecordedRef.current = false;
     setPaymentSuccessRecorded(false);
     webviewHasLoadedRef.current = false;
@@ -1097,6 +1275,7 @@ export default function CommissionPaymentScreen() {
     setRejectedPayment(null);
     setStartupError(null);
     setWebviewLoaded(false);
+    setPhase('idle');
 
     if (!(Number(balance) > 0)) {
       setPhase('idle');
@@ -1126,6 +1305,28 @@ export default function CommissionPaymentScreen() {
     startPaymentFlow();
   }, [autoStart, balance]);
 
+  // ── Pantalla aprobada con comprobante ─────────────────────────────────────
+  if (phase === 'approved') {
+    return (
+      <View style={styles.screen}>
+        <View style={[styles.resultContainer, { paddingTop: insets.top + 14 }]}>
+          <PaymentApprovedCard
+            payment={approvedPayment}
+            fallbackAmount={balance}
+            isLoadingDetails={isFetchingPaymentDetails}
+            onGeneratePDF={handleGeneratePDF}
+            onShareReceipt={handleShareReceipt}
+            onDownloadReceipt={handleDownloadReceipt}
+            onGoBack={() => navigation.goBack()}
+            isGeneratingPDF={isGeneratingPDF}
+            isSharingReceipt={isSharingReceipt}
+            isDownloadingReceipt={isDownloadingReceipt}
+          />
+        </View>
+      </View>
+    );
+  }
+
   // ── Pantalla rechazado ───────────────────────────────────────────────────
   if (phase === 'rejected' && rejectedPayment) {
     return (
@@ -1149,17 +1350,6 @@ export default function CommissionPaymentScreen() {
   if (phase === 'webview' && formUrl) {
     return (
       <View style={[styles.screen, { paddingTop: insets.top }]}>
-        {paymentSuccessRecorded ? (
-          <View style={styles.webviewTopBar}>
-            <Pressable
-              onPress={() => navigation.goBack()}
-              style={({ pressed }) => [styles.webviewTopBarButton, pressed && { opacity: 0.85 }]}
-            >
-              <MaterialCommunityIcons name="arrow-left" size={20} color={colors.text} />
-              <Text style={styles.webviewTopBarText}>Volver a la app</Text>
-            </Pressable>
-          </View>
-        ) : null}
         <WebView
           source={{ uri: formUrl }}
           injectedJavaScript={INJECTED_JS}

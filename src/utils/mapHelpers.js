@@ -15,8 +15,8 @@ const toRad = (value) => (value * Math.PI) / 180;
 export const getRegionForCoordinates = (points) => {
   if (!points || points.length === 0) {
     return {
-      latitude: -34.6037,
-      longitude: -58.3816,
+      latitude: -24.78,
+      longitude: -65.42,
       latitudeDelta: 0.05,
       longitudeDelta: 0.05,
     };
@@ -61,3 +61,50 @@ export const getBearing = (startLat, startLng, destLat, destLng) => {
   bearing = (bearing * 180) / Math.PI;
   return (bearing + 360) % 360;
 };
+
+const DEFAULT_PADDING = 60;
+
+/**
+ * Ajusta la cámara para encuadrar un conjunto de coordenadas.
+ * @param {React.RefObject} cameraRef - ref al componente <MapLibreGL.Camera>
+ * @param {Array<{latitude, longitude}>} coords
+ * @param {number|object} padding - píxeles de padding o {top,right,bottom,left}
+ */
+export function fitMapToCoordinates(cameraRef, coords = [], padding = DEFAULT_PADDING) {
+  const points = coords.filter(
+    (p) => Number.isFinite(p?.latitude) && Number.isFinite(p?.longitude),
+  );
+  if (!cameraRef?.current || points.length === 0) return;
+
+  if (points.length === 1) {
+    cameraRef.current.setCamera({
+      centerCoordinate: [points[0].longitude, points[0].latitude],
+      zoomLevel: 15,
+      animationDuration: 400,
+      animationMode: 'easeTo',
+    });
+    return;
+  }
+
+  const lngs = points.map((p) => p.longitude);
+  const lats = points.map((p) => p.latitude);
+  const ne = [Math.max(...lngs), Math.max(...lats)];
+  const sw = [Math.min(...lngs), Math.min(...lats)];
+  cameraRef.current.fitBounds(ne, sw, padding, 500);
+}
+
+/**
+ * Anima la cámara a una posición específica con heading, pitch y zoom.
+ * @param {React.RefObject} cameraRef - ref al componente <MapLibreGL.Camera>
+ */
+export function animateMapCamera(cameraRef, { center, bearing = 0, pitch = 0, zoom = 16 }, duration = 250) {
+  if (!cameraRef?.current || !center) return;
+  cameraRef.current.setCamera({
+    centerCoordinate: [center.longitude, center.latitude],
+    zoomLevel: zoom,
+    heading: bearing,
+    pitch,
+    animationDuration: duration,
+    animationMode: 'easeTo',
+  });
+}

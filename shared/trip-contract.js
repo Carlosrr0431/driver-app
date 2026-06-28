@@ -145,23 +145,104 @@ function locationsMatch(pickup, dest) {
 }
 
 /**
+ * Parsea JSON embebido tras un prefijo tipo [PICKUP_JSON:…] respetando arrays/objetos anidados.
+ * @returns {number|null} índice inclusive del último carácter del JSON, o null si no se encuentra.
+ */
+function findEmbeddedJsonEndIndex(text, jsonStart) {
+  const first = text[jsonStart];
+  if (first !== '[' && first !== '{') return null;
+
+  const pairs = { '[': ']', '{': '}' };
+  const stack = [first];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = jsonStart + 1; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '[' || ch === '{') {
+      stack.push(ch);
+      continue;
+    }
+    if (ch === ']' || ch === '}') {
+      const expected = pairs[stack[stack.length - 1]];
+      if (ch !== expected) return null;
+      stack.pop();
+      if (stack.length === 0) return i;
+    }
+  }
+  return null;
+}
+
+function parseEmbeddedJsonAfterPrefix(src, prefix) {
+  const text = String(src || '');
+  const start = text.indexOf(prefix);
+  if (start === -1) return null;
+  const jsonStart = start + prefix.length;
+  const jsonEnd = findEmbeddedJsonEndIndex(text, jsonStart);
+  if (jsonEnd == null) return null;
+  try {
+    return JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+  } catch {
+    return null;
+  }
+}
+
+function removeEmbeddedJsonMarkerBlock(notes, prefix) {
+  const text = String(notes || '');
+  const start = text.indexOf(prefix);
+  if (start === -1) return text;
+  const jsonStart = start + prefix.length;
+  const jsonEnd = findEmbeddedJsonEndIndex(text, jsonStart);
+  if (jsonEnd == null) return text;
+  let markerEnd = jsonEnd + 1;
+  if (text[markerEnd] === ']') markerEnd += 1;
+  return `${text.slice(0, start)}${text.slice(markerEnd)}`;
+}
+
+/**
+ * Notas legibles para el chofer: quita marcadores JSON embebidos y boilerplate del sistema.
+ */
+function cleanTripNotesForDriverDisplay(notes) {
+  let result = String(notes || '');
+  result = removeEmbeddedJsonMarkerBlock(result, NOTES_MARKERS.WAYPOINTS_JSON_PREFIX);
+  result = removeEmbeddedJsonMarkerBlock(result, NOTES_MARKERS.FINAL_DEST_JSON_PREFIX);
+  result = removeEmbeddedJsonMarkerBlock(result, NOTES_MARKERS.PICKUP_JSON_PREFIX);
+  result = result
+    .replace(/\[APPROACH_ONLY\]/gi, '')
+    .replace(/\[PASSENGER_APP\]/gi, '')
+    .replace(/Creado autom[aá]ticamente desde WhatsApp[^.]*\./gi, '')
+    .replace(/chofer\s*->\s*retiro pasajero[^.]*\./gi, '')
+    .replace(/Destino final:[^.]*\./gi, '')
+    .replace(/Destino final sugerido:.*/gi, '')
+    .replace(/Solicitado desde la app de pasajeros\./gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return result || null;
+}
+
+/**
  * Coordenadas de recogida del pasajero.
  * - WhatsApp / panel (APPROACH_ONLY): origin_* (+ PICKUP_JSON); legacy en destination_*.
  * - App de pasajeros: origin_* (+ PICKUP_JSON en notes).
  */
 function extractPickupFromNotes(notes) {
-  const src = String(notes || '');
-  const prefix = NOTES_MARKERS.PICKUP_JSON_PREFIX;
-  const start = src.indexOf(prefix);
-  if (start === -1) return null;
-  const jsonStart = start + prefix.length;
-  const jsonEnd = src.indexOf(']', jsonStart);
-  if (jsonEnd === -1) return null;
-  try {
-    return JSON.parse(src.slice(jsonStart, jsonEnd));
-  } catch {
-    return null;
-  }
+  return parseEmbeddedJsonAfterPrefix(notes, NOTES_MARKERS.PICKUP_JSON_PREFIX);
 }
 
 function buildPickupJsonMarker(location) {
@@ -400,18 +481,7 @@ function needsDriverDestinationChoice(trip = {}) {
  * Devuelve null si no está presente.
  */
 function extractFinalDestFromNotes(notes) {
-  const src = String(notes || '');
-  const prefix = NOTES_MARKERS.FINAL_DEST_JSON_PREFIX;
-  const start = src.indexOf(prefix);
-  if (start === -1) return null;
-  const jsonStart = start + prefix.length;
-  const jsonEnd = src.indexOf(']', jsonStart);
-  if (jsonEnd === -1) return null;
-  try {
-    return JSON.parse(src.slice(jsonStart, jsonEnd));
-  } catch {
-    return null;
-  }
+  return parseEmbeddedJsonAfterPrefix(notes, NOTES_MARKERS.FINAL_DEST_JSON_PREFIX);
 }
 
 /**
@@ -451,18 +521,8 @@ function normalizeWaypointList(waypoints) {
 }
 
 function extractWaypointsFromNotes(notes) {
-  const src = String(notes || '');
-  const prefix = NOTES_MARKERS.WAYPOINTS_JSON_PREFIX;
-  const start = src.indexOf(prefix);
-  if (start === -1) return [];
-  const jsonStart = start + prefix.length;
-  const jsonEnd = src.indexOf(']', jsonStart);
-  if (jsonEnd === -1) return [];
-  try {
-    return normalizeWaypointList(JSON.parse(src.slice(jsonStart, jsonEnd)));
-  } catch {
-    return [];
-  }
+  const parsed = parseEmbeddedJsonAfterPrefix(notes, NOTES_MARKERS.WAYPOINTS_JSON_PREFIX);
+  return normalizeWaypointList(parsed);
 }
 
 function buildWaypointsJsonMarker(waypoints) {
@@ -516,4 +576,5 @@ module.exports = {
   buildWaypointsJsonMarker,
   notesContainWaypointsJson,
   resolveTripWaypoints,
+  cleanTripNotesForDriverDisplay,
 };

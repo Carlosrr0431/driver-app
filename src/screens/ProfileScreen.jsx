@@ -73,7 +73,6 @@ const ProfileScreen = () => {
   const [driverNumber, setDriverNumber] = useState(driver?.driver_number?.toString() || '');
   const [vehicleBrand, setVehicleBrand] = useState(driver?.vehicle_brand || '');
   const [vehicleModel, setVehicleModel] = useState(driver?.vehicle_model || '');
-  const [vehicleYear, setVehicleYear] = useState(driver?.vehicle_year?.toString() || '');
   const [vehiclePlate, setVehiclePlate] = useState(driver?.vehicle_plate || '');
   const [vehicleColor, setVehicleColor] = useState(driver?.vehicle_color || '');
   const vehicleType = 'auto';
@@ -146,7 +145,6 @@ const ProfileScreen = () => {
           driver_number: driverNumber ? parseInt(driverNumber, 10) : null,
           vehicle_brand: vehicleBrand,
           vehicle_model: vehicleModel,
-          vehicle_year: vehicleYear ? parseInt(vehicleYear, 10) : null,
           vehicle_plate: vehiclePlate,
           vehicle_color: vehicleColor,
         };
@@ -336,14 +334,7 @@ const ProfileScreen = () => {
                 <>
                   <FormInput label="Marca" value={vehicleBrand} onChangeText={setVehicleBrand} icon="car" />
                   <FormInput label="Modelo" value={vehicleModel} onChangeText={setVehicleModel} icon="car-side" />
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <View style={{ flex: 1 }}>
-                      <FormInput label="Año" value={vehicleYear} onChangeText={setVehicleYear} icon="calendar" keyboardType="numeric" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <FormInput label="Color" value={vehicleColor} onChangeText={setVehicleColor} icon="palette" />
-                    </View>
-                  </View>
+                  <FormInput label="Color" value={vehicleColor} onChangeText={setVehicleColor} icon="palette" />
                   <FormInput label="Patente" value={vehiclePlate} onChangeText={setVehiclePlate} icon="card-text" autoCapitalize="characters" />
                 </>
               )}

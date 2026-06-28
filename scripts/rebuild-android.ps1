@@ -1,4 +1,4 @@
-# Compila e instala el APK de desarrollo con módulos nativos (MapLibre, etc.)
+# Compila e instala el APK de desarrollo (MapLibre + OSRM + Nominatim).
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot\..
 
@@ -10,10 +10,10 @@ if (-not (Test-Path $env:JAVA_HOME)) {
   exit 1
 }
 
-Write-Host 'Regenerando proyecto Android...' -ForegroundColor Cyan
-npx expo prebuild --platform android --clean
+Write-Host 'Regenerando proyecto Android (Google Maps + expo-dev-client)...' -ForegroundColor Cyan
+npx expo prebuild --clean --platform android
 
-Write-Host 'Compilando e instalando en dispositivo/emulador conectado...' -ForegroundColor Cyan
+Write-Host 'Compilando e instalando en dispositivo/emulador...' -ForegroundColor Cyan
 npx expo run:android
 
-Write-Host 'Listo. Ahora ejecutá .\scripts\start.ps1 y abrí la app recién instalada.' -ForegroundColor Green
+Write-Host 'Listo. Abrí "Profesional Conductor" (no Expo Go) y ejecutá .\scripts\start.ps1' -ForegroundColor Green

@@ -6,23 +6,21 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Dimensions,
   StatusBar,
+  Dimensions,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn, SlideInUp, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { colors } from '../theme/colors';
 import { useAuth } from '../hooks/useAuth';
 import { usePhoneDriverAuth } from '../hooks/usePhoneDriverAuth';
 import { useAuthStore } from '../stores/authStore';
 import { PhoneLoginForm } from '../components/auth/PhoneLoginForm';
+import { BRAND_BLUE, LoginBrandHeader } from '../components/auth/LoginBrandHeader';
 
-const { width } = Dimensions.get('window');
-const BRAND_BLUE = '#282e69';
+const { height } = Dimensions.get('window');
 const BRAND_BLUE_LIGHT = '#245f8d';
 
 const LoginScreen = () => {
@@ -57,93 +55,63 @@ const LoginScreen = () => {
     await auth.submitPasswordLogin();
   };
 
-  const title = auth.step === 'phone'
-    ? 'Bienvenido'
-    : auth.step === 'driver_number'
-      ? 'Tu número de móvil'
-      : auth.step === 'setup_password'
-        ? 'Creá tu contraseña'
-        : 'Ingresá tu contraseña';
-
-  const subtitle = auth.step === 'phone'
-    ? 'Ingresá con el celular del titular del vehículo'
-    : auth.step === 'driver_number'
-      ? 'Seleccioná o escribí el móvil que te asignó la base'
-      : auth.step === 'setup_password'
-        ? `Primera vez — ${auth.lookupResult?.full_name || 'titular'}`
-        : `Hola, ${auth.lookupResult?.full_name || 'conductor'}`;
-
   return (
     <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
       <LinearGradient
         colors={[`${BRAND_BLUE}18`, `${BRAND_BLUE_LIGHT}0C`, 'transparent']}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 400 }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: height * 0.42 }}
       />
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
         <ScrollView
-          contentContainerStyle={{
-            flexGrow: 1,
-            justifyContent: 'center',
-            paddingHorizontal: 24,
-            paddingTop: insets.top + 20,
-            paddingBottom: insets.bottom + 20,
-          }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingHorizontal: 24,
+            paddingTop: insets.top + 16,
+            paddingBottom: insets.bottom + 20,
+          }}
         >
-          <Animated.View entering={FadeIn.delay(200).duration(800)} style={{ alignItems: 'center', marginBottom: 24 }}>
-            <Animated.View entering={SlideInUp.delay(300).springify()}>
-              <Image
-                source={require('../../assets/logo.png')}
-                style={{ width: width * 0.52, height: undefined, aspectRatio: 550 / 295 }}
-                resizeMode="contain"
-              />
-            </Animated.View>
-            <Animated.View entering={FadeInDown.delay(500).springify()} style={{ alignItems: 'center', marginTop: 16 }}>
-              <Text style={{ color: BRAND_BLUE, fontSize: 22, fontFamily: 'Inter_700Bold' }}>
-                {title}
+          <LoginBrandHeader />
+
+          <Animated.View entering={FadeInDown.delay(220).duration(400)}>
+            <PhoneLoginForm
+              {...auth}
+              busy={busy}
+              loginMode="owner"
+              onPrimaryAction={handlePrimaryAction}
+            />
+
+            <Pressable
+              onPress={() => navigation.navigate('AssignedDriverLogin')}
+              disabled={busy}
+              style={({ pressed }) => ({
+                marginTop: 16,
+                height: 48,
+                borderRadius: 14,
+                borderWidth: 1.5,
+                borderColor: `${BRAND_BLUE}30`,
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'row',
+                gap: 8,
+                opacity: busy ? 0.5 : pressed ? 0.85 : 1,
+              })}
+            >
+              <Ionicons name="car-sport-outline" size={18} color={BRAND_BLUE} />
+              <Text style={{ color: BRAND_BLUE, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+                Ingresar como chofer asignado
               </Text>
-              <Text style={{
-                color: colors.textMuted, fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 8, textAlign: 'center',
-              }}>
-                {subtitle}
-              </Text>
-            </Animated.View>
+            </Pressable>
           </Animated.View>
-
-          <PhoneLoginForm
-            {...auth}
-            busy={busy}
-            onPrimaryAction={handlePrimaryAction}
-          />
-
-          <Pressable
-            onPress={() => navigation.navigate('AssignedDriverLogin')}
-            disabled={busy}
-            style={({ pressed }) => ({
-              marginTop: 16,
-              height: 48,
-              borderRadius: 14,
-              borderWidth: 1.5,
-              borderColor: `${BRAND_BLUE}30`,
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexDirection: 'row',
-              gap: 8,
-              opacity: busy ? 0.5 : pressed ? 0.85 : 1,
-            })}
-          >
-            <Ionicons name="car-sport-outline" size={18} color={BRAND_BLUE} />
-            <Text style={{ color: BRAND_BLUE, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
-              Ingresar como chofer asignado
-            </Text>
-          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

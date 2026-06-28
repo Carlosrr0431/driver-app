@@ -12,7 +12,7 @@ const globalScope = globalThis;
 const getGlobalAuthRuntime = () => {
   if (!globalScope.__driverAppAuthRuntime) {
     globalScope.__driverAppAuthRuntime = {
-      bootstrapRunning: false,
+      bootstrapSubscription: null,
       tokenRefreshSub: null,
     };
   }
@@ -80,7 +80,6 @@ export const useAuth = (options = {}) => {
             owner_phone: ownerVehicle.phone || profile.owner_phone,
             vehicle_brand: ownerVehicle.vehicle_brand || profile.vehicle_brand,
             vehicle_model: ownerVehicle.vehicle_model || profile.vehicle_model,
-            vehicle_year: ownerVehicle.vehicle_year ?? profile.vehicle_year,
             vehicle_plate: ownerVehicle.vehicle_plate || profile.vehicle_plate,
             vehicle_color: ownerVehicle.vehicle_color || profile.vehicle_color,
             vehicle_photo_url: ownerVehicle.vehicle_photo_url || profile.vehicle_photo_url,
@@ -118,10 +117,9 @@ export const useAuth = (options = {}) => {
     if (!enableBootstrap) return undefined;
 
     const runtime = getGlobalAuthRuntime();
-    if (runtime.bootstrapRunning) {
+    if (runtime.bootstrapSubscription) {
       return undefined;
     }
-    runtime.bootstrapRunning = true;
 
     let initialized = false;
 
@@ -190,11 +188,9 @@ export const useAuth = (options = {}) => {
       }
     });
 
-    return () => {
-      subscription?.unsubscribe();
-      runtime.bootstrapRunning = false;
-      clearTokenRefreshSub();
-    };
+    runtime.bootstrapSubscription = subscription;
+
+    return undefined;
   }, [enableBootstrap, fetchDriverProfile, logoutStore, setLoading, setSession, setUser]);
 
   const login = useCallback(async (email, password) => {

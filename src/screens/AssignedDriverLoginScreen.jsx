@@ -7,10 +7,12 @@ import {
   Platform,
   ScrollView,
   StatusBar,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useAuth } from '../hooks/useAuth';
@@ -18,8 +20,10 @@ import { usePhoneDriverAuth } from '../hooks/usePhoneDriverAuth';
 import { useAuthStore } from '../stores/authStore';
 import { lookupAssignedDriverLogin } from '../services/assignedDriverService';
 import { PhoneLoginForm } from '../components/auth/PhoneLoginForm';
+import { BRAND_BLUE, LoginBrandHeader } from '../components/auth/LoginBrandHeader';
 
-const BRAND_BLUE = '#282e69';
+const { height } = Dimensions.get('window');
+const BRAND_BLUE_LIGHT = '#245f8d';
 
 export default function AssignedDriverLoginScreen() {
   const insets = useSafeAreaInsets();
@@ -50,39 +54,40 @@ export default function AssignedDriverLoginScreen() {
     await auth.submitPasswordLogin();
   };
 
-  const title = auth.step === 'phone'
-    ? 'Chofer asignado'
-    : auth.step === 'setup_password'
-      ? 'Creá tu contraseña'
-      : 'Ingresá tu contraseña';
-
-  const subtitle = auth.step === 'phone'
-    ? 'Ingresá el teléfono que te dio el propietario del vehículo'
-    : auth.step === 'setup_password'
-      ? `Primera vez con ${auth.lookupResult?.owner_name || 'este vehículo'}`
-      : `Bienvenido, ${auth.lookupResult?.full_name || 'chofer'}`;
-
   return (
     <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
+      <LinearGradient
+        colors={[`${BRAND_BLUE}18`, `${BRAND_BLUE_LIGHT}0C`, 'transparent']}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: height * 0.42 }}
+      />
+
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
         <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets
           contentContainerStyle={{
             flexGrow: 1,
             paddingHorizontal: 24,
-            paddingTop: insets.top + 16,
+            paddingTop: insets.top + 8,
             paddingBottom: insets.bottom + 20,
           }}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
         >
           <Pressable
             onPress={() => navigation.goBack()}
-            style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 24 }}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              alignSelf: 'flex-start',
+              marginBottom: 12,
+              opacity: pressed ? 0.7 : 1,
+            })}
           >
             <Ionicons name="arrow-back" size={22} color={colors.text} />
             <Text style={{ marginLeft: 8, color: colors.textMuted, fontFamily: 'Inter_500Medium' }}>
@@ -90,29 +95,16 @@ export default function AssignedDriverLoginScreen() {
             </Text>
           </Pressable>
 
-          <Animated.View entering={FadeInDown.duration(400)}>
-            <View style={{
-              width: 56, height: 56, borderRadius: 16,
-              backgroundColor: `${BRAND_BLUE}12`,
-              alignItems: 'center', justifyContent: 'center',
-              marginBottom: 16,
-            }}>
-              <Ionicons name="car-sport-outline" size={28} color={BRAND_BLUE} />
-            </View>
+          <LoginBrandHeader style={{ marginBottom: 24 }} />
 
-            <Text style={{ color: BRAND_BLUE, fontSize: 24, fontFamily: 'Inter_700Bold' }}>
-              {title}
-            </Text>
-            <Text style={{ color: colors.textMuted, fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 8, lineHeight: 20 }}>
-              {subtitle}
-            </Text>
+          <Animated.View entering={FadeInDown.delay(220).duration(400)}>
+            <PhoneLoginForm
+              {...auth}
+              busy={busy}
+              loginMode="assigned"
+              onPrimaryAction={handlePrimaryAction}
+            />
           </Animated.View>
-
-          <PhoneLoginForm
-            {...auth}
-            busy={busy}
-            onPrimaryAction={handlePrimaryAction}
-          />
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

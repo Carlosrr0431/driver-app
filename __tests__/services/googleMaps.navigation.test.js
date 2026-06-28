@@ -3,6 +3,7 @@ import {
   createInitialNavigationProgressState,
   evaluateRerouteState,
   getRouteRemainingMeters,
+  prependDriverConnector,
   projectPointOntoPolyline,
 } from '../../src/services/navigation';
 
@@ -347,5 +348,34 @@ describe('getRouteRemainingMeters', () => {
 
     expect(remaining).toBeGreaterThan(0);
     expect(remaining).toBeLessThan(350);
+  });
+});
+
+describe('prependDriverConnector', () => {
+  it('agrega punto del conductor cuando hay hueco con el inicio de la ruta', () => {
+    const driver = { latitude: -24.7810, longitude: -65.4110 };
+    const route = [
+      { latitude: -24.7820, longitude: -65.4100 },
+      { latitude: -24.7840, longitude: -65.4100 },
+    ];
+
+    const connected = prependDriverConnector(driver, route, 8);
+
+    expect(connected).toHaveLength(3);
+    expect(connected[0]).toEqual(driver);
+    expect(connected[1]).toEqual(route[0]);
+  });
+
+  it('no duplica el conector si el gps ya está sobre el primer punto', () => {
+    const driver = { latitude: -24.7820, longitude: -65.4100 };
+    const route = [
+      { latitude: -24.7820, longitude: -65.4100 },
+      { latitude: -24.7840, longitude: -65.4100 },
+    ];
+
+    const connected = prependDriverConnector(driver, route, 8);
+
+    expect(connected).toHaveLength(2);
+    expect(connected).toEqual(route);
   });
 });

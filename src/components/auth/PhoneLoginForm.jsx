@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,15 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { colors } from '../theme/colors';
-import { formatPhoneForDisplay } from '../utils/driverRoles';
+import { colors } from '../../theme/colors';
+import { formatPhoneForDisplay } from '../../utils/driverRoles';
 
 const BRAND_BLUE = '#282e69';
+
+const MODE_COPY = {
+  owner: 'Ingresar como propietario',
+  assigned: 'Ingresar como chofer asignado',
+};
 
 export function PhoneLoginForm({
   step,
@@ -22,6 +27,7 @@ export function PhoneLoginForm({
   lookupResult,
   driverChoices = [],
   busy = false,
+  loginMode = 'owner',
   setPhone,
   setDriverNumber,
   setPassword,
@@ -29,6 +35,9 @@ export function PhoneLoginForm({
   onPrimaryAction,
   primaryLabels = {},
 }) {
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
+
   const labels = {
     phoneContinue: 'Continuar',
     driverNumberContinue: 'Continuar',
@@ -56,15 +65,39 @@ export function PhoneLoginForm({
           ? labels.setupSubmit
           : labels.loginSubmit;
 
+  const showModeBadge = step === 'phone' || step === 'setup_password' || step === 'password';
+
   return (
     <Animated.View entering={FadeInDown.delay(120).duration(400)} style={{
-      marginTop: 28,
       backgroundColor: '#FFFFFF',
       borderRadius: 20,
-      padding: 22,
+      padding: 20,
       borderWidth: 1,
       borderColor: '#F0F2F8',
     }}>
+      {showModeBadge ? (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          marginBottom: 16,
+          alignSelf: 'flex-start',
+          backgroundColor: `${BRAND_BLUE}0C`,
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderRadius: 8,
+        }}>
+          <Ionicons
+            name={loginMode === 'assigned' ? 'car-sport-outline' : 'person-outline'}
+            size={14}
+            color={BRAND_BLUE}
+          />
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: BRAND_BLUE }}>
+            {MODE_COPY[loginMode] || MODE_COPY.owner}
+          </Text>
+        </View>
+      ) : null}
+
       {step === 'phone' ? (
         <>
           <FieldLabel>TELÉFONO</FieldLabel>
@@ -74,6 +107,7 @@ export function PhoneLoginForm({
             placeholder="Ej: 387 8630173"
             keyboardType="phone-pad"
             icon="call-outline"
+            marginBottom={10}
           />
         </>
       ) : null}
@@ -127,16 +161,20 @@ export function PhoneLoginForm({
             value={password}
             onChangeText={setPassword}
             placeholder="Mínimo 8 caracteres"
-            secureTextEntry
+            secureTextEntry={!passwordVisible}
             icon="lock-closed-outline"
+            onToggleSecure={() => setPasswordVisible((v) => !v)}
+            secureVisible={passwordVisible}
           />
           <FieldLabel>CONFIRMAR CONTRASEÑA</FieldLabel>
           <InputField
             value={confirmPassword}
             onChangeText={setConfirmPassword}
             placeholder="Repetí la contraseña"
-            secureTextEntry
+            secureTextEntry={!confirmPasswordVisible}
             icon="lock-closed-outline"
+            onToggleSecure={() => setConfirmPasswordVisible((v) => !v)}
+            secureVisible={confirmPasswordVisible}
           />
           <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18 }}>
             Teléfono: {formatPhoneForDisplay(phone) || phone}
@@ -151,8 +189,10 @@ export function PhoneLoginForm({
             value={password}
             onChangeText={setPassword}
             placeholder="Tu contraseña"
-            secureTextEntry
+            secureTextEntry={!passwordVisible}
             icon="lock-closed-outline"
+            onToggleSecure={() => setPasswordVisible((v) => !v)}
+            secureVisible={passwordVisible}
           />
           <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
             Teléfono: {formatPhoneForDisplay(phone) || phone}
@@ -180,7 +220,7 @@ export function PhoneLoginForm({
         onPress={onPrimaryAction}
         disabled={!canSubmit || busy}
         style={({ pressed }) => ({
-          marginTop: 22,
+          marginTop: 12,
           borderRadius: 14,
           overflow: 'hidden',
           opacity: !canSubmit || busy ? 0.5 : pressed ? 0.9 : 1,
@@ -221,7 +261,14 @@ function FieldLabel({ children }) {
   );
 }
 
-function InputField({ icon, ...props }) {
+function InputField({
+  icon,
+  secureTextEntry,
+  onToggleSecure,
+  secureVisible,
+  marginBottom = 16,
+  ...props
+}) {
   return (
     <View style={{
       backgroundColor: '#F8F9FC',
@@ -231,11 +278,12 @@ function InputField({ icon, ...props }) {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 14,
-      marginBottom: 16,
+      marginBottom,
     }}>
       <Ionicons name={icon} size={18} color={colors.textMuted} />
       <TextInput
         placeholderTextColor="#A0A8BE"
+        secureTextEntry={secureTextEntry}
         style={{
           flex: 1,
           color: colors.text,
@@ -246,6 +294,20 @@ function InputField({ icon, ...props }) {
         }}
         {...props}
       />
+      {onToggleSecure ? (
+        <Pressable
+          onPress={onToggleSecure}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={secureVisible ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+        >
+          <Ionicons
+            name={secureVisible ? 'eye-off-outline' : 'eye-outline'}
+            size={20}
+            color={colors.textMuted}
+          />
+        </Pressable>
+      ) : null}
     </View>
   );
 }

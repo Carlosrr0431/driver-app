@@ -1,7 +1,11 @@
-import { OSRM_BASE_URL } from '../utils/mapConfig';
 import { decodePolyline } from '../utils/polyline';
-
-const ROUTE_TIMEOUT_MS = 20000;
+import { classifyStepOneway } from '../utils/routeOneway';
+import {
+  buildRouteCacheKey,
+  routeCache,
+  withCachedFetch,
+} from '../lib/geoCache';
+import { OSRM_BASE_URL } from '../utils/mapConfig';
 
 function toLatLng(point) {
   const lat = Number(point?.lat ?? point?.latitude);
@@ -26,101 +30,78 @@ function formatSeconds(seconds) {
   return mins > 0 ? `${hours} h ${mins} min` : `${hours} h`;
 }
 
-function osrmManeuverToKey(maneuver) {
-  const type = String(maneuver?.type || '').toLowerCase().replace(/\s+/g, ' ');
-  const modifier = String(maneuver?.modifier || '').toLowerCase();
+function formatOsrmManeuver(maneuver) {
+  if (!maneuver) return 'straight';
+  if (typeof maneuver === 'string') return maneuver;
 
-  if (type === 'arrive') return 'arrive';
-  if (type === 'depart') return 'straight';
-
-  if (type.includes('roundabout') || type === 'rotary' || type === 'roundabout turn') {
-    if (modifier.includes('left')) return 'roundabout-left';
-    if (modifier.includes('right')) return 'roundabout-right';
-    return 'roundabout';
+  const type = String(maneuver.type || 'straight').toLowerCase();
+  const modifier = String(maneuver.modifier || '').toLowerCase();
+  if (type === 'roundabout' && maneuver.exit != null) {
+    return modifier ? `roundabout-${modifier}` : 'roundabout';
   }
-
-  if (type === 'turn' || type === 'end of road' || type === 'fork') {
-    if (modifier.includes('sharp') && modifier.includes('left')) return 'turn-sharp-left';
-    if (modifier.includes('sharp') && modifier.includes('right')) return 'turn-sharp-right';
-    if (modifier.includes('slight') && modifier.includes('left')) return 'turn-slight-left';
-    if (modifier.includes('slight') && modifier.includes('right')) return 'turn-slight-right';
-    if (modifier.includes('left')) return 'turn-left';
-    if (modifier.includes('right')) return 'turn-right';
-    return 'straight';
-  }
-
-  if (type === 'on ramp' || type === 'off ramp') {
-    if (modifier.includes('left')) return 'ramp-left';
-    if (modifier.includes('right')) return 'ramp-right';
-    return 'ramp-right';
-  }
-
-  if (type === 'merge') return 'merge';
-  if (type.includes('uturn')) return modifier.includes('right') ? 'uturn-right' : 'uturn-left';
-  if (type === 'continue' || type === 'new name' || type === 'notification') return 'straight';
-
-  return modifier ? `${type}-${modifier}`.replace(/\s+/g, '-') : (type || 'straight');
+  if (modifier) return `${type}-${modifier}`;
+  return type;
 }
 
-function buildOsrmInstruction(step) {
-  const road = String(step?.name || step?.ref || '').trim();
-  const maneuverKey = osrmManeuverToKey(step?.maneuver);
-  const roadSuffix = road ? ` por ${road}` : '';
-
-  if (maneuverKey.includes('roundabout')) {
-    return road ? `En la rotonda, salí${roadSuffix}` : 'Entrá en la rotonda';
-  }
-  if (maneuverKey.includes('turn-left')) return `Doblá a la izquierda${roadSuffix}`;
-  if (maneuverKey.includes('turn-right')) return `Doblá a la derecha${roadSuffix}`;
-  if (maneuverKey.includes('uturn')) return `Hacé un retorno${roadSuffix}`;
-  if (maneuverKey.includes('ramp-left')) return `Tomá la rampa a la izquierda${roadSuffix}`;
-  if (maneuverKey.includes('ramp-right')) return `Tomá la rampa a la derecha${roadSuffix}`;
-  if (maneuverKey === 'merge') return `Incorporate al tráfico${roadSuffix}`;
-  if (maneuverKey === 'arrive') return 'Llegaste a destino';
-  if (maneuverKey === 'straight' && road) return `Seguí por ${road}`;
-  return road ? `Continuá${roadSuffix}` : 'Seguí derecho';
-}
-
-function normalizeOsrmStep(step, index, previousLocation) {
-  const maneuverLocation = Array.isArray(step?.maneuver?.location)
-    ? step.maneuver.location
-    : null;
-  const endLng = maneuverLocation ? Number(maneuverLocation[0]) : null;
-  const endLat = maneuverLocation ? Number(maneuverLocation[1]) : null;
-  const startLng = previousLocation?.lng ?? endLng;
+function mapOsrmStep(step, index, previousLocation) {
+  const maneuverLoc = step?.maneuver?.location;
+  const endLng = Array.isArray(maneuverLoc) ? Number(maneuverLoc[0]) : null;
+  const endLat = Array.isArray(maneuverLoc) ? Number(maneuverLoc[1]) : null;
   const startLat = previousLocation?.lat ?? endLat;
-
-  const encodedPolyline = typeof step?.geometry === 'string' ? step.geometry : null;
-  const decodedPolyline = encodedPolyline ? decodePolyline(encodedPolyline) : [];
+  const startLng = previousLocation?.lng ?? endLng;
+  const stepPolylineCoords = step?.geometry ? decodePolyline(step.geometry) : [];
 
   return {
     index,
-    instruction: buildOsrmInstruction(step),
-    distance: formatMeters(step?.distance),
+    instruction: String(step?.name || '').trim() || 'Seguí derecho',
+    distance: formatMeters(step?.distance || 0),
     distanceValue: Math.round(Number(step?.distance) || 0),
-    duration: formatSeconds(step?.duration),
+    duration: formatSeconds(step?.duration || 0),
     durationValue: Math.round(Number(step?.duration) || 0),
-    maneuver: osrmManeuverToKey(step?.maneuver),
-    startLocation: {
-      lat: Number(startLat),
-      lng: Number(startLng),
-    },
-    endLocation: {
-      lat: Number(endLat),
-      lng: Number(endLng),
-    },
-    polyline: encodedPolyline,
-    polylineCoords: decodedPolyline,
+    maneuver: formatOsrmManeuver(step?.maneuver),
+    startLocation: { lat: startLat, lng: startLng },
+    endLocation: { lat: endLat, lng: endLng },
+    polyline: step?.geometry || '',
+    polylineCoords: stepPolylineCoords,
+    likelyOneway: classifyStepOneway(step),
   };
 }
 
-function mapOsrmRoute(route, leg) {
-  const steps = Array.isArray(leg?.steps) ? leg.steps : [];
+async function fetchOsrmJson(coordinates, params) {
+  const response = await fetch(
+    `${OSRM_BASE_URL}/route/v1/driving/${coordinates}?${params.toString()}`,
+    { headers: { Accept: 'application/json' } },
+  );
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.code !== 'Ok' || !data?.routes?.[0]) {
+    throw new Error(data?.message || data?.code || 'No se encontró ruta');
+  }
+  return data.routes[0];
+}
+
+/**
+ * Navegación guiada: pasos + polilínea simplificada (menos puntos que overview=full).
+ */
+async function fetchOsrmRoute(from, to) {
+  const coordinates = `${from.lng},${from.lat};${to.lng},${to.lat}`;
+  const params = new URLSearchParams({
+    steps: 'true',
+    overview: 'simplified',
+    geometries: 'polyline',
+    annotations: 'false',
+  });
+
+  const route = await fetchOsrmJson(coordinates, params);
+  const leg = route?.legs?.[0];
+  if (!leg) {
+    throw new Error('Ruta sin tramos');
+  }
+
+  const polylineCoords = route.geometry ? decodePolyline(route.geometry) : [];
   let previousLocation = null;
-  const normalizedSteps = steps
-    .filter((step) => String(step?.maneuver?.type || '').toLowerCase() !== 'depart')
+  const steps = (Array.isArray(leg.steps) ? leg.steps : [])
     .map((step, index) => {
-      const normalized = normalizeOsrmStep(step, index, previousLocation);
+      const normalized = mapOsrmStep(step, index, previousLocation);
       if (Number.isFinite(normalized.endLocation.lat) && Number.isFinite(normalized.endLocation.lng)) {
         previousLocation = normalized.endLocation;
       }
@@ -128,31 +109,49 @@ function mapOsrmRoute(route, leg) {
     });
 
   return {
-    distance: formatMeters(leg?.distance),
-    duration: formatSeconds(leg?.duration),
-    distanceValue: Math.round(Number(leg?.distance) || 0),
-    durationValue: Math.round(Number(leg?.duration) || 0),
-    polyline: route?.geometry || '',
-    steps: normalizedSteps,
+    distance: formatMeters(leg.distance || 0),
+    duration: formatSeconds(leg.duration || 0),
+    distanceValue: Math.round(Number(leg.distance) || 0),
+    durationValue: Math.round(Number(leg.duration) || 0),
+    polyline: route.geometry || '',
+    steps,
+    polylineCoords,
   };
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = ROUTE_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
+/**
+ * Solo distancia/duración — sin geometría ni pasos (tarifas, previews).
+ */
+async function fetchOsrmSummary(from, to) {
+  const coordinates = `${from.lng},${from.lat};${to.lng},${to.lat}`;
+  const params = new URLSearchParams({
+    steps: 'false',
+    overview: 'false',
+    annotations: 'false',
+  });
+
+  const route = await fetchOsrmJson(coordinates, params);
+  const leg = route?.legs?.[0];
+  if (!leg) {
+    throw new Error('Ruta sin tramos');
   }
+
+  return {
+    distance: formatMeters(leg.distance || 0),
+    duration: formatSeconds(leg.duration || 0),
+    distanceValue: Math.round(Number(leg.distance) || 0),
+    durationValue: Math.round(Number(leg.duration) || 0),
+  };
+}
+
+function summaryCacheKey(origin, destination) {
+  return `summary:${buildRouteCacheKey(origin, destination)}`;
 }
 
 /**
- * Obtiene ruta de manejo vía OSRM (perfil driving).
- * Devuelve el mismo contrato que el antiguo getDirections de Google.
- * @see https://project-osrm.org/docs/v26.6.1/http
+ * Obtiene ruta de manejo vía OSRM (navegación guiada turn-by-turn).
  */
-export async function getDirections(origin, destination) {
+export async function getDirections(origin, destination, { bypassCache = false } = {}) {
   const from = toLatLng(origin);
   const to = toLatLng(destination);
 
@@ -160,29 +159,29 @@ export async function getDirections(origin, destination) {
     throw new Error('Coordenadas de ruta inválidas');
   }
 
-  const coordinates = `${from.lng},${from.lat};${to.lng},${to.lat}`;
-  const params = new URLSearchParams({
-    steps: 'true',
-    overview: 'full',
-    geometries: 'polyline',
-    annotations: 'false',
-  });
-
-  const response = await fetchWithTimeout(
-    `${OSRM_BASE_URL}/route/v1/driving/${coordinates}?${params.toString()}`,
-  );
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok || data?.code !== 'Ok' || !data?.routes?.length) {
-    const reason = data?.message || data?.code || `HTTP ${response.status}`;
-    throw new Error(reason === 'NoRoute' ? 'No se encontró ruta' : String(reason));
+  if (bypassCache) {
+    return fetchOsrmRoute(from, to);
   }
 
-  const route = data.routes[0];
-  const leg = route.legs?.[0];
-  if (!leg) {
-    throw new Error('Respuesta de ruta inválida');
+  const cacheKey = buildRouteCacheKey(from, to);
+  return withCachedFetch(routeCache, cacheKey, () => fetchOsrmRoute(from, to));
+}
+
+/**
+ * Distancia y tiempo estimado sin polilínea — mucho más liviano para OSRM.
+ */
+export async function getRouteSummary(origin, destination, { bypassCache = false } = {}) {
+  const from = toLatLng(origin);
+  const to = toLatLng(destination);
+
+  if (![from.lat, from.lng, to.lat, to.lng].every(Number.isFinite)) {
+    throw new Error('Coordenadas de ruta inválidas');
   }
 
-  return mapOsrmRoute(route, leg);
+  if (bypassCache) {
+    return fetchOsrmSummary(from, to);
+  }
+
+  const cacheKey = summaryCacheKey(from, to);
+  return withCachedFetch(routeCache, cacheKey, () => fetchOsrmSummary(from, to));
 }

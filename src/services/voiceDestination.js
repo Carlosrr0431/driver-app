@@ -414,10 +414,10 @@ export async function voiceToDestination(uri) {
     }
   }
 
-  // Step 4: Autocomplete over multiple query variants
+  // Step 4: Autocomplete (una búsqueda por variante, pocos resultados)
   for (const variant of queryVariants) {
     try {
-      const autocompleteResults = await autocompleteAddressSalta(variant, 5);
+      const autocompleteResults = await autocompleteAddressSalta(variant, 4);
       for (const r of autocompleteResults) {
         const key = normalizeForMatch(r.address);
         if (!seenKeys.has(key)) {
@@ -425,6 +425,8 @@ export async function voiceToDestination(uri) {
           allResults.push({
             address: r.address,
             placeId: r.placeId,
+            lat: r.lat,
+            lng: r.lng,
             _score: scoreCandidate(variant, r.address, { barrioHint }),
             _sourceQuery: variant,
           });
@@ -435,26 +437,28 @@ export async function voiceToDestination(uri) {
     }
   }
 
-  // Step 5: Geocoding fallback for additional robustness when autocomplete is weak/ambiguous
-  for (const variant of queryVariants.slice(0, 3)) {
-    try {
-      const geocodeResults = await geocodeAddressMultiple(variant, 3);
-      for (const g of geocodeResults) {
-        const key = normalizeForMatch(g.formattedAddress || g.address);
-        if (!seenKeys.has(key)) {
-          seenKeys.add(key);
-          const formatted = g.formattedAddress || g.address;
-          allResults.push({
-            address: formatted,
-            lat: g.lat,
-            lng: g.lng,
-            _score: scoreCandidate(variant, formatted, { barrioHint }) + 0.15,
-            _sourceQuery: variant,
-          });
+  // Step 5: Geocoding solo si autocomplete fue insuficiente
+  if (allResults.length < 2) {
+    for (const variant of queryVariants.slice(0, 2)) {
+      try {
+        const geocodeResults = await geocodeAddressMultiple(variant, 3);
+        for (const g of geocodeResults) {
+          const key = normalizeForMatch(g.formattedAddress || g.address);
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            const formatted = g.formattedAddress || g.address;
+            allResults.push({
+              address: formatted,
+              lat: g.lat,
+              lng: g.lng,
+              _score: scoreCandidate(variant, formatted, { barrioHint }) + 0.15,
+              _sourceQuery: variant,
+            });
+          }
         }
+      } catch (err) {
+        console.warn('Geocode fallback error:', err);
       }
-    } catch (err) {
-      console.warn('Geocode fallback error:', err);
     }
   }
 

@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
-    "start": "expo start",
-    "start:dev-client": "expo start --dev-client",
-    "prebuild:android": "expo prebuild --platform android --clean",
+    "start": "node scripts/start-expo.js",
+    "start:dev-client": "node scripts/start-expo.js",
+    "prebuild:android": "expo prebuild --clean --platform android",
     "android": "expo run:android",
-    "android:rebuild": "expo prebuild --platform android --clean && expo run:android",
+    "android:rebuild": "expo prebuild --clean --platform android && expo run:android",
     "ios": "expo run:ios",
     "web": "node -e \"console.error('driver-app solo soporta Android/iOS. Web deshabilitado.'); process.exit(1);\"",
     "test": "jest",
@@ -28,7 +28,7 @@
       "/__tests__/helpers/"
     ],
     "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|zustand|nativewind|date-fns|@maplibre/maplibre-react-native))"
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|zustand|nativewind|date-fns))"
     ],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/src/$1"

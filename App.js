@@ -1,5 +1,6 @@
 // Silenciar warnings de deprecación que no afectan funcionalidad
 globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
+import './src/tasks/backgroundLocationTask';
 import { LogBox } from 'react-native';
 LogBox.ignoreLogs([
   '[expo-av]',

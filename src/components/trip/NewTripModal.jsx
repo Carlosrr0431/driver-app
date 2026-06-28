@@ -39,28 +39,15 @@ import { formatPrice, formatDistance, formatDuration } from '../../utils/formatt
 import { TRIP_ACCEPT_TIMEOUT, CANCEL_REASONS } from '../../utils/constants';
 import {
   isApproachOnlyTrip,
+  isPassengerAppTrip,
   resolveTripPickupCoords,
   resolveTripFinalDestCoords,
   resolveTripWaypoints,
+  cleanTripNotesForDriverDisplay,
 } from '../../../shared/trip-contract';
 import { TripRouteTimeline } from './TripRouteTimeline';
 
-// Clean notes: strip the [APPROACH_ONLY] tag and the boilerplate sentence
-const getCleanNotes = (trip) => {
-  if (!trip?.notes) return null;
-  const cleaned = trip.notes
-    .replace(/\[APPROACH_ONLY\]/gi, '')
-    .replace(/\[FINAL_DEST_JSON:[^\]]*\]/g, '')
-    .replace(/\[PICKUP_JSON:[^\]]*\]/g, '')
-    .replace(/\[WAYPOINTS_JSON:[^\]]*\]/g, '')
-    .replace(/\[PASSENGER_APP\]/gi, '')
-    .replace(/Creado autom[aá]ticamente desde WhatsApp[^.]*\./gi, '')
-    .replace(/chofer\s*->\s*retiro pasajero[^.]*\./gi, '')
-    .replace(/Destino final:[^.]*\./gi, '')
-    .replace(/Destino final sugerido:.*/gi, '')
-    .trim();
-  return cleaned || null;
-};
+const getCleanNotes = (trip) => cleanTripNotesForDriverDisplay(trip?.notes);
 
 // Countdown must be based on assignment time, not modal open time.
 const getInitialCountdown = (trip) => {
@@ -215,18 +202,22 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
 
   const isUrgent = countdown <= 10;
   const approachOnly = isApproachOnlyTrip(trip);
+  const passengerAppTrip = isPassengerAppTrip(trip);
   const pickupResolved = resolveTripPickupCoords(trip);
-  const destResolved = approachOnly ? resolveTripFinalDestCoords(trip) : null;
+  const finalDestResolved = resolveTripFinalDestCoords(trip);
   const tripWaypoints = resolveTripWaypoints(trip);
+  const isAccumulatedTrip = tripWaypoints.length > 0;
   const pickupAddress = pickupResolved?.address || null;
-  const destinationDisplayAddress = approachOnly
-    ? (destResolved?.address || 'A definir al subir al pasajero')
-    : (trip.destination_address || '—');
-  const hasPreloadedDestination = Boolean(destResolved?.address);
+  const destinationDisplayAddress = finalDestResolved?.address
+    || (approachOnly ? 'A definir al subir al pasajero' : (trip.destination_address || '—'));
+  const hasPreloadedDestination = Boolean(finalDestResolved?.address);
   const hasKnownPassengerFare =
     hasPreloadedDestination
     && (trip.price != null || trip.distance_km != null);
   const cleanNotes = getCleanNotes(trip);
+  const stopCountLabel = tripWaypoints.length === 1
+    ? '1 parada intermedia'
+    : `${tripWaypoints.length} paradas intermedias`;
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent>
@@ -329,11 +320,27 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
             <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
               {/* Header: WhatsApp badge + timer */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap' }}>
                   <Text style={{ color: colors.text, fontSize: 20, fontFamily: 'Inter_700Bold' }}>
-                    Nuevo viaje
+                    {isAccumulatedTrip ? 'Viaje acumulado' : 'Nuevo viaje'}
                   </Text>
-                  {approachOnly && (
+                  {isAccumulatedTrip ? (
+                    <View style={{
+                      backgroundColor: `${colors.warning}20`,
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}>
+                      <MaterialCommunityIcons name="map-marker-multiple" size={13} color={colors.warning} />
+                      <Text style={{ color: colors.warning, fontSize: 11, fontFamily: 'Inter_700Bold' }}>
+                        {stopCountLabel.toUpperCase()}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {approachOnly && !passengerAppTrip ? (
                     <View style={{
                       backgroundColor: '#25D36620',
                       paddingHorizontal: 8,
@@ -346,7 +353,21 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                       <MaterialCommunityIcons name="whatsapp" size={13} color="#25D366" />
                       <Text style={{ color: '#25D366', fontSize: 11, fontFamily: 'Inter_600SemiBold' }}>WA</Text>
                     </View>
-                  )}
+                  ) : null}
+                  {passengerAppTrip ? (
+                    <View style={{
+                      backgroundColor: `${colors.primary}15`,
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 3,
+                    }}>
+                      <MaterialCommunityIcons name="cellphone" size={13} color={colors.primary} />
+                      <Text style={{ color: colors.primary, fontSize: 11, fontFamily: 'Inter_600SemiBold' }}>App</Text>
+                    </View>
+                  ) : null}
                 </View>
                 {/* Countdown badge — urgente al llegar a 10s */}
                 <View style={{
@@ -420,34 +441,78 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                 )}
               </View>
 
+              {isAccumulatedTrip ? (
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'flex-start',
+                  gap: 10,
+                  backgroundColor: `${colors.warning}14`,
+                  borderWidth: 1,
+                  borderColor: `${colors.warning}35`,
+                  padding: 12,
+                  borderRadius: 14,
+                  marginBottom: 12,
+                }}>
+                  <View style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    backgroundColor: `${colors.warning}22`,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <MaterialCommunityIcons name="routes" size={18} color={colors.warning} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{
+                      color: colors.warning,
+                      fontSize: 13,
+                      fontFamily: 'Inter_700Bold',
+                      marginBottom: 3,
+                    }}>
+                      Recorrido con varias paradas
+                    </Text>
+                    <Text style={{
+                      color: colors.text,
+                      fontSize: 12,
+                      fontFamily: 'Inter_500Medium',
+                      lineHeight: 17,
+                    }}>
+                      {`Después de recoger al pasajero, visitá ${stopCountLabel} en el orden indicado y recién después el destino final.`}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
               <View style={{ marginBottom: 14 }}>
                 <TripRouteTimeline
                   pickupAddress={pickupAddress}
                   waypoints={tripWaypoints}
                   finalDestinationAddress={destinationDisplayAddress}
                 />
-                {tripWaypoints.length > 0 ? (
+                {approachOnly && hasPreloadedDestination && !isAccumulatedTrip ? (
                   <Text style={{
-                    color: colors.info,
+                    color: colors.success,
                     fontSize: 11,
                     fontFamily: 'Inter_600SemiBold',
                     marginTop: 8,
                     marginLeft: 4,
                   }}>
-                    {tripWaypoints.length} parada{tripWaypoints.length !== 1 ? 's' : ''} intermedia{tripWaypoints.length !== 1 ? 's' : ''}
-                  </Text>
-                ) : null}
-                {approachOnly && hasPreloadedDestination && (
-                  <Text style={{
-                    color: colors.success,
-                    fontSize: 11,
-                    fontFamily: 'Inter_600SemiBold',
-                    marginTop: 6,
-                    marginLeft: 4,
-                  }}>
                     Ruta precargada por pasajero
                   </Text>
-                )}
+                ) : null}
+                {isAccumulatedTrip ? (
+                  <Text style={{
+                    color: colors.textMuted,
+                    fontSize: 11,
+                    fontFamily: 'Inter_500Medium',
+                    marginTop: 8,
+                    marginLeft: 4,
+                    lineHeight: 15,
+                  }}>
+                    Orden: recogida → paradas numeradas → destino final
+                  </Text>
+                ) : null}
               </View>
 
               {/* Stats pills */}

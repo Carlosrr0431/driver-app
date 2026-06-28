@@ -1,6 +1,8 @@
 const {
   resolveTripPickupCoords,
   resolveTripFinalDestCoords,
+  resolveTripWaypoints,
+  cleanTripNotesForDriverDisplay,
   isApproachOnlyTrip,
   needsDriverDestinationChoice,
   shouldPreservePickupOriginOnAssign,
@@ -89,5 +91,36 @@ describe('trip pickup/final dest — passenger app', () => {
     const finalDest = resolveTripFinalDestCoords(trip);
     expect(finalDest.address).toContain('Belgrano');
     expect(needsDriverDestinationChoice(trip)).toBe(false);
+  });
+});
+
+describe('trip waypoints — passenger app multi-stop', () => {
+  const MULTI_STOP_NOTES = [
+    '[APPROACH_ONLY]',
+    '[PASSENGER_APP]',
+    'Solicitado desde la app de pasajeros.',
+    '[PICKUP_JSON:{"address":"Antonio Balcarce, Bº  El Pilar, Salta","lat":-24.7829,"lng":-65.4122}]',
+    '[FINAL_DEST_JSON:{"address":"Bartolomé Mitre 1200, Salta","lat":-24.77487047,"lng":-65.40957297}]',
+    '[WAYPOINTS_JSON:[{"address":"Bartolomé Mitre 200-298, Salta, Argentina","lat":-24.7874909,"lng":-65.41072919999999}]]',
+  ].join('\n');
+
+  it('extrae paradas intermedias desde WAYPOINTS_JSON en notes', () => {
+    const trip = {
+      notes: MULTI_STOP_NOTES,
+      waypoints: null,
+    };
+
+    const waypoints = resolveTripWaypoints(trip);
+    expect(waypoints).toHaveLength(1);
+    expect(waypoints[0].address).toContain('Mitre 200');
+    expect(waypoints[0].lat).toBeCloseTo(-24.7874909, 5);
+  });
+
+  it('cleanTripNotesForDriverDisplay elimina marcadores JSON embebidos', () => {
+    const cleaned = cleanTripNotesForDriverDisplay(`${MULTI_STOP_NOTES}\nLlevar silla de bebé.`);
+    expect(cleaned).toBe('Llevar silla de bebé.');
+    expect(cleaned).not.toContain('WAYPOINTS_JSON');
+    expect(cleaned).not.toContain('PICKUP_JSON');
+    expect(cleaned).not.toContain('FINAL_DEST_JSON');
   });
 });

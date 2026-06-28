@@ -9,17 +9,21 @@ process.env.EXPO_PUBLIC_SUPABASE_URL         = 'https://test.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY    = 'test-anon-key';
 process.env.EXPO_PUBLIC_OSRM_URL = 'https://test-osrm.example';
 process.env.EXPO_PUBLIC_NOMINATIM_URL = 'https://test-nominatim.example';
-process.env.EXPO_PUBLIC_MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 
 // ── Mocks de módulos nativos de Expo ─────────────────────────────────────────
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
   requestBackgroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  getForegroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  getBackgroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
   getCurrentPositionAsync: jest.fn().mockResolvedValue({
     coords: { latitude: -24.79, longitude: -65.41, accuracy: 5, speed: 0 },
   }),
   watchPositionAsync: jest.fn().mockReturnValue({ remove: jest.fn() }),
-  Accuracy: { BestForNavigation: 6, High: 4, Balanced: 3 },
+  hasStartedLocationUpdatesAsync: jest.fn().mockResolvedValue(false),
+  startLocationUpdatesAsync: jest.fn().mockResolvedValue(undefined),
+  stopLocationUpdatesAsync: jest.fn().mockResolvedValue(undefined),
+  Accuracy: { BestForNavigation: 6, High: 4, Balanced: 3, Low: 2 },
 }));
 
 jest.mock('expo-notifications', () => ({
@@ -40,7 +44,9 @@ jest.mock('expo-notifications', () => ({
 
 jest.mock('expo-task-manager', () => ({
   defineTask: jest.fn(),
+  isTaskDefined: jest.fn(() => true),
   isTaskRegisteredAsync: jest.fn().mockResolvedValue(false),
+  isAvailableAsync: jest.fn().mockResolvedValue(true),
 }));
 
 jest.mock('expo-haptics', () => ({
@@ -157,64 +163,6 @@ jest.mock('react-native-reanimated', () => {
   Reanimated.default.call = () => {};
   return Reanimated;
 });
-
-jest.mock('@maplibre/maplibre-react-native', () => {
-  const React = require('react');
-  const { View } = require('react-native');
-
-  const MockMap = React.forwardRef((props, ref) => {
-    React.useImperativeHandle(ref, () => ({
-      setStop: jest.fn(),
-      jumpTo: jest.fn(),
-      easeTo: jest.fn(),
-      flyTo: jest.fn(),
-      fitBounds: jest.fn(),
-      zoomTo: jest.fn(),
-    }));
-    return React.createElement(View, props, props.children);
-  });
-
-  const MockCamera = React.forwardRef((props, ref) => {
-    React.useImperativeHandle(ref, () => ({
-      setStop: jest.fn(),
-      jumpTo: jest.fn(),
-      easeTo: jest.fn(),
-      flyTo: jest.fn(),
-      fitBounds: jest.fn(),
-      zoomTo: jest.fn(),
-    }));
-    return React.createElement(View, props, props.children);
-  });
-
-  const PassThrough = (props) => React.createElement(View, props, props.children);
-
-  return {
-    Map: MockMap,
-    Camera: MockCamera,
-    Marker: PassThrough,
-    GeoJSONSource: PassThrough,
-    Layer: PassThrough,
-    ViewAnnotation: PassThrough,
-    UserLocation: PassThrough,
-    Images: PassThrough,
-  };
-});
-
-jest.mock('react-native-maps', () => {
-  const { View } = require('react-native');
-  const MockMapView = (props) => View(props);
-  const MockMarker = (props) => View(props);
-  const MockPolyline = (props) => View(props);
-  MockMapView.Animated = MockMapView;
-  return {
-    __esModule: true,
-    default: MockMapView,
-    Marker: MockMarker,
-    Polyline: MockPolyline,
-    PROVIDER_GOOGLE: 'google',
-    MapView: MockMapView,
-  };
-}, { virtual: true });
 
 jest.mock('@gorhom/bottom-sheet', () => {
   const { View } = require('react-native');

@@ -3,9 +3,11 @@ import {
   geocodeAddress,
   getPlaceDetails,
 } from '../../src/services/nominatim';
+import { clearGeoCaches } from '../../src/lib/geoCache';
 
 describe('nominatim', () => {
   beforeEach(() => {
+    clearGeoCaches();
     global.fetch = jest.fn();
   });
 

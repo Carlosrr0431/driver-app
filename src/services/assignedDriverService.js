@@ -99,7 +99,7 @@ export async function fetchOwnerVehicleProfile(ownerId) {
   if (!ownerId) return null;
   const { data, error } = await supabase
     .from('drivers')
-    .select('full_name, phone, vehicle_brand, vehicle_model, vehicle_year, vehicle_plate, vehicle_color, vehicle_photo_url, vehicle_type, driver_number')
+    .select('full_name, phone, vehicle_brand, vehicle_model, vehicle_plate, vehicle_color, vehicle_photo_url, vehicle_type, driver_number')
     .eq('id', ownerId)
     .maybeSingle();
 

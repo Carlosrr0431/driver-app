@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, Dimensions, Pressable, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
+import MapLibreGL from '../lib/maplibre';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -11,8 +11,7 @@ import { Badge } from '../components/ui/Badge';
 import { supabase } from '../services/supabase';
 import { formatDateTime, formatPrice, formatDistance, formatDuration } from '../utils/formatters';
 import { getRegionForCoordinates } from '../utils/mapHelpers';
-import { MAP_STYLE_URL } from '../utils/mapConfig';
-import { regionToInitialViewState } from '../utils/mapLibreHelpers';
+import { MAPLIBRE_STYLE } from '../utils/mapProvider';
 import { MapRouteLayers } from '../components/map/MapRouteLayers';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -72,7 +71,6 @@ const TripDetailScreen = () => {
     mapPoints.push({ latitude: Number(trip.destination_lat), longitude: Number(trip.destination_lng) });
   }
   const region = getRegionForCoordinates(mapPoints.length > 0 ? mapPoints : undefined);
-  const initialViewState = regionToInitialViewState(region);
 
   const sc = {
     completed: colors.success, cancelled: colors.danger, in_progress: colors.primary,
@@ -87,17 +85,28 @@ const TripDetailScreen = () => {
       <ScrollView contentContainerStyle={{ paddingBottom: 30 }} showsVerticalScrollIndicator={false}>
         {/* Map */}
         <View style={{ height: 230 }}>
-          <Map
-            mapStyle={MAP_STYLE_URL}
+          <MapLibreGL.MapView
             style={{ flex: 1 }}
-            dragPan={false}
-            touchZoom={false}
-            logo={false}
-            attributionPosition={{ bottom: 4, left: 4 }}
+            mapStyle={MAPLIBRE_STYLE}
+            scrollEnabled={false}
+            zoomEnabled={false}
+            rotateEnabled={false}
+            pitchEnabled={false}
+            compassEnabled={false}
+            logoEnabled={false}
+            attributionEnabled={false}
           >
-            <Camera initialViewState={initialViewState} />
-            {trip.origin_lat && (
-              <Marker id="trip-origin" lngLat={[Number(trip.origin_lng), Number(trip.origin_lat)]}>
+            <MapLibreGL.Camera
+              defaultSettings={{
+                centerCoordinate: [region.longitude, region.latitude],
+                zoomLevel: 13,
+              }}
+            />
+            {trip.origin_lat ? (
+              <MapLibreGL.PointAnnotation
+                id="trip-origin"
+                coordinate={[Number(trip.origin_lng), Number(trip.origin_lat)]}
+              >
                 <View style={{
                   width: 28, height: 28, borderRadius: 14,
                   backgroundColor: colors.success, alignItems: 'center', justifyContent: 'center',
@@ -105,10 +114,13 @@ const TripDetailScreen = () => {
                 }}>
                   <MaterialCommunityIcons name="map-marker" size={14} color="#fff" />
                 </View>
-              </Marker>
-            )}
-            {trip.destination_lat && (
-              <Marker id="trip-dest" lngLat={[Number(trip.destination_lng), Number(trip.destination_lat)]}>
+              </MapLibreGL.PointAnnotation>
+            ) : null}
+            {trip.destination_lat ? (
+              <MapLibreGL.PointAnnotation
+                id="trip-dest"
+                coordinate={[Number(trip.destination_lng), Number(trip.destination_lat)]}
+              >
                 <View style={{
                   width: 28, height: 28, borderRadius: 14,
                   backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center',
@@ -116,12 +128,12 @@ const TripDetailScreen = () => {
                 }}>
                   <MaterialCommunityIcons name="flag-checkered" size={14} color="#fff" />
                 </View>
-              </Marker>
-            )}
+              </MapLibreGL.PointAnnotation>
+            ) : null}
             {trackingPoints.length > 1 && (
-              <MapRouteLayers idPrefix="trip-track" coords={trackingPoints} />
+              <MapRouteLayers coords={trackingPoints} />
             )}
-          </Map>
+          </MapLibreGL.MapView>
 
           {/* Gradient overlays */}
           <LinearGradient
@@ -209,7 +221,6 @@ const TripDetailScreen = () => {
 
           {/* Notes */}
           {trip.notes && (() => {
-            // Filtrar tags internos del sistema y formatear para el chofer
             const cleanNotes = trip.notes
               .replace(/\[APPROACH_ONLY\]/gi, '')
               .replace(/\[FINAL_DEST_JSON:[^\]]*\]/g, '')

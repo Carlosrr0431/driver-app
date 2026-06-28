@@ -1,31 +1,22 @@
 /**
- * Estilo de mapa basado en OpenStreetMap vía MapLibre.
- * OpenFreeMap sirve tiles vectoriales OSM sin API key.
- * @see https://maplibre.org/projects/gl-js/
- * @see https://www.openstreetmap.org/
+ * Servicios geoespaciales del chofer: OSRM (rutas) + Nominatim (direcciones).
+ * El mapa base usa MapLibre + tiles Carto/OSM (ver mapProvider.js).
  */
-export const MAP_STYLE_URL =
-  process.env.EXPO_PUBLIC_MAP_STYLE_URL
-  || 'https://tiles.openfreemap.org/styles/liberty';
 
-/** Servidor OSRM para cálculo de rutas (perfil driving). Producción: Railway. */
-export const OSRM_BASE_URL =
+export const OSRM_BASE_URL = (
   process.env.EXPO_PUBLIC_OSRM_URL
-  || 'https://profesional-osrm-production.up.railway.app';
+  || 'https://profesional-osrm-production.up.railway.app'
+).replace(/\/$/, '');
 
-/** API de geocodificación Nominatim. Producción: Railway. */
-export const NOMINATIM_BASE_URL =
+export const NOMINATIM_BASE_URL = (
   process.env.EXPO_PUBLIC_NOMINATIM_URL
-  || 'https://profesional-nominatim-production.up.railway.app';
+  || 'https://profesional-nominatim-production.up.railway.app'
+).replace(/\/$/, '');
 
-/** User-Agent exigido por la política de uso de Nominatim. */
 export const NOMINATIM_USER_AGENT =
   process.env.EXPO_PUBLIC_NOMINATIM_USER_AGENT
   || 'ProfesionalConductorDriverApp/1.0';
 
-/**
- * Servidor Nominatim propio (Railway): sin throttle de uso público.
- * Desactivar con EXPO_PUBLIC_NOMINATIM_SELF_HOSTED=false (p. ej. Nominatim público).
- */
-export const NOMINATIM_SELF_HOSTED =
-  process.env.EXPO_PUBLIC_NOMINATIM_SELF_HOSTED !== 'false';
+export const DASHBOARD_URL =
+  process.env.EXPO_PUBLIC_DASHBOARD_URL
+  || 'https://profesional-dashboard.vercel.app';
