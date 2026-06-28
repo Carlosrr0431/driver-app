@@ -134,21 +134,27 @@ const parsePayperticDate = (value) => {
   return Number.isNaN(fallback.getTime()) ? null : fallback;
 };
 
-/** Paypertic no expone PDF por API; el comprobante oficial está en form_url del checkout. */
-const getPayperticFormUrl = (payment, fallbackPaymentId) => {
-  const fromPayment = payment?.form_url;
-  if (typeof fromPayment === 'string' && fromPayment.startsWith('http')) return fromPayment.trim();
-  const id = payment?.id || fallbackPaymentId;
-  if (id) return `https://checkout.paypertic.com/app/${id}`;
-  return null;
-};
-
 const getPaymentPaidAt = (payment) =>
   payment?.paid_date ||
   payment?.accreditation_date ||
   payment?.process_date ||
   payment?.last_update_date ||
   null;
+
+const isPayperticApprovedPayment = (payment) => {
+  if (!payment || typeof payment !== 'object') return false;
+  const normalizedStatus = String(payment?.status || '').toLowerCase();
+  const approvedStatuses = new Set([
+    'approved',
+    'paid',
+    'accredited',
+    'completed',
+    'success',
+    'succeeded',
+  ]);
+  if (approvedStatuses.has(normalizedStatus)) return true;
+  return Boolean(payment?.paid_date || payment?.accreditation_date);
+};
 
 const formatPaymentDate = (value) => {
   const date = parsePayperticDate(value);
@@ -677,8 +683,7 @@ const PaymentApprovedCard = React.memo(function PaymentApprovedCard({
   const providerPaymentId = payment?.id || '—';
   const paymentReference = payment?.external_transaction_id || '—';
   const receiptUrl = extractReceiptUrl(payment);
-  const formUrl = getPayperticFormUrl(payment, null);
-  const showPayperticReceipt = Boolean(receiptUrl || formUrl);
+  const showPayperticReceipt = Boolean(receiptUrl);
 
   return (
     <View style={styles.resultCard}>
@@ -825,13 +830,13 @@ export default function CommissionPaymentScreen() {
     if (resolvedPayment) {
       saveApprovedPayment({
         ...resolvedPayment,
-        form_url: resolvedPayment.form_url || formUrl || getPayperticFormUrl(resolvedPayment, paymentId),
+        form_url: resolvedPayment.form_url || formUrl || null,
       });
     } else if (paymentId || formUrl) {
       saveApprovedPayment({
         id: paymentId,
         final_amount: balance,
-        form_url: formUrl || getPayperticFormUrl(null, paymentId),
+        form_url: formUrl || null,
       });
     }
 
@@ -903,9 +908,7 @@ export default function CommissionPaymentScreen() {
     if (paymentId) {
       try {
         const payment = await getPaymentStatus(paymentId);
-        const status = (payment?.status || '').toLowerCase();
-
-        if (status === 'approved' || status === 'paid') {
+        if (isPayperticApprovedPayment(payment)) {
           await recordPaymentSuccess(payment);
           return;
         }
@@ -1001,14 +1004,13 @@ export default function CommissionPaymentScreen() {
 
   const handleDownloadReceipt = async () => {
     const receiptUrl = extractReceiptUrl(approvedPayment);
-    const payperticFormUrl = getPayperticFormUrl(approvedPayment, paymentId);
-    const targetUrl = receiptUrl || payperticFormUrl;
+    const targetUrl = receiptUrl;
 
     if (!targetUrl) {
       Toast.show({
         type: 'info',
         text1: 'Comprobante no disponible',
-        text2: 'Generá el PDF local o intentá más tarde.',
+        text2: 'Paypertic no devolvió un enlace de comprobante. Usá el PDF local.',
         visibilityTime: 3500,
       });
       return;
@@ -1040,9 +1042,7 @@ export default function CommissionPaymentScreen() {
 
     try {
       const payment = await getPaymentStatus(paymentId);
-      const status = (payment?.status || '').toLowerCase();
-
-      if (status === 'approved' || status === 'paid') {
+      if (isPayperticApprovedPayment(payment)) {
         await recordPaymentSuccess(payment);
         return true;
       }
@@ -1256,8 +1256,7 @@ export default function CommissionPaymentScreen() {
     if (paymentId && !paymentSuccessRecordedRef.current) {
       try {
         const existing = await getPaymentStatus(paymentId);
-        const existingStatus = (existing?.status || '').toLowerCase();
-        if (existingStatus === 'approved' || existingStatus === 'paid') {
+        if (isPayperticApprovedPayment(existing)) {
           setFormUrl(null);
           await recordPaymentSuccess(existing);
           return;
