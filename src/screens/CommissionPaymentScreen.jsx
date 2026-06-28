@@ -124,21 +124,51 @@ const extractReceiptUrl = (payment) => {
 
 const parsePayperticDate = (value) => {
   if (!value) return null;
-  if (typeof value === 'string') {
-    const normalized = value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
-    const parsed = new Date(normalized);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
+
+  // Timestamp numérico (segundos o milisegundos)
+  if (typeof value === 'number') {
+    const ms = value < 1e11 ? value * 1000 : value;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
   }
-  const fallback = new Date(value);
-  return Number.isNaN(fallback.getTime()) ? null : fallback;
+
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return null;
+
+    // Normalizar offset sin dos puntos: +0300 → +03:00
+    const normalized = s.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+    const iso = new Date(normalized);
+    if (!Number.isNaN(iso.getTime())) return iso;
+
+    // Formato dd/MM/yyyy HH:mm:ss ó dd/MM/yyyy
+    const ddmm = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (ddmm) {
+      const [, dd, mm, yyyy, hh = '0', min = '0', ss = '0'] = ddmm;
+      const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min), Number(ss));
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+
+    // Fallback genérico
+    const generic = new Date(s);
+    if (!Number.isNaN(generic.getTime())) return generic;
+  }
+
+  return null;
 };
 
-const getPaymentPaidAt = (payment) =>
-  payment?.paid_date ||
-  payment?.accreditation_date ||
-  payment?.process_date ||
-  payment?.last_update_date ||
-  null;
+const getPaymentPaidAt = (payment, { useFallbackNow = false } = {}) => {
+  const value =
+    payment?.paid_date ||
+    payment?.accreditation_date ||
+    payment?.last_update_date ||
+    payment?.updated_at ||
+    payment?.process_date ||
+    payment?.created_at ||
+    null;
+  if (value) return value;
+  return useFallbackNow ? new Date().toISOString() : null;
+};
 
 const isPayperticApprovedPayment = (payment) => {
   if (!payment || typeof payment !== 'object') return false;
@@ -286,7 +316,7 @@ const loadingCardStyles = StyleSheet.create({
 
 const generateReceiptHTML = (payment, balance) => {
   const amount = Number(payment?.final_amount) || balance;
-  const paidAt = getPaymentPaidAt(payment);
+  const paidAt = getPaymentPaidAt(payment, { useFallbackNow: true });
   const providerPaymentId = payment?.id || 'No disponible';
   const paymentReference = payment?.external_transaction_id || 'No disponible';
   const dateStr = formatPaymentDate(paidAt);
@@ -677,7 +707,7 @@ const PaymentApprovedCard = React.memo(function PaymentApprovedCard({
   isDownloadingReceipt,
 }) {
   const amount = Number(payment?.final_amount) || fallbackAmount;
-  const paidAt = getPaymentPaidAt(payment);
+  const paidAt = getPaymentPaidAt(payment, { useFallbackNow: true });
   const providerPaymentId = payment?.id || '—';
   const paymentReference = payment?.external_transaction_id || '—';
   const receiptUrl = extractReceiptUrl(payment);
@@ -955,7 +985,7 @@ export default function CommissionPaymentScreen() {
   };
 
   const handleShareReceipt = async () => {    const amount = Number(approvedPayment?.final_amount) || balance;
-    const paidAt = getPaymentPaidAt(approvedPayment);
+    const paidAt = getPaymentPaidAt(approvedPayment, { useFallbackNow: true });
     const paymentReference = approvedPayment?.external_transaction_id || 'No disponible';
     const providerPaymentId = approvedPayment?.id || paymentId || 'No disponible';
     const receiptUrl = extractReceiptUrl(approvedPayment);
