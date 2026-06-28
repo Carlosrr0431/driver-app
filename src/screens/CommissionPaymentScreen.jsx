@@ -17,7 +17,6 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import { colors } from '../theme/colors';
 import { formatPrice } from '../utils/formatters';
 import { createPaymentSession, getPaymentStatus } from '../services/paypertic';
@@ -943,23 +942,12 @@ export default function CommissionPaymentScreen() {
     try {
       setIsGeneratingPDF(true);
       const html = generateReceiptHTML(approvedPayment, balance);
-      const { uri } = await Print.printToFileAsync({ html, base64: false });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: 'application/pdf',
-          dialogTitle: 'Comprobante de pago',
-          UTI: 'com.adobe.pdf',
-        });
-      } else {
-        Toast.show({
-          type: 'info',
-          text1: 'Comprobante generado',
-          text2: 'Tu dispositivo no admite compartir archivos.',
-          visibilityTime: 3500,
-        });
-      }
+      // Usamos printAsync (diálogo nativo del sistema) en lugar de printToFileAsync +
+      // shareAsync, porque expo-sharing@55 falla en Android con NoSuchMethodError.
+      await Print.printAsync({ html });
     } catch (e) {
+      // El usuario canceló el diálogo → no es un error real
+      if (e?.message && /cancel/i.test(e.message)) return;
       Toast.show({ type: 'error', text1: 'No se pudo generar el PDF', text2: e?.message, visibilityTime: 4000 });
     } finally {
       setIsGeneratingPDF(false);

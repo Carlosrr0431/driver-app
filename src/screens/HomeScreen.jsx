@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, SlideInRight } from 'react-native-reanimated';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import MapLibreGL from '../lib/maplibre';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
@@ -148,6 +148,29 @@ const HomeScreen = () => {
       );
     }
   }, [currentLocation]);
+
+  // Al volver al HomeScreen por navegación (ej: desde ComisionPayment, ActiveTrip, etc.)
+  // refrescamos la posición GPS y re-centramos el mapa. Sin esto la cámara queda
+  // congelada en la última posición antes de salir de la pantalla.
+  useFocusEffect(
+    useCallback(() => {
+      if (!driver?.id) return;
+      getCurrentPosition({ syncToSupabase: isOnline, force: true }).then((loc) => {
+        const coords = loc || useLocationStore.getState().currentLocation;
+        if (coords && mapRef.current) {
+          mapRef.current.animateToRegion(
+            {
+              latitude: coords.lat,
+              longitude: coords.lng,
+              latitudeDelta: 0.008,
+              longitudeDelta: 0.008,
+            },
+            600,
+          );
+        }
+      }).catch(() => {});
+    }, [driver?.id, isOnline]),
+  );
 
   const autoNavTripIdRef = useRef(null);
   useEffect(() => {
