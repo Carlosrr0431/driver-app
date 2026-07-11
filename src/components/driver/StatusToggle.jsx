@@ -19,10 +19,12 @@ import * as Haptics from 'expo-haptics';
 import { colors } from '../../theme/colors';
 import { setDriverOnlineStatus } from '../../services/assignedDriverService';
 import { useAuthStore } from '../../stores/authStore';
+import { useResponsive } from '../../hooks/useResponsive';
 import Toast from 'react-native-toast-message';
 
 export const StatusToggle = ({ isOnline, onToggle }) => {
   const { driver, updateDriver } = useAuthStore();
+  const { s, fs } = useResponsive();
   const toggleAnim = useSharedValue(isOnline ? 1 : 0);
   const pulseAnim = useSharedValue(1);
 
@@ -90,8 +92,8 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
       <Animated.View
         style={[
           {
-            borderRadius: 20,
-            padding: 20,
+            borderRadius: s(20),
+            padding: s(20),
             borderWidth: 2,
             alignItems: 'center',
             position: 'relative',
@@ -105,9 +107,9 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
           style={[
             {
               position: 'absolute',
-              width: 80,
-              height: 80,
-              borderRadius: 40,
+              width: s(80),
+              height: s(80),
+              borderRadius: s(40),
               backgroundColor: colors.success,
             },
             pulseStyle,
@@ -117,18 +119,18 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
         {/* Icon */}
         <View
           style={{
-            width: 64,
-            height: 64,
-            borderRadius: 32,
+            width: s(64),
+            height: s(64),
+            borderRadius: s(32),
             backgroundColor: isOnline ? `${colors.success}20` : `${colors.offline}20`,
             alignItems: 'center',
             justifyContent: 'center',
-            marginBottom: 10,
+            marginBottom: s(10),
           }}
         >
           <MaterialCommunityIcons
             name={isOnline ? 'car' : 'moon-waning-crescent'}
-            size={32}
+            size={s(32)}
             color={isOnline ? colors.success : colors.offline}
           />
         </View>
@@ -137,7 +139,7 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
         <Text
           style={{
             color: isOnline ? colors.success : colors.offline,
-            fontSize: 18,
+            fontSize: fs(18),
             fontFamily: 'Inter_700Bold',
           }}
         >
@@ -146,9 +148,9 @@ export const StatusToggle = ({ isOnline, onToggle }) => {
         <Text
           style={{
             color: colors.textMuted,
-            fontSize: 12,
+            fontSize: fs(12),
             fontFamily: 'Inter_400Regular',
-            marginTop: 4,
+            marginTop: s(4),
           }}
         >
           {isOnline ? 'Toca para desconectarte' : 'Toca para conectarte'}

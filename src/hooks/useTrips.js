@@ -6,7 +6,7 @@ import { useTripStore } from '../stores/tripStore';
 import { TRIP_STATUS, PAGINATION_LIMIT, TRIP_ACCEPT_TIMEOUT } from '../utils/constants';
 import Toast from 'react-native-toast-message';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
-import { notifyTripAcceptedTransition } from '../services/tripTransition';
+import { notifyTripAcceptedTransition, notifyPassengerTripAccepted } from '../services/tripTransition';
 import {
   rejectTripViaDashboard,
   rejectTripViaRpc,
@@ -250,21 +250,24 @@ export const useTrips = () => {
         // El trigger lo incrementa al completar viajes y el webhook lo resetea a 0 al pagar.
         const { data: driverData, error: driverErr } = await supabase
           .from('drivers')
-          .select('pending_commission, last_commission_payment_at')
+          .select('pending_commission, last_commission_payment_at, commission_debt_since_at')
           .eq('id', driver.id)
           .single();
 
         if (driverErr) throw driverErr;
 
         const balance = Math.round((Number(driverData?.pending_commission) || 0) * 100) / 100;
-        const lastPaymentDate = driverData?.last_commission_payment_at
-          ? new Date(driverData.last_commission_payment_at)
-          : null;
 
-        // isOverdue: tiene saldo y el último pago fue hace más de 3 días (o nunca pagó)
+        // isOverdue: la deuda lleva más de 3 días sin pagarse.
+        // Se usa commission_debt_since_at (cuándo empezó la deuda actual),
+        // no last_commission_payment_at, para evitar suspender al instante
+        // cuando el chofer nunca ha pagado pero acaba de generar su primera comisión.
+        const debtSince = driverData?.commission_debt_since_at
+          ? new Date(driverData.commission_debt_since_at)
+          : null;
         const threeDaysAgo = new Date();
         threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-        const isOverdue = balance > 0 && (!lastPaymentDate || lastPaymentDate < threeDaysAgo);
+        const isOverdue = balance > 0 && debtSince !== null && debtSince < threeDaysAgo;
 
         return {
           balance,
@@ -324,6 +327,7 @@ export const useTrips = () => {
         .update({
           status: TRIP_STATUS.GOING_TO_PICKUP,
           accepted_at: new Date().toISOString(),
+          dispatch_status: 'accepted',
         })
         .eq('id', tripId)
         .eq('driver_id', driver.id)
@@ -356,9 +360,19 @@ export const useTrips = () => {
         text2: 'Dirígete al punto de recogida',
       });
 
+      // Push directo al pasajero (rápido, sin overhead de Agente_IA)
+      notifyPassengerTripAccepted(data.id).then((pushResult) => {
+        if (!pushResult.ok) {
+          console.warn('[acceptTrip] Push pasajero falló:', pushResult.reason, '| tripId:', data.id);
+        } else {
+          console.log('[acceptTrip] Push pasajero enviado:', pushResult.pushStatus, '| tripId:', data.id);
+        }
+      });
+
+      // Agente_IA como respaldo (WhatsApp + transiciones de ciclo de vida)
       notifyTripAcceptedTransition(data.id).catch((notifyError) => {
         console.warn(
-          'No se pudo disparar la confirmacion inmediata por WhatsApp:',
+          '[acceptTrip] Agente_IA transition falló (no crítico):',
           notifyError?.message || notifyError
         );
       });

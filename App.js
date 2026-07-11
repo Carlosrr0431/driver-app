@@ -28,6 +28,9 @@ import { ErrorBoundary } from './src/components/ErrorBoundary';
 import AppNavigator from './src/navigation/AppNavigator';
 import { useAuth } from './src/hooks/useAuth';
 import { useAuthStore } from './src/stores/authStore';
+import { useResponsive, ResponsiveProvider } from './src/hooks/useResponsive';
+import { useStoreUpdateCheck } from './src/hooks/useStoreUpdateCheck';
+import { StoreUpdateModal } from './src/components/ui/StoreUpdateModal';
 import { DEV_AUTO_LOGIN, DEV_DRIVER_EMAIL, DEV_DRIVER_PASSWORD } from './src/config/devDefaults';
 import { useTripStore } from './src/stores/tripStore';
 import { colors } from './src/theme/colors';
@@ -47,34 +50,38 @@ const queryClient = new QueryClient({
   },
 });
 
-const ToastContent = ({ text1, text2, borderColor }) => (
-  <View
-    style={{
-      maxWidth: '90%',
-      backgroundColor: colors.surface,
-      borderRadius: 12,
-      padding: 14,
-      borderLeftWidth: 4,
-      borderLeftColor: borderColor,
-      borderWidth: 1,
-      borderColor: colors.border,
-      elevation: 5,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.25,
-      shadowRadius: 4,
-    }}
-  >
-    <Text style={{ color: colors.text, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
-      {text1}
-    </Text>
-    {text2 ? (
-      <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
-        {text2}
+const ToastContent = ({ text1, text2, borderColor }) => {
+  const { s, fs, contentMaxWidth } = useResponsive();
+  return (
+    <View
+      style={{
+        maxWidth: Math.min(contentMaxWidth, s(340)),
+        width: '90%',
+        backgroundColor: colors.surface,
+        borderRadius: s(12),
+        padding: s(14),
+        borderLeftWidth: 4,
+        borderLeftColor: borderColor,
+        borderWidth: 1,
+        borderColor: colors.border,
+        elevation: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+      }}
+    >
+      <Text style={{ color: colors.text, fontSize: fs(14), fontFamily: 'Inter_600SemiBold' }}>
+        {text1}
       </Text>
-    ) : null}
-  </View>
-);
+      {text2 ? (
+        <Text style={{ color: colors.textMuted, fontSize: fs(12), fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+          {text2}
+        </Text>
+      ) : null}
+    </View>
+  );
+};
 
 const toastConfig = {
   success: (props) => <ToastContent {...props} borderColor={colors.success} />,
@@ -85,6 +92,7 @@ const toastConfig = {
 const AppContent = () => {
   const { login } = useAuth({ enableBootstrap: true });
   const { isAuthenticated, isLoading } = useAuthStore();
+  const { visible: updateVisible, dismiss: dismissUpdate, openUpdate } = useStoreUpdateCheck();
   const devLoginAttempted = useRef(false);
   const notificationListener = useRef();
   const responseListener = useRef();
@@ -133,7 +141,16 @@ const AppContent = () => {
     };
   }, []);
 
-  return <AppNavigator />;
+  return (
+    <>
+      <AppNavigator />
+      <StoreUpdateModal
+        visible={updateVisible}
+        onUpdate={openUpdate}
+        onDismiss={dismissUpdate}
+      />
+    </>
+  );
 };
 
 export default function App() {
@@ -167,9 +184,11 @@ export default function App() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <QueryClientProvider client={queryClient}>
           <SafeAreaProvider>
-            <StatusBar barStyle="light-content" backgroundColor={colors.background} />
-            <AppContent />
-            <Toast config={toastConfig} topOffset={60} />
+            <ResponsiveProvider>
+              <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+              <AppContent />
+              <Toast config={toastConfig} topOffset={60} />
+            </ResponsiveProvider>
           </SafeAreaProvider>
         </QueryClientProvider>
       </GestureHandlerRootView>

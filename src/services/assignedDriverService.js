@@ -5,12 +5,15 @@ const DASHBOARD_URL =
   process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://profesional-dashboard.vercel.app';
 
 /** Lookup unificado: dueño o chofer asignado. */
-export async function lookupDriverPhoneLogin(phone, driverNumber = null) {
+export async function lookupDriverPhoneLogin(phone, driverNumber = null, loginKind = null) {
   const params = {
     p_phone: normalizeDriverPhone(phone) || phone,
   };
   if (driverNumber != null && Number.isFinite(Number(driverNumber))) {
     params.p_driver_number = Number(driverNumber);
+  }
+  if (loginKind === 'owner' || loginKind === 'assigned') {
+    params.p_login_kind = loginKind;
   }
 
   const { data, error } = await supabase.rpc('lookup_driver_phone_login', params);

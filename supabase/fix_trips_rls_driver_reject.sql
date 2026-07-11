@@ -106,15 +106,32 @@ BEGIN
     );
   END IF;
 
+  -- Legacy: origin_* queda con GPS del chofer al asignar → se limpia al reencolar.
+  -- WhatsApp [APPROACH_ONLY] y passenger-app [PASSENGER_APP]: retiro real en origin_* → conservar.
   UPDATE public.trips
   SET
     status = 'queued',
     driver_id = NULL,
     assigned_at = NULL,
     accepted_at = NULL,
-    origin_address = NULL,
-    origin_lat = NULL,
-    origin_lng = NULL,
+    origin_address = CASE
+      WHEN COALESCE(v_trip.notes, '') LIKE '%[APPROACH_ONLY]%'
+        OR COALESCE(v_trip.notes, '') LIKE '%[PASSENGER_APP]%'
+      THEN v_trip.origin_address
+      ELSE NULL
+    END,
+    origin_lat = CASE
+      WHEN COALESCE(v_trip.notes, '') LIKE '%[APPROACH_ONLY]%'
+        OR COALESCE(v_trip.notes, '') LIKE '%[PASSENGER_APP]%'
+      THEN v_trip.origin_lat
+      ELSE NULL
+    END,
+    origin_lng = CASE
+      WHEN COALESCE(v_trip.notes, '') LIKE '%[APPROACH_ONLY]%'
+        OR COALESCE(v_trip.notes, '') LIKE '%[PASSENGER_APP]%'
+      THEN v_trip.origin_lng
+      ELSE NULL
+    END,
     dispatch_status = 'queued',
     next_dispatch_at = NOW(),
     status_updated_at = NOW(),

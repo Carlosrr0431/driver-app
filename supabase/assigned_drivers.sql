@@ -254,10 +254,22 @@ BEGIN
     WHERE id = v_fleet_root_id;
 
     IF v_operator_id IS NOT NULL AND v_operator_id <> p_driver_id THEN
-      RETURN jsonb_build_object(
-        'success', false,
-        'error', 'El vehículo ya está en uso por otro chofer. Solo uno puede operarlo a la vez.'
-      );
+      IF EXISTS (
+        SELECT 1
+        FROM public.drivers
+        WHERE id = v_operator_id
+          AND is_available = true
+      ) THEN
+        RETURN jsonb_build_object(
+          'success', false,
+          'error', 'El vehículo ya está en uso por otro chofer. Solo uno puede operarlo a la vez.'
+        );
+      END IF;
+
+      UPDATE public.drivers
+      SET vehicle_operator_id = NULL, updated_at = NOW()
+      WHERE id = v_fleet_root_id
+        AND vehicle_operator_id = v_operator_id;
     END IF;
 
     SELECT d.id INTO v_busy

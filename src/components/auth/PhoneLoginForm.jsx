@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { colors } from '../../theme/colors';
 import { formatPhoneForDisplay } from '../../utils/driverRoles';
+import { useResponsive } from '../../hooks/useResponsive';
 
 const BRAND_BLUE = '#282e69';
 
@@ -35,6 +36,7 @@ export function PhoneLoginForm({
   onPrimaryAction,
   primaryLabels = {},
 }) {
+  const { s, fs } = useResponsive();
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
 
@@ -70,8 +72,8 @@ export function PhoneLoginForm({
   return (
     <Animated.View entering={FadeInDown.delay(120).duration(400)} style={{
       backgroundColor: '#FFFFFF',
-      borderRadius: 20,
-      padding: 20,
+      borderRadius: s(20),
+      padding: s(20),
       borderWidth: 1,
       borderColor: '#F0F2F8',
     }}>
@@ -79,20 +81,20 @@ export function PhoneLoginForm({
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 6,
-          marginBottom: 16,
+          gap: s(6),
+          marginBottom: s(16),
           alignSelf: 'flex-start',
           backgroundColor: `${BRAND_BLUE}0C`,
-          paddingHorizontal: 10,
-          paddingVertical: 6,
-          borderRadius: 8,
+          paddingHorizontal: s(10),
+          paddingVertical: s(6),
+          borderRadius: s(8),
         }}>
           <Ionicons
             name={loginMode === 'assigned' ? 'car-sport-outline' : 'person-outline'}
-            size={14}
+            size={s(14)}
             color={BRAND_BLUE}
           />
-          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: BRAND_BLUE }}>
+          <Text style={{ fontSize: fs(12), fontFamily: 'Inter_600SemiBold', color: BRAND_BLUE }}>
             {MODE_COPY[loginMode] || MODE_COPY.owner}
           </Text>
         </View>
@@ -220,8 +222,8 @@ export function PhoneLoginForm({
         onPress={onPrimaryAction}
         disabled={!canSubmit || busy}
         style={({ pressed }) => ({
-          marginTop: 12,
-          borderRadius: 14,
+          marginTop: s(12),
+          borderRadius: s(14),
           overflow: 'hidden',
           opacity: !canSubmit || busy ? 0.5 : pressed ? 0.9 : 1,
         })}
@@ -231,14 +233,14 @@ export function PhoneLoginForm({
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{
-            height: 52,
+            height: s(52, { min: 48 }),
             alignItems: 'center',
             justifyContent: 'center',
             flexDirection: 'row',
-            gap: 8,
+            gap: s(8),
           }}
         >
-          <Text style={{ color: '#fff', fontSize: 16, fontFamily: 'Inter_700Bold' }}>
+          <Text style={{ color: '#fff', fontSize: fs(16), fontFamily: 'Inter_700Bold' }}>
             {primaryLabel}
           </Text>
         </LinearGradient>
@@ -248,12 +250,13 @@ export function PhoneLoginForm({
 }
 
 function FieldLabel({ children }) {
+  const { fs, s } = useResponsive();
   return (
     <Text style={{
       color: colors.textMuted,
-      fontSize: 12,
+      fontSize: fs(12),
       fontFamily: 'Inter_500Medium',
-      marginBottom: 8,
+      marginBottom: s(8),
       letterSpacing: 0.3,
     }}>
       {children}
@@ -266,31 +269,33 @@ function InputField({
   secureTextEntry,
   onToggleSecure,
   secureVisible,
-  marginBottom = 16,
+  marginBottom,
   ...props
 }) {
+  const { s, fs } = useResponsive();
   return (
     <View style={{
       backgroundColor: '#F8F9FC',
-      borderRadius: 12,
+      borderRadius: s(12),
       borderWidth: 1.5,
       borderColor: '#E8ECF4',
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 14,
-      marginBottom,
+      paddingHorizontal: s(14),
+      marginBottom: marginBottom ?? s(16),
+      minHeight: s(48, { min: 44 }),
     }}>
-      <Ionicons name={icon} size={18} color={colors.textMuted} />
+      <Ionicons name={icon} size={s(18)} color={colors.textMuted} />
       <TextInput
         placeholderTextColor="#A0A8BE"
         secureTextEntry={secureTextEntry}
         style={{
           flex: 1,
           color: colors.text,
-          fontSize: 15,
+          fontSize: fs(15),
           fontFamily: 'Inter_400Regular',
-          paddingVertical: 14,
-          marginLeft: 12,
+          paddingVertical: s(14),
+          marginLeft: s(12),
         }}
         {...props}
       />
@@ -303,7 +308,7 @@ function InputField({
         >
           <Ionicons
             name={secureVisible ? 'eye-off-outline' : 'eye-outline'}
-            size={20}
+            size={s(20)}
             color={colors.textMuted}
           />
         </Pressable>

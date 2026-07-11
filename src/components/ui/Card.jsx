@@ -1,30 +1,31 @@
 /**
  * Componente: Card
  * Que hace: Contenedor visual base para bloques de UI con borde, radio y sombra consistentes.
- * Usado por:
- * - driver-app/src/components/trip/TripCard.jsx -> import { Card } from '../ui/Card';
- * - driver-app/src/components/trip/TripSummary.jsx -> import { Card } from '../ui/Card';
- * - driver-app/src/screens/HomeScreen.old.jsx -> import { Card } from '../components/ui/Card';
  */
 import React from 'react';
 import { View } from 'react-native';
 import { colors } from '../../theme/colors';
 import { shadows } from '../../theme/spacing';
+import { useResponsive } from '../../hooks/useResponsive';
 
 export const Card = ({
   children,
   style,
-  padding = 16,
-  marginBottom = 12,
+  padding,
+  marginBottom,
 }) => {
+  const { s } = useResponsive();
+  const pad = padding ?? s(16);
+  const mb = marginBottom ?? s(12);
+
   return (
     <View
       style={[
         {
           backgroundColor: colors.surface,
-          borderRadius: 16,
-          padding,
-          marginBottom,
+          borderRadius: s(16),
+          padding: pad,
+          marginBottom: mb,
           borderWidth: 1,
           borderColor: colors.border,
           ...shadows.card,

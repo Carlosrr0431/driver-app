@@ -10,9 +10,10 @@ const OPENFREEMAP_GLYPHS = 'https://tiles.openfreemap.org/fonts/{fontstack}/{ran
 
 const CARTO_SUBDOMAINS = ['a', 'b', 'c', 'd'];
 
-function cartoTiles(style) {
+function cartoTiles(style, { retina = false } = {}) {
+  const suffix = retina ? '@2x' : '';
   return CARTO_SUBDOMAINS.map(
-    (sub) => `https://${sub}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}@2x.png`,
+    (sub) => `https://${sub}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}${suffix}.png`,
   );
 }
 

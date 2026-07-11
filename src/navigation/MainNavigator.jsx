@@ -14,6 +14,7 @@ import OwnerDriverDetailScreen from '../screens/OwnerDriverDetailScreen';
 import CreateLinkedDriverScreen from '../screens/CreateLinkedDriverScreen';
 import CommissionPaymentScreen from '../screens/CommissionPaymentScreen';
 import { useVoiceAutoPlay } from '../hooks/useVoiceAutoPlay';
+import { useResponsive } from '../hooks/useResponsive';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -54,9 +55,11 @@ const ProfileStack = () => (
 const MainNavigator = () => {
   useVoiceAutoPlay();
   const insets = useSafeAreaInsets();
+  const { s, fs, isLandscape } = useResponsive();
   const extraBottomInset = Platform.OS === 'android' ? 7 : 1;
   const paddingBottom = insets.bottom + extraBottomInset;
-  const tabBarHeight = 46 + paddingBottom;
+  const baseTab = isLandscape ? 40 : 46;
+  const tabBarHeight = s(baseTab) + paddingBottom;
 
   return (
     <Tab.Navigator
@@ -70,7 +73,11 @@ const MainNavigator = () => {
         },
         tabBarLabel: ({ focused, color, children }) => (
           <Text
-            style={[styles.label, focused && styles.labelActive, { color }]}
+            style={[
+              { fontSize: fs(10), fontWeight: '400', marginTop: 0, letterSpacing: 0 },
+              focused && { fontWeight: '700' },
+              { color },
+            ]}
             numberOfLines={1}
           >
             {children}
@@ -102,7 +109,7 @@ const MainNavigator = () => {
         options={{
           title: 'Inicio',
           tabBarIcon: ({ focused, color }) => (
-            <TabIcon icon="home" focused={focused} color={color} />
+            <TabIcon icon="home" focused={focused} color={color} size={s(22)} />
           ),
         }}
       />
@@ -112,7 +119,7 @@ const MainNavigator = () => {
         options={{
           title: 'Historial',
           tabBarIcon: ({ focused, color }) => (
-            <TabIcon icon="time" focused={focused} color={color} />
+            <TabIcon icon="time" focused={focused} color={color} size={s(22)} />
           ),
         }}
       />
@@ -122,7 +129,7 @@ const MainNavigator = () => {
         options={{
           title: 'Mi perfil',
           tabBarIcon: ({ focused, color }) => (
-            <TabIcon icon="person" focused={focused} color={color} />
+            <TabIcon icon="person" focused={focused} color={color} size={s(22)} />
           ),
         }}
       />
@@ -130,32 +137,14 @@ const MainNavigator = () => {
   );
 };
 
-const TabIcon = ({ icon, focused, color }) => (
-  <View style={styles.iconWrap}>
+const TabIcon = ({ icon, focused, color, size = 22 }) => (
+  <View style={{ width: size + 6, height: size, alignItems: 'center', justifyContent: 'center' }}>
     <Ionicons
       name={focused ? icon : `${icon}-outline`}
-      size={22}
+      size={size}
       color={color}
     />
   </View>
 );
-
-const styles = StyleSheet.create({
-  iconWrap: {
-    width: 28,
-    height: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  label: {
-    fontSize: 10,
-    fontWeight: '400',
-    marginTop: 0,
-    letterSpacing: 0,
-  },
-  labelActive: {
-    fontWeight: '700',
-  },
-});
 
 export default MainNavigator;

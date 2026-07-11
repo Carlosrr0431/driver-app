@@ -26,6 +26,7 @@ import { useTrips } from '../hooks/useTrips';
 import { useRealtime } from '../hooks/useRealtime';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '../hooks/useLocation';
+import { useResponsive } from '../hooks/useResponsive';
 import { supabase } from '../services/supabase';
 import { setDriverOnlineStatus } from '../services/assignedDriverService';
 import { NewTripModal } from '../components/trip/NewTripModal';
@@ -38,6 +39,7 @@ import * as Haptics from 'expo-haptics';
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const { isLandscape, isCompactHeight } = useResponsive();
   const { driver, updateDriver } = useAuthStore();
   const { pendingTrip, showNewTripModal, activeTrip } = useTripStore();
   const currentLocation = useLocationStore((s) => s.currentLocation);
@@ -50,7 +52,9 @@ const HomeScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
   const [sheetIndex, setSheetIndex] = useState(0);
-  const snapPoints = useMemo(() => ['28%', '72%'], []);
+  const snapPoints = useMemo(() => (
+    isLandscape || isCompactHeight ? ['36%', '88%'] : ['28%', '72%']
+  ), [isLandscape, isCompactHeight]);
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
   const { data: activeTripData } = useActiveTrip();

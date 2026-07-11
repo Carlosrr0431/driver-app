@@ -16,6 +16,7 @@ export function usePhoneDriverAuth({
   loginStore,
   setLoading,
   lookupFn = lookupDriverPhoneLogin,
+  loginKind = null,
   notFoundMessage = 'Este teléfono no está registrado en Profesional',
 }) {
   const [step, setStep] = useState('phone');
@@ -55,7 +56,10 @@ export function usePhoneDriverAuth({
 
     try {
       setIsSubmitting(true);
-      const result = await lookupFn(normalized, parsedDriverNumber);
+      const lookupArgs = loginKind
+        ? [normalized, parsedDriverNumber, loginKind]
+        : [normalized, parsedDriverNumber];
+      const result = await lookupFn(...lookupArgs);
 
       if (result?.needs_driver_number && Array.isArray(result.choices) && result.choices.length > 0) {
         setPhone(rawPhone);
@@ -91,7 +95,7 @@ export function usePhoneDriverAuth({
     } finally {
       setIsSubmitting(false);
     }
-  }, [lookupFn, notFoundMessage]);
+  }, [lookupFn, loginKind, notFoundMessage]);
 
   const lookupPhone = useCallback(async (rawPhone) => {
     return runLookup(rawPhone, null);

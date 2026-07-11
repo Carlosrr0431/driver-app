@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Dimensions, Pressable, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard } from 'react-native';
+import { View, Text, Linking, Pressable, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, TextInput, Keyboard, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Extrapolation,
@@ -51,8 +51,8 @@ import {
   resolveTripWaypoints,
 } from '../../shared/trip-contract';
 import { TripRouteTimeline } from '../components/trip/TripRouteTimeline';
+import { useResponsive } from '../hooks/useResponsive';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const NOTIFY_PASSENGER_URL = `${TRACKING_BASE_URL}/api/driver/notify-passenger`;
 
 // Local flow steps (independent from DB status)
@@ -830,6 +830,8 @@ const ActiveTripScreen = () => {
   const DEFAULT_TARIFF_PER_KM = 600;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const { isLandscape, isCompactHeight, s } = useResponsive();
   const bottomSheetRef = useRef(null);
   const flowLockRef = useRef(null);
   const timerRef = useRef(null);
@@ -915,8 +917,15 @@ const ActiveTripScreen = () => {
   const [accumulatedLegs, setAccumulatedLegs] = useState([]);
   const [visitedWaypointCount, setVisitedWaypointCount] = useState(0);
 
-  const snapPoints = useMemo(() => ['24%', '68%', '90%'], []);
-  const mapControlsBottomOffset = useMemo(() => Math.max(112, Math.round(SCREEN_HEIGHT * 0.16)), []);
+  const snapPoints = useMemo(() => (
+    isLandscape || isCompactHeight
+      ? ['34%', '78%', '95%']
+      : ['24%', '68%', '90%']
+  ), [isLandscape, isCompactHeight]);
+  const mapControlsBottomOffset = useMemo(
+    () => Math.max(s(112), Math.round(windowHeight * (isLandscape ? 0.22 : 0.16))),
+    [windowHeight, isLandscape, s],
+  );
 
   // Derive initial flow step from DB status (solo al cambiar de viaje o status en BD)
   useEffect(() => {
@@ -1750,13 +1759,18 @@ const ActiveTripScreen = () => {
   }, [isNearDestination, isRerouting]);
 
   const canArriveAtWaypoint = flowStep === FLOW_STEP.IN_PROGRESS
+    && activeTrip?.status === TRIP_STATUS.IN_PROGRESS
     && hasPlannedMultiStopRoute
     && !allPlannedWaypointsVisited
     && activeNavTarget?.kind === 'waypoint'
     && Number.isFinite(distanceToActiveNavTarget)
     && distanceToActiveNavTarget <= FINISH_TRIP_MAX_DISTANCE_METERS;
 
+  // Requiere que tanto el flowStep local como el status en BD sean in_progress,
+  // evitando que el botón parpadee mientras el flowStep se actualiza optimistamente
+  // antes de que Supabase confirme la transición de estado.
   const canFinishTripNearby = flowStep === FLOW_STEP.IN_PROGRESS
+    && activeTrip?.status === TRIP_STATUS.IN_PROGRESS
     && hasActiveTripDestination
     && isNavigatingToFinalDestination
     && (isFreeRideActive || isNearFinalDestination);

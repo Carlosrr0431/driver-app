@@ -83,11 +83,13 @@ export const useRealtime = () => {
           const currentDriverId = String(driver.id);
           const ownsNow = String(trip?.driver_id || '') === currentDriverId;
           const ownedBefore = String(previousTrip?.driver_id || '') === currentDriverId;
+          const activeTripId = useTripStore.getState().activeTrip?.id;
+          const isCurrentActive = Boolean(activeTripId) && String(trip?.id) === String(activeTripId);
 
           // El worker puede hacer queued -> pending seteando driver_id en el mismo UPDATE.
           // Si filtramos por driver_id en el servidor, ese cambio puede perderse según el payload.
           // Escuchamos UPDATE sin filtro y filtramos localmente para este chofer.
-          if (!ownsNow && !ownedBefore) {
+          if (!ownsNow && !ownedBefore && !isCurrentActive) {
             return;
           }
 
@@ -106,7 +108,10 @@ export const useRealtime = () => {
             }
           }
 
-          if (ownsNow && statusNow === TRIP_STATUS.CANCELLED) {
+          if (
+            statusNow === TRIP_STATUS.CANCELLED
+            && (ownsNow || ownedBefore || isCurrentActive)
+          ) {
             // Update the Zustand store so ActiveTripScreen can react immediately
             updateActiveTrip({ status: TRIP_STATUS.CANCELLED, cancel_reason: trip.cancel_reason || '' });
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

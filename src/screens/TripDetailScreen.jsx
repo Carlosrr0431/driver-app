@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, Dimensions, Pressable, StatusBar } from 'react-native';
+import { View, Text, ScrollView, Pressable, StatusBar, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import MapLibreGL from '../lib/maplibre';
@@ -13,17 +13,19 @@ import { formatDateTime, formatPrice, formatDistance, formatDuration } from '../
 import { getRegionForCoordinates } from '../utils/mapHelpers';
 import { MAPLIBRE_STYLE } from '../utils/mapProvider';
 import { MapRouteLayers } from '../components/map/MapRouteLayers';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { useResponsive } from '../hooks/useResponsive';
 
 const TripDetailScreen = () => {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const { screenPadding, s } = useResponsive();
   const route = useRoute();
   const navigation = useNavigation();
   const { tripId } = route.params;
   const [trip, setTrip] = useState(null);
   const [trackingPoints, setTrackingPoints] = useState([]);
   const [loading, setLoading] = useState(true);
+  const mapHeight = Math.max(s(180), Math.min(width * 0.55, s(280)));
 
   useEffect(() => {
     fetchTripDetail();
@@ -82,9 +84,12 @@ const TripDetailScreen = () => {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 30 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: s(30) }}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Map */}
-        <View style={{ height: 230 }}>
+        <View style={{ height: mapHeight }}>
           <MapLibreGL.MapView
             style={{ flex: 1 }}
             mapStyle={MAPLIBRE_STYLE}
@@ -158,7 +163,7 @@ const TripDetailScreen = () => {
           </Pressable>
         </View>
 
-        <View style={{ paddingHorizontal: 16 }}>
+        <View style={{ paddingHorizontal: screenPadding }}>
           {/* Status & Date */}
           <Animated.View entering={FadeInDown.delay(80).duration(400)}
             style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>

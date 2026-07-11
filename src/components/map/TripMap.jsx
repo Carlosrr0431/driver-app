@@ -613,10 +613,11 @@ export const TripMap = React.memo(({
     if (freeRideCameraBootstrappedRef.current) return;
 
     let cancelled = false;
+    let frameId = null;
     const bootstrapFreeRideCamera = () => {
       if (cancelled) return;
       if (!cameraRef.current) {
-        requestAnimationFrame(bootstrapFreeRideCamera);
+        frameId = requestAnimationFrame(bootstrapFreeRideCamera);
         return;
       }
       freeRideCameraBootstrappedRef.current = true;
@@ -634,7 +635,10 @@ export const TripMap = React.memo(({
     };
 
     bootstrapFreeRideCamera();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (frameId !== null) cancelAnimationFrame(frameId);
+    };
   }, [freeRideMode, driverCoord, traveledRouteDisplayCoords, applyCameraStop]);
 
   /* ── Fit inicial a la ruta ─────────────────────────────────────────────── */

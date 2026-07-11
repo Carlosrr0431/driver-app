@@ -1,34 +1,33 @@
 /**
  * Componente: Badge
  * Que hace: Muestra una etiqueta de estado con color y texto configurable para viajes u otros estados.
- * Usado por:
- * - driver-app/src/components/trip/TripCard.jsx -> import { Badge } from '../ui/Badge';
- * - driver-app/src/screens/ProfileScreen.jsx -> import { Badge } from '../components/ui/Badge';
- * - driver-app/src/screens/TripDetailScreen.jsx -> import { Badge } from '../components/ui/Badge';
  */
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text } from 'react-native';
 import { TRIP_STATUS_LABELS, TRIP_STATUS_COLORS } from '../../utils/constants';
+import { useResponsive } from '../../hooks/useResponsive';
 
 export const Badge = ({ status, label, color, size = 'sm' }) => {
+  const { s, fs } = useResponsive();
   const displayLabel = label || TRIP_STATUS_LABELS[status] || status;
   const bgColor = color || TRIP_STATUS_COLORS[status] || '#636E72';
 
-  const sizes = {
-    xs: { paddingH: 6, paddingV: 2, fontSize: 10 },
-    sm: { paddingH: 8, paddingV: 4, fontSize: 11 },
-    md: { paddingH: 10, paddingV: 6, fontSize: 13 },
-  };
-
-  const s = sizes[size] || sizes.sm;
+  const sizeStyle = useMemo(() => {
+    const sizes = {
+      xs: { paddingH: s(6), paddingV: s(2), fontSize: fs(10) },
+      sm: { paddingH: s(8), paddingV: s(4), fontSize: fs(11) },
+      md: { paddingH: s(10), paddingV: s(6), fontSize: fs(13) },
+    };
+    return sizes[size] || sizes.sm;
+  }, [s, fs, size]);
 
   return (
     <View
       style={{
         backgroundColor: `${bgColor}20`,
-        paddingHorizontal: s.paddingH,
-        paddingVertical: s.paddingV,
-        borderRadius: 8,
+        paddingHorizontal: sizeStyle.paddingH,
+        paddingVertical: sizeStyle.paddingV,
+        borderRadius: s(8),
         borderWidth: 1,
         borderColor: `${bgColor}40`,
         alignSelf: 'flex-start',
@@ -37,7 +36,7 @@ export const Badge = ({ status, label, color, size = 'sm' }) => {
       <Text
         style={{
           color: bgColor,
-          fontSize: s.fontSize,
+          fontSize: sizeStyle.fontSize,
           fontFamily: 'Inter_600SemiBold',
         }}
       >

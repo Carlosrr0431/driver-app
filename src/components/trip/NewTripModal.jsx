@@ -46,6 +46,8 @@ import {
   cleanTripNotesForDriverDisplay,
 } from '../../../shared/trip-contract';
 import { TripRouteTimeline } from './TripRouteTimeline';
+import { useResponsive } from '../../hooks/useResponsive';
+import { CONTENT_MAX_WIDTH } from '../../utils/responsive';
 
 const getCleanNotes = (trip) => cleanTripNotesForDriverDisplay(trip?.notes);
 
@@ -59,6 +61,7 @@ const getInitialCountdown = (trip) => {
 };
 
 export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
+  const { s, isLandscape, sheetMaxHeight, screenPadding } = useResponsive();
   const [countdown, setCountdown] = useState(() => getInitialCountdown(trip));
   const [showRejectSheet, setShowRejectSheet] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
@@ -293,12 +296,15 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
             entering={FadeInDown.duration(400).easing(Easing.out(Easing.cubic))}
             style={{
               backgroundColor: colors.background,
-              borderTopLeftRadius: 28,
-              borderTopRightRadius: 28,
-              paddingTop: 12,
-              paddingHorizontal: 20,
-              paddingBottom: 36,
-              maxHeight: '92%',
+              borderTopLeftRadius: s(28),
+              borderTopRightRadius: s(28),
+              paddingTop: s(12),
+              paddingHorizontal: screenPadding,
+              paddingBottom: s(36),
+              maxHeight: sheetMaxHeight,
+              width: '100%',
+              maxWidth: isLandscape ? CONTENT_MAX_WIDTH : undefined,
+              alignSelf: 'center',
             }}
           >
             {/* Handle */}

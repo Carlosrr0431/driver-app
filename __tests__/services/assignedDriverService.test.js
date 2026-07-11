@@ -28,7 +28,7 @@ describe('assignedDriverService', () => {
       const result = await lookupDriverPhoneLogin('387 8630173');
 
       expect(mockRpc).toHaveBeenCalledWith('lookup_driver_phone_login', {
-        p_phone: '543878630173',
+        p_phone: '5493878630173',
       });
       expect(result.found).toBe(true);
     });
@@ -44,7 +44,7 @@ describe('assignedDriverService', () => {
       const result = await lookupAssignedDriverLogin('387 8630173');
 
       expect(mockRpc).toHaveBeenCalledWith('lookup_assigned_driver_login', {
-        p_phone: '543878630173',
+        p_phone: '5493878630173',
       });
       expect(result.found).toBe(true);
       expect(result.full_name).toBe('Juan Pérez');

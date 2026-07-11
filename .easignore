@@ -11,9 +11,14 @@ android/app/.cxx/
 ios/Pods/
 ios/build/
 coverage/
+releases/
+.eas-inspect-test/
+dist/
 
 # Local tooling and artifacts
 .tools/
+.eas-inspect/
+.eas-inspect-vcs/
 *.tsbuildinfo
 *.log
 npm-debug.*
@@ -23,3 +28,34 @@ yarn-error.*
 # Local env files
 .env
 .env.local
+
+# Monorepo: excluir otros sub-proyectos (rutas relativas al app y a la raíz git)
+../passenger-app/
+/passenger-app/
+../profesional-dashboard/
+/profesional-dashboard/
+../infra/
+/infra/
+../railway-services/
+/railway-services/
+../*.md
+/*.md
+../.github/
+/.github/
+../.cursor/
+/.cursor/
+../.agents/
+/.agents/
+**/*.zip
+**/*.7z
+*firebase-adminsdk*.json
+
+# Código compartido del monorepo (fallback si no está en driver-app/shared)
+!../shared/
+!../shared/**
+!/shared/
+!/shared/**
+
+# Necesario para compilar Firebase en EAS Android
+!google-services.json
+!android/app/google-services.json

@@ -1,41 +1,42 @@
 /**
  * Componente: EmptyState
  * Que hace: Renderiza una vista de estado vacio con icono, titulo y mensaje para listas sin datos.
- * Usado por:
- * - Sin imports directos detectados en driver-app (componente disponible para reutilizacion).
  */
 import React from 'react';
 import { View, Text } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
+import { useResponsive } from '../../hooks/useResponsive';
 
 export const EmptyState = ({
   icon = 'car-off',
   title = 'Sin resultados',
   message = 'No hay datos para mostrar',
 }) => {
+  const { s, fs } = useResponsive();
+
   return (
     <View
       style={{
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 40,
-        paddingVertical: 60,
+        paddingHorizontal: s(40),
+        paddingVertical: s(60),
       }}
     >
       <MaterialCommunityIcons
         name={icon}
-        size={80}
+        size={s(80, { min: 48, max: 96 })}
         color={colors.textMuted}
-        style={{ marginBottom: 16, opacity: 0.5 }}
+        style={{ marginBottom: s(16), opacity: 0.5 }}
       />
       <Text
         style={{
           color: colors.text,
-          fontSize: 20,
+          fontSize: fs(20),
           fontFamily: 'Inter_600SemiBold',
-          marginBottom: 8,
+          marginBottom: s(8),
           textAlign: 'center',
         }}
       >
@@ -44,10 +45,10 @@ export const EmptyState = ({
       <Text
         style={{
           color: colors.textMuted,
-          fontSize: 14,
+          fontSize: fs(14),
           fontFamily: 'Inter_400Regular',
           textAlign: 'center',
-          lineHeight: 20,
+          lineHeight: fs(20),
         }}
       >
         {message}

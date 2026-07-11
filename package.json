@@ -1,9 +1,11 @@
 {
   "name": "driver-app",
-  "version": "1.0.0",
+  "version": "1.0.7",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "node scripts/start-expo.js",
+    "start:android": "powershell -ExecutionPolicy Bypass -File ./scripts/start-android.ps1",
+    "start:android:install": "powershell -ExecutionPolicy Bypass -File ./scripts/start-android.ps1 -Install",
     "start:dev-client": "node scripts/start-expo.js",
     "prebuild:android": "expo prebuild --clean --platform android",
     "android": "expo run:android",
@@ -12,7 +14,8 @@
     "web": "node -e \"console.error('driver-app solo soporta Android/iOS. Web deshabilitado.'); process.exit(1);\"",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "assets": "node scripts/convert-assets.js"
   },
   "jest": {
     "preset": "jest-expo",
@@ -68,6 +71,7 @@
     "expo-haptics": "~15.0.8",
     "expo-image": "~3.0.11",
     "expo-image-picker": "~17.0.10",
+    "expo-in-app-updates": "^0.12.0",
     "expo-linear-gradient": "~15.0.8",
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.16",

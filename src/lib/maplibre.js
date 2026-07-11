@@ -3,7 +3,7 @@
  * El código de la app usa la API v10 (MapView, MarkerView, PointAnnotation, ShapeSource, LineLayer…).
  * Este módulo adapta todos esos nombres a la nueva API v11 sin tocar el resto del código.
  */
-import React, { forwardRef, useImperativeHandle, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import {
   Map,
   Camera,
@@ -58,6 +58,8 @@ MapView.displayName = 'MLCompatMapView';
  */
 const CameraCompat = forwardRef(function CameraCompat(props, ref) {
   const innerRef = useRef(null);
+  const mountedRef = useRef(true);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
   const { defaultSettings, initialViewState, ...rest } = props;
 
   /* Resolver initialViewState desde defaultSettings legacy */
@@ -83,7 +85,7 @@ const CameraCompat = forwardRef(function CameraCompat(props, ref) {
     const api = {
     /** v10: setCamera({ centerCoordinate, zoomLevel, heading, pitch, animationDuration, animationMode }) */
     setCamera(options = {}) {
-      if (!innerRef.current) return;
+      if (!innerRef.current || !mountedRef.current) return;
       const center = options.centerCoordinate ?? options.center;
       const zoom = options.zoomLevel ?? options.zoom;
       const bearing = options.heading ?? options.bearing;
@@ -110,7 +112,7 @@ const CameraCompat = forwardRef(function CameraCompat(props, ref) {
 
     /** react-native-maps: animateToRegion({ latitude, longitude, latitudeDelta }, duration) */
     animateToRegion(region, duration = 400) {
-      if (!region) return;
+      if (!region || !mountedRef.current) return;
       const latitude = Number(region.latitude);
       const longitude = Number(region.longitude);
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
@@ -124,7 +126,7 @@ const CameraCompat = forwardRef(function CameraCompat(props, ref) {
 
     /** v10: fitBounds(ne:[lng,lat], sw:[lng,lat], padding, duration) */
     fitBounds(ne, sw, paddingInput, duration = 0) {
-      if (!innerRef.current) return;
+      if (!innerRef.current || !mountedRef.current) return;
       const west = sw[0];
       const south = sw[1];
       const east = ne[0];

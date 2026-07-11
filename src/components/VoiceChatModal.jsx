@@ -14,11 +14,15 @@ import {
   Modal,
   Animated as RNAnimated,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useVoiceChat } from '../hooks/useVoiceChat';
+import { useResponsive } from '../hooks/useResponsive';
 
 export function VoiceChatModal({ visible, onClose }) {
+  const insets = useSafeAreaInsets();
+  const { s, fs, screenPadding, isLandscape, contentMaxWidth } = useResponsive();
   const {
     messages,
     recording,
@@ -69,40 +73,46 @@ export function VoiceChatModal({ visible, onClose }) {
       <View style={{
         flex: 1,
         backgroundColor: colors.background,
+        alignItems: isLandscape ? 'center' : undefined,
       }}>
+        <View style={{
+          flex: 1,
+          width: '100%',
+          maxWidth: isLandscape ? contentMaxWidth : undefined,
+        }}>
         {/* Header */}
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
-          paddingTop: 50,
-          paddingBottom: 12,
-          paddingHorizontal: 16,
+          paddingTop: Math.max(insets.top, s(16)) + s(8),
+          paddingBottom: s(12),
+          paddingHorizontal: screenPadding,
           backgroundColor: colors.surface,
           borderBottomWidth: 1,
           borderBottomColor: colors.border,
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <View style={{
-              width: 36,
-              height: 36,
-              borderRadius: 12,
+              width: s(36),
+              height: s(36),
+              borderRadius: s(12),
               backgroundColor: `${colors.primary}15`,
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-              <MaterialCommunityIcons name="radio-tower" size={20} color={colors.primary} />
+              <MaterialCommunityIcons name="radio-tower" size={s(20)} color={colors.primary} />
             </View>
-            <View style={{ marginLeft: 10 }}>
+            <View style={{ marginLeft: s(10) }}>
               <Text style={{
-                fontSize: 16,
+                fontSize: fs(16),
                 fontFamily: 'Inter_700Bold',
                 color: colors.text,
               }}>
                 Radio Base
               </Text>
               <Text style={{
-                fontSize: 11,
+                fontSize: fs(11),
                 fontFamily: 'Inter_400Regular',
                 color: colors.textMuted,
               }}>
@@ -113,9 +123,9 @@ export function VoiceChatModal({ visible, onClose }) {
           <Pressable
             onPress={onClose}
             style={({ pressed }) => ({
-              width: 36,
-              height: 36,
-              borderRadius: 18,
+              width: s(36),
+              height: s(36),
+              borderRadius: s(18),
               backgroundColor: colors.surfaceLight,
               alignItems: 'center',
               justifyContent: 'center',
@@ -124,7 +134,7 @@ export function VoiceChatModal({ visible, onClose }) {
               opacity: pressed ? 0.7 : 1,
             })}
           >
-            <MaterialCommunityIcons name="close" size={20} color={colors.textMuted} />
+            <MaterialCommunityIcons name="close" size={s(20)} color={colors.textMuted} />
           </Pressable>
         </View>
 
@@ -267,6 +277,7 @@ export function VoiceChatModal({ visible, onClose }) {
               </Text>
             </Pressable>
           )}
+        </View>
         </View>
       </View>
     </Modal>

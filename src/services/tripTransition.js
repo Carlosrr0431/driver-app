@@ -23,25 +23,18 @@ async function resolveFreshAccessToken() {
   return session.access_token;
 }
 
-async function postTripTransition(accessToken, tripId, timeoutMs) {
+async function postWithTimeout(url, accessToken, body, timeoutMs) {
   const abortController = new AbortController();
-  const timeoutId = setTimeout(() => {
-    abortController.abort();
-  }, timeoutMs);
+  const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${DASHBOARD_URL}/api/Agente_IA`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({
-        event: 'trip.transition',
-        tripId,
-        status: 'going_to_pickup',
-        source: 'driver_app_accept',
-      }),
+      body: JSON.stringify(body),
       signal: abortController.signal,
     });
 
@@ -50,6 +43,73 @@ async function postTripTransition(accessToken, tripId, timeoutMs) {
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+/**
+ * Envía push al pasajero usando el endpoint dedicado (rápido, simple).
+ * No lanza excepción — devuelve { ok, reason }.
+ */
+export async function notifyPassengerTripAccepted(tripId, { timeoutMs = 8000 } = {}) {
+  const normalizedTripId = String(tripId || '').trim();
+  if (!normalizedTripId) return { ok: false, reason: 'invalid_trip_id' };
+
+  try {
+    let accessToken = await resolveFreshAccessToken();
+
+    let { response, payload } = await postWithTimeout(
+      `${DASHBOARD_URL}/api/trips/notify-passenger`,
+      accessToken,
+      { tripId: normalizedTripId },
+      timeoutMs,
+    );
+
+    if (response.status === 401) {
+      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+      if (!refreshError && refreshed?.session?.access_token) {
+        accessToken = refreshed.session.access_token;
+        ({ response, payload } = await postWithTimeout(
+          `${DASHBOARD_URL}/api/trips/notify-passenger`,
+          accessToken,
+          { tripId: normalizedTripId },
+          timeoutMs,
+        ));
+      }
+    }
+
+    if (!response.ok && response.status !== 200) {
+      return {
+        ok: false,
+        reason: payload?.reason || `http_${response.status}`,
+        message: payload?.message || null,
+      };
+    }
+
+    return {
+      ok: Boolean(payload?.ok),
+      reason: payload?.reason || null,
+      pushStatus: payload?.pushStatus || null,
+      messageId: payload?.messageId || null,
+    };
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      return { ok: false, reason: 'timeout' };
+    }
+    return { ok: false, reason: 'network_error', message: err?.message };
+  }
+}
+
+async function postTripTransition(accessToken, tripId, timeoutMs) {
+  return postWithTimeout(
+    `${DASHBOARD_URL}/api/Agente_IA`,
+    accessToken,
+    {
+      event: 'trip.transition',
+      tripId,
+      status: 'going_to_pickup',
+      source: 'driver_app_accept',
+    },
+    timeoutMs,
+  );
 }
 
 export async function notifyTripAcceptedTransition(tripId, { timeoutMs = 7000 } = {}) {
