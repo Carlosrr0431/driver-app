@@ -43,8 +43,10 @@ export const GPS_CONFIG = {
   DISTANCE_FILTER: 15,
 };
 
-const DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS = 15;
-const MIN_TRIP_ACCEPT_TIMEOUT_SECONDS = 10;
+// Alineado con dispatch-worker / Agente_IA (60s). 15s hacía que el modal
+// auto-rechazara o el worker reencolara antes de que el chofer confirmara.
+const DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS = 60;
+const MIN_TRIP_ACCEPT_TIMEOUT_SECONDS = 20;
 const MAX_TRIP_ACCEPT_TIMEOUT_SECONDS = 300;
 const configuredTripAcceptTimeout = Number(
   process.env.EXPO_PUBLIC_TRIP_ACCEPT_TIMEOUT_SECONDS || DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS
@@ -69,4 +71,7 @@ export const EMERGENCY_PHONE = '911';
 export const DISPATCHER_PHONE = '+5491100000000';
 
 // Base URL for the passenger-facing real-time tracking page
-export const TRACKING_BASE_URL = 'https://profesional-dashboard.vercel.app';
+export const TRACKING_BASE_URL =
+  process.env.EXPO_PUBLIC_TRACKING_BASE_URL
+  || process.env.EXPO_PUBLIC_DASHBOARD_URL
+  || 'https://www.profesionalviajes.com.ar';
