@@ -5,8 +5,8 @@
 
 INSERT INTO public.settings (key, value, updated_at)
 VALUES
-  ('driver_app_latest_version_code', '9', NOW()),
-  ('passenger_app_latest_version_code', '8', NOW())
+  ('driver_app_latest_version_code', '10', NOW()),
+  ('passenger_app_latest_version_code', '9', NOW())
 ON CONFLICT (key) DO UPDATE
 SET
   value = EXCLUDED.value,

@@ -2,8 +2,8 @@
   "expo": {
     "name": "Profesional Conductor",
     "slug": "driver-app",
-    "version": "1.0.7",
-    "runtimeVersion": "1.0.7",
+    "version": "1.0.8",
+    "runtimeVersion": "1.0.8",
     "updates": {
       "url": "https://u.expo.dev/21599c2c-8f85-4d49-84d7-71202995c3e5"
     },
@@ -48,7 +48,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.remises.driverapp",
-      "versionCode": 9,
+      "versionCode": 10,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "ACCESS_FINE_LOCATION",
