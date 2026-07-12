@@ -43,10 +43,10 @@ export const GPS_CONFIG = {
   DISTANCE_FILTER: 15,
 };
 
-// Alineado con dispatch-worker / Agente_IA (60s). 15s hacía que el modal
-// auto-rechazara o el worker reencolara antes de que el chofer confirmara.
-const DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS = 60;
-const MIN_TRIP_ACCEPT_TIMEOUT_SECONDS = 20;
+// Countdown del modal de aceptación. Alineado con dispatch-worker / Agente_IA
+// (WHATSAPP_PENDING_ACCEPT_TIMEOUT_MS). Default 15s según algoritmo de matching.
+const DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS = 15;
+const MIN_TRIP_ACCEPT_TIMEOUT_SECONDS = 10;
 const MAX_TRIP_ACCEPT_TIMEOUT_SECONDS = 300;
 const configuredTripAcceptTimeout = Number(
   process.env.EXPO_PUBLIC_TRIP_ACCEPT_TIMEOUT_SECONDS || DEFAULT_TRIP_ACCEPT_TIMEOUT_SECONDS

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { getFocusedRouteNameFromRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import HomeScreen from '../screens/HomeScreen';
@@ -22,6 +23,7 @@ const Stack = createNativeStackNavigator();
 const TAB_ACTIVE_COLOR = '#161616';
 const TAB_INACTIVE_COLOR = '#767676';
 const TAB_BAR_BORDER = '#EBEBEB';
+const HIDE_TAB_BAR_ROUTES = new Set(['ActiveTrip']);
 
 const HomeStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -61,6 +63,21 @@ const MainNavigator = () => {
   const baseTab = isLandscape ? 40 : 46;
   const tabBarHeight = s(baseTab) + paddingBottom;
 
+  const defaultTabBarStyle = {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: tabBarHeight,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: TAB_BAR_BORDER,
+    elevation: 0,
+    shadowOpacity: 0,
+    paddingBottom,
+    paddingTop: 4,
+  };
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -87,30 +104,22 @@ const MainNavigator = () => {
           paddingTop: 2,
           paddingBottom: 0,
         },
-        tabBarStyle: {
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: tabBarHeight,
-          backgroundColor: '#FFFFFF',
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: TAB_BAR_BORDER,
-          elevation: 0,
-          shadowOpacity: 0,
-          paddingBottom,
-          paddingTop: 4,
-        },
+        tabBarStyle: defaultTabBarStyle,
       }}
     >
       <Tab.Screen
         name="Home"
         component={HomeStack}
-        options={{
-          title: 'Inicio',
-          tabBarIcon: ({ focused, color }) => (
-            <TabIcon icon="home" focused={focused} color={color} size={s(22)} />
-          ),
+        options={({ route }) => {
+          const focusedRoute = getFocusedRouteNameFromRoute(route) ?? 'HomeMain';
+          const hideTabBar = HIDE_TAB_BAR_ROUTES.has(focusedRoute);
+          return {
+            title: 'Inicio',
+            tabBarStyle: hideTabBar ? { display: 'none' } : defaultTabBarStyle,
+            tabBarIcon: ({ focused, color }) => (
+              <TabIcon icon="home" focused={focused} color={color} size={s(22)} />
+            ),
+          };
         }}
       />
       <Tab.Screen
