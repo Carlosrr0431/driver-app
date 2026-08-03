@@ -220,16 +220,17 @@ const HomeScreen = () => {
 
     if (newStatus && commissionData?.isBlocked) {
       const isManualWeekly = commissionData?.isWeekly && commissionData?.blockReason === 'manual';
-      Toast.show({
+      const toastPayload = {
         type: 'error',
         text1: 'Cuenta bloqueada',
-        text2: isManualWeekly
-          ? undefined
-          : (commissionData?.blockReason === 'manual'
-            ? 'Tu cuenta fue bloqueada por la central. Contactá a la administración.'
-            : 'Regularizá tus comisiones para poder conectarte'),
         visibilityTime: 4000,
-      });
+      };
+      if (!isManualWeekly) {
+        toastPayload.text2 = commissionData?.blockReason === 'manual'
+          ? 'Tu cuenta fue bloqueada por la central. Contactá a la administración.'
+          : 'Regularizá tus comisiones para poder conectarte';
+      }
+      Toast.show(toastPayload);
       return;
     }
 
