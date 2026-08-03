@@ -14,7 +14,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import BottomSheet, { BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetScrollView, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../theme/colors';
 import { useTripStore } from '../stores/tripStore';
@@ -917,23 +917,15 @@ const ActiveTripScreen = () => {
   const [accumulatedLegs, setAccumulatedLegs] = useState([]);
   const [visitedWaypointCount, setVisitedWaypointCount] = useState(0);
 
-  // Sheet compacto abajo (datos del viaje). Solo se agranda al elegir/buscar destino.
-  const needsTallSheet = flowStep === FLOW_STEP.CHOOSE_DEST_MODE
-    || (flowStep === FLOW_STEP.SET_DESTINATION && !destinationSet);
-  const snapPoints = useMemo(() => {
-    if (needsTallSheet) {
-      return isLandscape || isCompactHeight ? ['70%', '92%'] : ['56%', '88%'];
-    }
-    // Parte inferior pequeña, como antes: progreso, km, dirección, pasajero.
-    return isLandscape || isCompactHeight ? ['42%', '70%'] : ['34%', '58%'];
-  }, [needsTallSheet, isLandscape, isCompactHeight]);
-  const mapControlsBottomOffset = useMemo(() => {
-    const ratio = needsTallSheet
-      ? (isLandscape ? 0.40 : 0.34)
-      : (sheetIndex > 0 ? 0.34 : 0.22);
-    return Math.max(s(120), Math.round(windowHeight * ratio));
-  }, [windowHeight, isLandscape, needsTallSheet, sheetIndex, s]);
-  const sheetBottomPad = Math.max(24, insets.bottom + 16);
+  const snapPoints = useMemo(() => (
+    isLandscape || isCompactHeight
+      ? ['34%', '78%', '95%']
+      : ['24%', '68%', '90%']
+  ), [isLandscape, isCompactHeight]);
+  const mapControlsBottomOffset = useMemo(
+    () => Math.max(s(112), Math.round(windowHeight * (isLandscape ? 0.22 : 0.16))),
+    [windowHeight, isLandscape, s],
+  );
 
   // Derive initial flow step from DB status (solo al cambiar de viaje o status en BD)
   useEffect(() => {
@@ -983,12 +975,15 @@ const ActiveTripScreen = () => {
 
   useEffect(() => {
     if (!bottomSheetRef.current) return;
-    const targetIndex = needsTallSheet ? 1 : 0;
-    const timer = setTimeout(() => {
-      bottomSheetRef.current?.snapToIndex(targetIndex);
-    }, 60);
-    return () => clearTimeout(timer);
-  }, [flowStep, destinationSet, activeTrip?.id, needsTallSheet, snapPoints]);
+    if (flowStep === FLOW_STEP.SET_DESTINATION && !destinationSet) {
+      // Abrir bien arriba para que el teclado no tape el input
+      bottomSheetRef.current.snapToIndex(2);
+    } else if (flowStep === FLOW_STEP.CHOOSE_DEST_MODE) {
+      bottomSheetRef.current.snapToIndex(2);
+    } else {
+      bottomSheetRef.current.snapToIndex(0);
+    }
+  }, [flowStep, destinationSet, activeTrip?.id]);
 
   useEffect(() => {
     // Cada viaje inicia siguiendo la dirección de la polilínea (ruta hacia arriba).
@@ -1842,7 +1837,7 @@ const ActiveTripScreen = () => {
       flowLockRef.current = FLOW_STEP.CHOOSE_DEST_MODE;
       setDriverFlowStep(FLOW_STEP.CHOOSE_DEST_MODE, activeTrip?.id);
       requestAnimationFrame(() => {
-        bottomSheetRef.current?.snapToIndex(1);
+        bottomSheetRef.current?.snapToIndex(2);
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
@@ -2671,12 +2666,10 @@ const ActiveTripScreen = () => {
         backgroundStyle={s.sheetBg}
         handleIndicatorStyle={s.handle}
         onChange={(index) => setSheetIndex(index)}
-        keyboardBehavior={needsTallSheet ? 'extend' : 'interactive'}
+        keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
-        enableOverDrag={false}
       >
-        {/* BottomSheetView: contenido visible en el snap compacto inferior (como HomeScreen). */}
-        <BottomSheetView style={[s.sheetContent, { paddingBottom: sheetBottomPad }]}>
+        <BottomSheetScrollView contentContainerStyle={s.sheetContent} showsVerticalScrollIndicator={false}>
 
           {/* STEP 1: Going to pickup */}
           {flowStep === FLOW_STEP.GOING_TO_PICKUP && (
@@ -2837,31 +2830,24 @@ const ActiveTripScreen = () => {
 
                   {/* Opciones de autocomplete — aparecen mientras el usuario escribe */}
                   {destinationOptions.length > 0 && (
-                    <ScrollView
-                      style={{ maxHeight: Math.round(windowHeight * 0.32) }}
-                      nestedScrollEnabled
-                      keyboardShouldPersistTaps="handled"
-                      showsVerticalScrollIndicator={false}
-                    >
-                      <View style={s.autocompleteList}>
-                        {destinationOptions.map((opt, idx) => (
-                          <TouchableOpacity
-                            key={opt.placeId || `opt-${idx}`}
-                            style={[
-                              s.autocompleteItem,
-                              idx < destinationOptions.length - 1 && s.autocompleteItemBorder,
-                            ]}
-                            onPress={() => selectDestination(opt)}
-                            activeOpacity={0.7}
-                          >
-                            <View style={s.autocompleteIcon}>
-                              <MaterialCommunityIcons name="map-marker-outline" size={18} color={colors.primary} />
-                            </View>
-                            <Text style={s.autocompleteAddress} numberOfLines={2}>{opt.address}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </ScrollView>
+                    <View style={s.autocompleteList}>
+                      {destinationOptions.map((opt, idx) => (
+                        <TouchableOpacity
+                          key={opt.placeId || `opt-${idx}`}
+                          style={[
+                            s.autocompleteItem,
+                            idx < destinationOptions.length - 1 && s.autocompleteItemBorder,
+                          ]}
+                          onPress={() => selectDestination(opt)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={s.autocompleteIcon}>
+                            <MaterialCommunityIcons name="map-marker-outline" size={18} color={colors.primary} />
+                          </View>
+                          <Text style={s.autocompleteAddress} numberOfLines={2}>{opt.address}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                   )}
 
                   {textDestInput.length >= 3 && !textDestProcessing && destinationOptions.length === 0 && (
@@ -3071,7 +3057,7 @@ const ActiveTripScreen = () => {
             <Text style={s.sosBtnText}>Emergencia</Text>
           </TouchableOpacity>
 
-        </BottomSheetView>
+        </BottomSheetScrollView>
       </BottomSheet>
     </View>
   );
@@ -3300,7 +3286,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   handle: { backgroundColor: colors.textMuted, width: 32, height: 4, borderRadius: 2 },
-  sheetContent: { paddingHorizontal: 20, paddingTop: 4 },
+  sheetContent: { paddingHorizontal: 20, paddingBottom: 100, paddingTop: 4 },
   passengerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   avatarCircle: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 18, fontFamily: 'Inter_700Bold' },

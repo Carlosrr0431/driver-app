@@ -44,7 +44,12 @@ const HomeScreen = () => {
   const { pendingTrip, showNewTripModal, activeTrip } = useTripStore();
   const currentLocation = useLocationStore((s) => s.currentLocation);
   const { useTodayStats, useActiveTrip, useCommissionBalance, acceptTrip, rejectTrip, useTripHistory } = useTrips();
-  const { subscribeToNewTrips, subscribeToMessages, subscribeToCommissionPayments } = useRealtime();
+  const {
+    subscribeToNewTrips,
+    subscribeToMessages,
+    subscribeToCommissionPayments,
+    unsubscribeAll,
+  } = useRealtime();
   const queryClient = useQueryClient();
   const { requestPermissions, getCurrentPosition, startWatching, stopWatching } = useLocation();
   const mapRef = useRef(null);
@@ -63,22 +68,43 @@ const HomeScreen = () => {
 
   const isOnline = driver?.is_available || false;
 
-  useEffect(() => {
-    if (!driver?.id) return;
+  const centerMapOnLocation = useCallback((loc, duration = 800) => {
+    if (!loc || !mapRef.current) return;
+    mapRef.current.setCamera({
+      centerCoordinate: [loc.lng, loc.lat],
+      zoomLevel: 15,
+      animationDuration: duration,
+      animationMode: 'easeTo',
+    });
+  }, []);
 
-    let cancelled = false;
-    const init = async () => {
-      await requestPermissions();
-      await getCurrentPosition({ syncToSupabase: isOnline, force: true });
-      if (cancelled) return;
-      startWatching({ mapOnly: !isOnline });
-    };
-    init();
-    return () => {
-      cancelled = true;
-      stopWatching();
-    };
-  }, [driver?.id, isOnline]);
+  const isHomeFocusedRef = useRef(false);
+
+  // Solo mientras Home tiene foco: evita que este watcher compita con
+  // startNavigationWatch de ActiveTrip (Home queda montado en el stack).
+  useFocusEffect(
+    useCallback(() => {
+      if (!driver?.id) return undefined;
+
+      isHomeFocusedRef.current = true;
+      let cancelled = false;
+      const init = async () => {
+        await requestPermissions();
+        const loc = await getCurrentPosition({ syncToSupabase: isOnline, force: true });
+        if (cancelled) return;
+        startWatching({ mapOnly: !isOnline });
+        const coords = loc || useLocationStore.getState().currentLocation;
+        if (coords) centerMapOnLocation(coords, 600);
+      };
+      init();
+
+      return () => {
+        cancelled = true;
+        isHomeFocusedRef.current = false;
+        stopWatching();
+      };
+    }, [driver?.id, isOnline, requestPermissions, getCurrentPosition, startWatching, stopWatching, centerMapOnLocation]),
+  );
 
   // Recover any pending trip that arrived while the app was in the background/killed
   const checkPendingTripFromDB = useCallback(async () => {
@@ -109,16 +135,27 @@ const HomeScreen = () => {
   }, [driver?.id]);
 
   useEffect(() => {
-    if (driver?.id) {
-      subscribeToNewTrips();
-      subscribeToMessages();
-      subscribeToCommissionPayments(() => {
-        queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver.id] });
-      });
-      // Check immediately in case a trip arrived while app was in background
-      checkPendingTripFromDB();
-    }
-  }, [driver?.id, subscribeToNewTrips, subscribeToMessages, subscribeToCommissionPayments, checkPendingTripFromDB]);
+    if (!driver?.id) return undefined;
+
+    subscribeToNewTrips();
+    subscribeToMessages();
+    subscribeToCommissionPayments(() => {
+      queryClient.invalidateQueries({ queryKey: ['commissionBalance', driver.id] });
+    });
+    // Check immediately in case a trip arrived while app was in background
+    checkPendingTripFromDB();
+
+    return () => {
+      unsubscribeAll();
+    };
+  }, [
+    driver?.id,
+    subscribeToNewTrips,
+    subscribeToMessages,
+    subscribeToCommissionPayments,
+    checkPendingTripFromDB,
+    unsubscribeAll,
+  ]);
 
   // Re-check every time the app comes back to foreground
   useEffect(() => {
@@ -139,42 +176,23 @@ const HomeScreen = () => {
     return () => clearInterval(intervalId);
   }, [driver?.id, checkPendingTripFromDB]);
 
+  // Seguir GPS en Home solo con foco y si el punto se movió lo suficiente.
+  const lastCameraFollowRef = useRef(null);
   useEffect(() => {
-    if (currentLocation && mapRef.current) {
-      mapRef.current.animateToRegion(
-        {
-          latitude: currentLocation.lat,
-          longitude: currentLocation.lng,
-          latitudeDelta: 0.008,
-          longitudeDelta: 0.008,
-        },
-        800,
-      );
+    if (!currentLocation || !isHomeFocusedRef.current) return;
+    const last = lastCameraFollowRef.current;
+    if (last) {
+      const dLat = Math.abs(last.lat - currentLocation.lat);
+      const dLng = Math.abs(last.lng - currentLocation.lng);
+      // ~25 m a latitud de Salta
+      if (dLat < 0.00023 && dLng < 0.00025) return;
     }
-  }, [currentLocation]);
-
-  // Al volver al HomeScreen por navegación (ej: desde ComisionPayment, ActiveTrip, etc.)
-  // refrescamos la posición GPS y re-centramos el mapa. Sin esto la cámara queda
-  // congelada en la última posición antes de salir de la pantalla.
-  useFocusEffect(
-    useCallback(() => {
-      if (!driver?.id) return;
-      getCurrentPosition({ syncToSupabase: isOnline, force: true }).then((loc) => {
-        const coords = loc || useLocationStore.getState().currentLocation;
-        if (coords && mapRef.current) {
-          mapRef.current.animateToRegion(
-            {
-              latitude: coords.lat,
-              longitude: coords.lng,
-              latitudeDelta: 0.008,
-              longitudeDelta: 0.008,
-            },
-            600,
-          );
-        }
-      }).catch(() => {});
-    }, [driver?.id, isOnline]),
-  );
+    lastCameraFollowRef.current = {
+      lat: currentLocation.lat,
+      lng: currentLocation.lng,
+    };
+    centerMapOnLocation(currentLocation, 700);
+  }, [currentLocation?.lat, currentLocation?.lng, centerMapOnLocation]);
 
   const autoNavTripIdRef = useRef(null);
   useEffect(() => {
@@ -201,10 +219,13 @@ const HomeScreen = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     if (newStatus && commissionData?.isBlocked) {
+      const isManual = commissionData?.blockReason === 'manual';
       Toast.show({
         type: 'error',
         text1: 'Cuenta bloqueada',
-        text2: 'Regularizá tus comisiones para poder conectarte',
+        text2: isManual
+          ? 'Tu cuenta fue bloqueada por la central. Contactá a la administración.'
+          : 'Regularizá tus comisiones para poder conectarte',
         visibilityTime: 4000,
       });
       return;
@@ -243,17 +264,12 @@ const HomeScreen = () => {
   };
 
   const recenter = () => {
-    if (currentLocation && mapRef.current) {
-      mapRef.current.animateToRegion(
-        {
-          latitude: currentLocation.lat,
-          longitude: currentLocation.lng,
-          latitudeDelta: 0.008,
-          longitudeDelta: 0.008,
-        },
-        500,
-      );
-    }
+    if (!currentLocation) return;
+    lastCameraFollowRef.current = {
+      lat: currentLocation.lat,
+      lng: currentLocation.lng,
+    };
+    centerMapOnLocation(currentLocation, 500);
   };
 
   const initialRegion = useMemo(() => {
@@ -404,6 +420,7 @@ const HomeScreen = () => {
         ref={bottomSheetRef}
         index={0}
         snapPoints={snapPoints}
+        enableDynamicSizing={false}
         backgroundStyle={{
           backgroundColor: '#FFFFFF',
           borderTopLeftRadius: 28,
@@ -505,39 +522,46 @@ const HomeScreen = () => {
           showsVerticalScrollIndicator={false}
         >
           {/* Alerta de comisiones */}
-          {commissionData && commissionData.balance > 0 && (
+          {commissionData && (commissionData.balance > 0 || commissionData.isBlocked) && (
             <Animated.View entering={FadeInUp.delay(60).duration(350)}>
               <View style={{
-                backgroundColor: commissionData.isOverdue ? '#EEEEF8' : '#FFFBEB',
+                backgroundColor: commissionData.isBlocked ? '#EEEEF8' : '#FFFBEB',
                 borderRadius: 14, padding: 14, marginBottom: 12,
-                borderWidth: 1, borderColor: commissionData.isOverdue ? '#C5C8E8' : '#FDE68A',
+                borderWidth: 1, borderColor: commissionData.isBlocked ? '#C5C8E8' : '#FDE68A',
               }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5 }}>
                   <MaterialCommunityIcons
-                    name={commissionData.isOverdue ? 'alert-circle' : 'cash-clock'}
-                    size={17} color={commissionData.isOverdue ? '#282e69' : '#D97706'}
+                    name={commissionData.isBlocked ? 'alert-circle' : 'cash-clock'}
+                    size={17} color={commissionData.isBlocked ? '#282e69' : '#D97706'}
                   />
                   <Text style={{
-                    color: commissionData.isOverdue ? '#DC2626' : '#D97706',
+                    color: commissionData.isBlocked ? '#DC2626' : '#D97706',
                     fontSize: 13, fontFamily: 'Inter_700Bold', marginLeft: 7,
                   }}>
-                    {commissionData.isOverdue ? 'Cuenta suspendida' : 'Comisión pendiente'}
+                    {commissionData.isBlocked
+                      ? (commissionData.blockReason === 'manual' ? 'Cuenta bloqueada' : 'Cuenta suspendida')
+                      : commissionData.isWeekly
+                        ? 'Comisión pendiente (semanal)'
+                        : 'Comisión pendiente'}
                   </Text>
                 </View>
                 <Text style={{ color: '#6B7280', fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 }}>
-                  {commissionData.isOverdue
-                    ? 'Tu cuenta está bloqueada por comisiones vencidas. Regularizá tu deuda para recibir viajes.'
-                    : 'Tenés comisiones pendientes. Regularizá dentro de los 3 días para evitar bloqueo.'
-                  }
+                  {commissionData.isBlocked
+                    ? (commissionData.blockReason === 'manual'
+                      ? 'La central bloqueó tu cuenta. No vas a recibir viajes hasta que te desbloqueen.'
+                      : 'Tu cuenta está bloqueada por comisiones vencidas. Regularizá tu deuda para recibir viajes.')
+                    : commissionData.isWeekly
+                      ? 'Tenés comisiones pendientes de cobro semanal. Seguis pudiendo recibir viajes.'
+                      : 'Tenés comisiones pendientes. Regularizá dentro de los 3 días para evitar bloqueo.'}
                 </Text>
                 <View style={{
                   flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
                   marginTop: 8, paddingTop: 8,
-                  borderTopWidth: 1, borderTopColor: commissionData.isOverdue ? '#D5D8F0' : '#FEF3C7',
+                  borderTopWidth: 1, borderTopColor: commissionData.isBlocked ? '#D5D8F0' : '#FEF3C7',
                 }}>
                   <Text style={{ color: '#9CA3AF', fontSize: 10, fontFamily: 'Inter_500Medium' }}>Deuda actual</Text>
                   <Text style={{
-                    color: commissionData.isOverdue ? '#282e69' : '#D97706',
+                    color: commissionData.isBlocked ? '#282e69' : '#D97706',
                     fontSize: 16, fontFamily: 'Inter_700Bold',
                   }}>
                     {formatPrice(commissionData.balance)}
@@ -547,7 +571,7 @@ const HomeScreen = () => {
                   onPress={() => navigation.navigate('CommissionPayment', { commissionData, autoStart: true })}
                   style={({ pressed }) => ({
                     marginTop: 10,
-                    backgroundColor: commissionData.isOverdue ? '#282e69' : '#D97706',
+                    backgroundColor: commissionData.isBlocked ? '#282e69' : '#D97706',
                     borderRadius: 10, paddingVertical: 9,
                     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
                     opacity: pressed ? 0.85 : 1,
