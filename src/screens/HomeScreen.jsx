@@ -521,8 +521,15 @@ const HomeScreen = () => {
           }
           showsVerticalScrollIndicator={false}
         >
-          {/* Alerta de comisiones */}
-          {commissionData && (commissionData.balance > 0 || commissionData.isBlocked) && (
+          {/* Alerta de comisiones:
+              Semanal → sin cartel por deuda (solo si hay bloqueo manual).
+              Comisiones → cartel si hay saldo o está bloqueado por vencimiento. */}
+          {commissionData
+            && (
+              commissionData.isBlocked
+              || (!commissionData.isWeekly && commissionData.balance > 0)
+            )
+            && (
             <Animated.View entering={FadeInUp.delay(60).duration(350)}>
               <View style={{
                 backgroundColor: commissionData.isBlocked ? '#EEEEF8' : '#FFFBEB',
@@ -540,9 +547,7 @@ const HomeScreen = () => {
                   }}>
                     {commissionData.isBlocked
                       ? (commissionData.blockReason === 'manual' ? 'Cuenta bloqueada' : 'Cuenta suspendida')
-                      : commissionData.isWeekly
-                        ? 'Comisión pendiente (semanal)'
-                        : 'Comisión pendiente'}
+                      : 'Comisión pendiente'}
                   </Text>
                 </View>
                 <Text style={{ color: '#6B7280', fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 }}>
@@ -550,9 +555,7 @@ const HomeScreen = () => {
                     ? (commissionData.blockReason === 'manual'
                       ? 'La central bloqueó tu cuenta. No vas a recibir viajes hasta que te desbloqueen.'
                       : 'Tu cuenta está bloqueada por comisiones vencidas. Regularizá tu deuda para recibir viajes.')
-                    : commissionData.isWeekly
-                      ? 'Tenés comisiones pendientes de cobro semanal. Seguis pudiendo recibir viajes.'
-                      : 'Tenés comisiones pendientes. Regularizá dentro de los 3 días para evitar bloqueo.'}
+                    : 'Tenés comisiones pendientes. Regularizá dentro de los 3 días para evitar bloqueo.'}
                 </Text>
                 <View style={{
                   flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
