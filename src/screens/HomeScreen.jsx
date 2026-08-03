@@ -219,13 +219,15 @@ const HomeScreen = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     if (newStatus && commissionData?.isBlocked) {
-      const isManual = commissionData?.blockReason === 'manual';
+      const isManualWeekly = commissionData?.isWeekly && commissionData?.blockReason === 'manual';
       Toast.show({
         type: 'error',
         text1: 'Cuenta bloqueada',
-        text2: isManual
-          ? 'Tu cuenta fue bloqueada por la central. Contactá a la administración.'
-          : 'Regularizá tus comisiones para poder conectarte',
+        text2: isManualWeekly
+          ? undefined
+          : (commissionData?.blockReason === 'manual'
+            ? 'Tu cuenta fue bloqueada por la central. Contactá a la administración.'
+            : 'Regularizá tus comisiones para poder conectarte'),
         visibilityTime: 4000,
       });
       return;
@@ -522,7 +524,7 @@ const HomeScreen = () => {
           showsVerticalScrollIndicator={false}
         >
           {/* Alerta de comisiones:
-              Semanal → sin cartel por deuda (solo si hay bloqueo manual).
+              Semanal → sin cartel por deuda; si hay bloqueo manual → solo "Cuenta bloqueada".
               Comisiones → cartel si hay saldo o está bloqueado por vencimiento. */}
           {commissionData
             && (
@@ -531,6 +533,22 @@ const HomeScreen = () => {
             )
             && (
             <Animated.View entering={FadeInUp.delay(60).duration(350)}>
+              {commissionData.isWeekly && commissionData.blockReason === 'manual' ? (
+                <View style={{
+                  backgroundColor: '#EEEEF8',
+                  borderRadius: 14, padding: 14, marginBottom: 12,
+                  borderWidth: 1, borderColor: '#C5C8E8',
+                  flexDirection: 'row', alignItems: 'center',
+                }}>
+                  <MaterialCommunityIcons name="lock" size={17} color="#282e69" />
+                  <Text style={{
+                    color: '#DC2626',
+                    fontSize: 13, fontFamily: 'Inter_700Bold', marginLeft: 7,
+                  }}>
+                    Cuenta bloqueada
+                  </Text>
+                </View>
+              ) : (
               <View style={{
                 backgroundColor: commissionData.isBlocked ? '#EEEEF8' : '#FFFBEB',
                 borderRadius: 14, padding: 14, marginBottom: 12,
@@ -545,16 +563,12 @@ const HomeScreen = () => {
                     color: commissionData.isBlocked ? '#DC2626' : '#D97706',
                     fontSize: 13, fontFamily: 'Inter_700Bold', marginLeft: 7,
                   }}>
-                    {commissionData.isBlocked
-                      ? (commissionData.blockReason === 'manual' ? 'Cuenta bloqueada' : 'Cuenta suspendida')
-                      : 'Comisión pendiente'}
+                    {commissionData.isBlocked ? 'Cuenta suspendida' : 'Comisión pendiente'}
                   </Text>
                 </View>
                 <Text style={{ color: '#6B7280', fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 }}>
                   {commissionData.isBlocked
-                    ? (commissionData.blockReason === 'manual'
-                      ? 'La central bloqueó tu cuenta. No vas a recibir viajes hasta que te desbloqueen.'
-                      : 'Tu cuenta está bloqueada por comisiones vencidas. Regularizá tu deuda para recibir viajes.')
+                    ? 'Tu cuenta está bloqueada por comisiones vencidas. Regularizá tu deuda para recibir viajes.'
                     : 'Tenés comisiones pendientes. Regularizá dentro de los 3 días para evitar bloqueo.'}
                 </Text>
                 <View style={{
@@ -586,6 +600,7 @@ const HomeScreen = () => {
                   </Text>
                 </Pressable>
               </View>
+              )}
             </Animated.View>
           )}
 
