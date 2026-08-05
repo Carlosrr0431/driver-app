@@ -570,7 +570,7 @@ const HomeScreen = () => {
                 <Text style={{ color: '#6B7280', fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 }}>
                   {commissionData.isBlocked
                     ? 'Tu cuenta está bloqueada por comisiones vencidas. Regularizá tu deuda para recibir viajes.'
-                    : 'Tenés comisiones pendientes. Regularizá dentro de los 3 días para evitar bloqueo.'}
+                    : 'Tenés comisiones pendientes. Tenés 1 semana de trabajo + 3 días de gracia para regularizar.'}
                 </Text>
                 <View style={{
                   flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

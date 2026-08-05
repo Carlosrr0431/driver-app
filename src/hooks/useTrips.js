@@ -24,6 +24,7 @@ import {
   isWeeklyBillingMode,
   resolveDispatchBlockReason,
   normalizeBillingMode,
+  COMMISSION_BLOCK_AFTER_DAYS,
 } from '../../shared/driver-billing';
 
 const rejectInFlightTripIds = new Set();
@@ -384,51 +385,24 @@ export const useTrips = () => {
       // Commission check async — don't block acceptance
       (async () => {
         try {
-          const commTimeout = createTimeoutController(5000);
-          const { data: commTrips } = await supabase
-            .from('trips')
-            .select('commission_amount, completed_at')
-            .eq('driver_id', driver.id)
-            .eq('status', TRIP_STATUS.COMPLETED)
-            .gt('commission_amount', 0)
-            .order('completed_at', { ascending: true })
-            .abortSignal(commTimeout.signal);
-          commTimeout.cleanup();
+          const billingTimeout = createTimeoutController(5000);
+          const { data: billingRow } = await supabase
+            .from('drivers')
+            .select('pending_commission, commission_debt_since_at, billing_mode, commission_blocked')
+            .eq('id', driver.id)
+            .abortSignal(billingTimeout.signal)
+            .single();
+          billingTimeout.cleanup();
 
-          let payments = [];
-          try {
-            const payTimeout = createTimeoutController(5000);
-            const { data: payData } = await supabase
-              .from('commission_payments')
-              .select('amount, created_at')
-              .eq('driver_id', driver.id)
-              .order('created_at', { ascending: false })
-              .abortSignal(payTimeout.signal);
-            payTimeout.cleanup();
-            payments = payData || [];
-          } catch (_) {}
+          if (isWeeklyBillingMode(billingRow?.billing_mode)) return;
+          if (!resolveCommissionOverdue(billingRow)) return;
 
-          const totalComm = (commTrips || []).reduce((s, t) => s + (Number(t.commission_amount) || 0), 0);
-          const totalPaid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-          const balance = totalComm - totalPaid;
-
-          if (balance > 0) {
-            const lastPayDate = payments.length > 0 ? new Date(payments[0].created_at) : null;
-            const unpaidTrips = lastPayDate
-              ? (commTrips || []).filter((t) => new Date(t.completed_at) > lastPayDate)
-              : (commTrips || []);
-            const oldest = unpaidTrips.length > 0 ? unpaidTrips[0] : null;
-            const threeDaysAgo = new Date();
-            threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-            if (oldest && new Date(oldest.completed_at) < threeDaysAgo) {
-              Toast.show({
-                type: 'error',
-                text1: 'Comisiones pendientes',
-                text2: 'Regularizá tus comisiones. El próximo viaje será bloqueado.',
-                visibilityTime: 5000,
-              });
-            }
-          }
+          Toast.show({
+            type: 'error',
+            text1: 'Comisiones vencidas',
+            text2: `Pasaron ${COMMISSION_BLOCK_AFTER_DAYS} días (semana + gracia). Regularizá para seguir recibiendo viajes.`,
+            visibilityTime: 5000,
+          });
         } catch (_) {}
       })();
 
