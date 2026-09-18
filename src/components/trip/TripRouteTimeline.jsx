@@ -19,20 +19,20 @@ export function TripRouteTimeline({
   const stops = [
     {
       key: 'pickup',
-      label: 'RECOGIDA',
+      label: 'Origen',
       address: pickupAddress || '—',
       type: 'pickup',
     },
     ...waypoints.map((wp, index) => ({
       key: `wp-${index}`,
-      label: `PARADA ${index + 1}`,
+      label: `Parada ${index + 1}`,
       address: wp?.address || '—',
       type: 'stop',
       index: index + 1,
     })),
     {
       key: 'final',
-      label: waypoints.length > 0 ? 'DESTINO FINAL' : 'DESTINO',
+      label: waypoints.length > 0 ? 'Destino final' : 'Destino',
       address: finalDestinationAddress || '—',
       type: 'final',
       index: waypoints.length + 1,

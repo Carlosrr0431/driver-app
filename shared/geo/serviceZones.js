@@ -6,7 +6,7 @@
 export const PICKUP_OUTSIDE_COVERAGE_TITLE = 'Sin cobertura en esta zona';
 
 export const PICKUP_OUTSIDE_COVERAGE_MESSAGE =
-  'No hay cobertura para su zona por el momento. No podemos tomar viajes con recogida en esta dirección.';
+  'No hay cobertura para su zona por el momento. No podemos tomar viajes con origen en esta dirección.';
 
 /** Ray-casting: true si el punto está dentro del polígono. */
 export function isPointInPolygon(lat, lng, coordinates) {

@@ -10,7 +10,10 @@ jest.mock('../../src/services/supabase', () => ({
 
 import {
   lookupAssignedDriverLogin,
+  lookupDriverEmailLogin,
   lookupDriverPhoneLogin,
+  resolveUnifiedDriverPhoneLogin,
+  detectDriverLoginKind,
   linkAssignedDriverUser,
   setDriverOnlineStatus,
   fetchFleetOwnerProfile,
@@ -31,6 +34,108 @@ describe('assignedDriverService', () => {
         p_phone: '5493878630173',
       });
       expect(result.found).toBe(true);
+    });
+
+    it('envía login_kind cuando se fuerza propietario o asignado', async () => {
+      mockRpc.mockResolvedValue({ data: { found: true, login_kind: 'assigned' }, error: null });
+
+      await lookupDriverPhoneLogin('3875345465', null, 'assigned');
+
+      expect(mockRpc).toHaveBeenCalledWith('lookup_driver_phone_login', {
+        p_phone: '5493875345465',
+        p_login_kind: 'assigned',
+      });
+    });
+  });
+
+  describe('lookupDriverEmailLogin', () => {
+    it('normaliza el correo y llama al RPC', async () => {
+      mockRpc.mockResolvedValue({
+        data: { found: true, login_channel: 'email', login_email: 'juan@gmail.com' },
+        error: null,
+      });
+
+      const result = await lookupDriverEmailLogin('  Juan@Gmail.com ');
+
+      expect(mockRpc).toHaveBeenCalledWith('lookup_driver_email_login', {
+        p_email: 'juan@gmail.com',
+      });
+      expect(result.login_channel).toBe('email');
+    });
+  });
+
+  describe('detectDriverLoginKind', () => {
+    it('detecta solo asignado', () => {
+      const detected = detectDriverLoginKind(
+        { found: true, login_kind: 'assigned', full_name: 'Juan' },
+        { found: false },
+      );
+      expect(detected.kind).toBe('assigned');
+      expect(detected.result.full_name).toBe('Juan');
+    });
+
+    it('detecta solo propietario', () => {
+      const detected = detectDriverLoginKind(
+        { found: false },
+        { found: true, login_kind: 'owner', full_name: 'Ana' },
+      );
+      expect(detected.kind).toBe('owner');
+      expect(detected.result.full_name).toBe('Ana');
+    });
+
+    it('marca ambiguo si el mismo teléfono es dueño y asignado', () => {
+      const detected = detectDriverLoginKind(
+        { found: true, login_kind: 'assigned' },
+        { found: true, login_kind: 'owner' },
+      );
+      expect(detected.kind).toBe('ambiguous');
+    });
+
+    it('marca ambiguo si hay asignado y varios móviles de titular', () => {
+      const detected = detectDriverLoginKind(
+        { found: true, login_kind: 'assigned' },
+        { found: false, needs_driver_number: true, choices: [{ driver_number: 2 }] },
+      );
+      expect(detected.kind).toBe('ambiguous');
+    });
+  });
+
+  describe('resolveUnifiedDriverPhoneLogin', () => {
+    it('devuelve el asignado cuando solo existe esa cuenta', async () => {
+      mockRpc.mockImplementation((_name, params) => {
+        if (params.p_login_kind === 'assigned') {
+          return Promise.resolve({
+            data: { found: true, login_kind: 'assigned', full_name: 'Juan' },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: { found: false }, error: null });
+      });
+
+      const result = await resolveUnifiedDriverPhoneLogin('3875 345465');
+      expect(result.login_kind).toBe('assigned');
+      expect(result.full_name).toBe('Juan');
+    });
+
+    it('pide elegir cuenta cuando coinciden dueño y asignado', async () => {
+      mockRpc.mockImplementation((_name, params) => {
+        if (params.p_login_kind === 'assigned') {
+          return Promise.resolve({
+            data: { found: true, login_kind: 'assigned' },
+            error: null,
+          });
+        }
+        return Promise.resolve({
+          data: { found: true, login_kind: 'owner' },
+          error: null,
+        });
+      });
+
+      const result = await resolveUnifiedDriverPhoneLogin('3875345465');
+      expect(result.needs_account_choice).toBe(true);
+      expect(result.found).toBe(false);
+      expect(result.assigned.login_kind).toBe('assigned');
+      expect(result.owner.login_kind).toBe('owner');
     });
   });
 

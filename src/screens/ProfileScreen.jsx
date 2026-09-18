@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -28,6 +28,8 @@ import { differenceInDays, parseISO } from 'date-fns';
 import Toast from 'react-native-toast-message';
 import { useOwner } from '../hooks/useOwner';
 import { isAssignedDriver, isFleetOwner, usesPhoneLogin, formatPhoneForDisplay, MAX_ASSIGNED_DRIVERS } from '../utils/driverRoles';
+import { summarizeDriverRating } from '../../shared/driver-rating';
+import DriverRatingCard from '../components/DriverRatingCard';
 
 const ProfileScreen = () => {
   const insets = useSafeAreaInsets();
@@ -42,6 +44,23 @@ const ProfileScreen = () => {
   const phoneLogin = usesPhoneLogin(driver);
   const { data: linkedDrivers = [] } = useLinkedDrivers();
   const assignedDrivers = linkedDrivers.filter((d) => d.is_assigned_driver);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!driver?.id) return undefined;
+      let alive = true;
+      supabase
+        .from('drivers')
+        .select('rating, rating_count, rating_star_1, rating_star_2, rating_star_3, rating_star_4, rating_star_5')
+        .eq('id', driver.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (alive && data) updateDriver(data);
+        })
+        .catch(() => {});
+      return () => { alive = false; };
+    }, [driver?.id, updateDriver])
+  );
 
   const handleBecomeOwner = () => {
     Alert.alert(
@@ -175,7 +194,7 @@ const ProfileScreen = () => {
     ]);
   };
 
-  const rating = Number(driver?.rating || 5).toFixed(1);
+  const ratingSummary = summarizeDriverRating(driver);
   const initials = driver?.full_name?.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || '?';
 
   return (
@@ -215,18 +234,32 @@ const ProfileScreen = () => {
             </Text>
 
             {/* Rating & stats row */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 16 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <MaterialCommunityIcons name="star" size={16} color={colors.warning} />
-                <Text style={{ color: colors.warning, fontSize: 14, fontFamily: 'Inter_600SemiBold', marginLeft: 3 }}>
-                  {rating}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', marginTop: 8, gap: 10 }}>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: ratingSummary.hasRatings ? colors.warningBg : colors.surfaceLight,
+                borderRadius: 999,
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                gap: 4,
+              }}>
+                <MaterialCommunityIcons
+                  name={ratingSummary.hasRatings ? 'star' : 'star-outline'}
+                  size={15}
+                  color={ratingSummary.hasRatings ? colors.warning : colors.textMuted}
+                />
+                <Text style={{
+                  color: ratingSummary.hasRatings ? colors.warningDark : colors.textMuted,
+                  fontSize: 13,
+                  fontFamily: 'Inter_600SemiBold',
+                }}>
+                  {ratingSummary.hasRatings ? ratingSummary.compactLabel : 'Nuevo'}
                 </Text>
               </View>
-              <View style={{ width: 1, height: 14, backgroundColor: colors.border }} />
               <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
                 {driver?.total_trips || 0} viajes
               </Text>
-              <View style={{ width: 1, height: 14, backgroundColor: colors.border }} />
               <Text style={{ color: colors.textMuted, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
                 {Number(driver?.total_km || 0).toFixed(0)} km
               </Text>
@@ -276,6 +309,10 @@ const ProfileScreen = () => {
         </LinearGradient>
 
         <View style={{ paddingHorizontal: 16 }}>
+          <Animated.View entering={FadeInDown.delay(140).duration(400)} style={{ marginTop: 14 }}>
+            <DriverRatingCard driver={driver} />
+          </Animated.View>
+
           {/* Personal data */}
           <Animated.View entering={FadeInDown.delay(160).duration(400)}>
             <SectionCard title="Datos personales" icon="account-outline">

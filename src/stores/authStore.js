@@ -31,7 +31,13 @@ export const useAuthStore = create((set, get) => ({
     }),
 
   updateDriver: (updates) =>
-    set((state) => ({
-      driver: state.driver ? { ...state.driver, ...updates } : null,
-    })),
+    set((state) => {
+      if (!state.driver) return state;
+      const nextUpdates = updates || {};
+      const unchanged = Object.keys(nextUpdates).every((key) => (
+        Object.is(state.driver[key], nextUpdates[key])
+      ));
+      if (unchanged) return state;
+      return { driver: { ...state.driver, ...nextUpdates } };
+    }),
 }));

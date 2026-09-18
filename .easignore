@@ -56,6 +56,7 @@ yarn-error.*
 !/shared/
 !/shared/**
 
-# Necesario para compilar Firebase en EAS Android
+# Necesario para compilar Firebase en EAS
 !google-services.json
 !android/app/google-services.json
+!GoogleService-Info.plist

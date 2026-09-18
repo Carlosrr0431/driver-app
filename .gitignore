@@ -23,7 +23,22 @@ google-services.json
 **/google-services.json
 GoogleService-Info.plist
 
+# iOS signing / ASC secrets
+.secrets/
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+credentials.json
+CertificateSigningRequest.certSigningRequest
+
+
 # Android SDK local (no subir al repo)
 .tools/
 *.code-workspace
 coverage/
+releases/
+.eas-inspect-test/
+.tmp-android-build.txt
+supabase/.temp/
+

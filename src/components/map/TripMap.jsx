@@ -3,14 +3,20 @@
  * Mapa de viaje con MapLibre Native (vector tiles OpenFreeMap bright),
  * ruta OSRM y navegación in-app con cámara adaptativa.
  */
-import React, { useRef, useEffect, useCallback, useMemo } from 'react';
-import { View, Pressable, StyleSheet } from 'react-native';
+import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 import MapLibreGL from '../../lib/maplibre';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
 import { decodePolyline } from '../../utils/polyline';
 import { projectPointOntoPolyline, prependDriverConnector } from '../../services/navigation';
-import { MAPLIBRE_STYLE, MAP_MAX_ZOOM } from '../../utils/mapProvider';
+import { MAPLIBRE_STYLE } from '../../utils/mapProvider';
+import {
+  resolveFollowPadding,
+  resolveNavigationCameraPitch,
+  resolveNavigationCameraZoom,
+  resolveSettledOverviewZoom,
+} from '../../utils/tripMapCamera';
 import { MapRouteLayers } from './MapRouteLayers';
 import RouteEndMarker from './RouteEndMarker';
 import DriverNavMarker from './DriverNavMarker';
@@ -24,15 +30,14 @@ const ON_ROUTE_SNAP_MAX_M = 32;
 /** Padding norte geográfico arriba. */
 const NAV_PADDING_NORTH_UP = { top: 56, bottom: 200, left: 48, right: 48 };
 
-/** Más padding arriba → el GPS queda abajo y se ve más ruta por delante. */
-function buildFollowPadding(controlsBottomOffset = 16) {
-  const bottomInset = Math.max(112, Math.round(controlsBottomOffset + 96));
-  return {
-    top: 300,
-    bottom: bottomInset,
-    left: 44,
-    right: 44,
-  };
+function buildCornerAwareFollowPadding(controlsBottomOffset, turn, factor, viewportHeight) {
+  const base = resolveFollowPadding({ controlsBottomOffset, viewportHeight });
+  if (!turn || factor <= 0.05) return base;
+  const extra = Math.round(factor * 64);
+  if (turn.turnSide === 'right') {
+    return { ...base, left: base.left + extra };
+  }
+  return { ...base, right: base.right + extra };
 }
 
 function getFollowAheadMeters(speedKmh) {
@@ -236,16 +241,6 @@ function getCornerAnticipationFactor(distanceMeters, speedKmh, turnAngle) {
   return raw * raw * (3 - 2 * raw);
 }
 
-function buildCornerAwareFollowPadding(controlsBottomOffset, turn, factor) {
-  const base = buildFollowPadding(controlsBottomOffset);
-  if (!turn || factor <= 0.05) return base;
-  const extra = Math.round(factor * 64);
-  if (turn.turnSide === 'right') {
-    return { ...base, left: base.left + extra };
-  }
-  return { ...base, right: base.right + extra };
-}
-
 function buildCornerAwareNorthPadding(turn, factor) {
   const base = { ...NAV_PADDING_NORTH_UP };
   if (!turn || factor <= 0.05) return base;
@@ -343,21 +338,6 @@ function getAnticipatedNavigationBearing(origin, routeCoords, speedKmh) {
   return smoothAngle(base, turn.bearingOut, cornerFactor * turnBlend);
 }
 
-const ZOOM_TIERS = [
-  { minKmh: 65, zoom: 15.7 },
-  { minKmh: 40, zoom: 16.2 },
-  { minKmh: 20, zoom: 16.8 },
-  { minKmh: 0,  zoom: 17.2 },
-];
-
-const FOLLOW_ZOOM_TIERS = [
-  { minKmh: 65, zoom: 17.2 },
-  { minKmh: 40, zoom: 17.6 },
-  { minKmh: 20, zoom: 17.9 },
-  // MAP_MAX_ZOOM (18) causaba mapa en blanco al llegar al punto de retiro (0 km/h)
-  { minKmh: 0,  zoom: 17.4 },
-];
-
 const FREE_RIDE_ZOOM_TIERS = [
   { minKmh: 65, zoom: 14.2 },
   { minKmh: 40, zoom: 14.6 },
@@ -405,14 +385,6 @@ function getFreeRideZoom(speedKmh, traveledCoords = []) {
   return Math.max(12.6, zoom);
 }
 
-function getZoomForSpeed(speedKmh, followRoute = false) {
-  const tiers = followRoute ? FOLLOW_ZOOM_TIERS : ZOOM_TIERS;
-  for (const tier of tiers) {
-    if (speedKmh >= tier.minKmh) return tier.zoom;
-  }
-  return followRoute ? MAP_MAX_ZOOM : 17.2;
-}
-
 /* ── Marcador de punto (origen / destino) ────────────────────────────────── */
 const PointMarkerAnnotation = React.memo(({ coordinate, type }) => {
   const isOrigin = type === 'origin';
@@ -456,6 +428,7 @@ export const TripMap = React.memo(({
   routeEndVariant = 'destination',
   style,
 }) => {
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const cameraRef = useRef(null);
   const hasFitted = useRef(false);
   const lastNearestIdxRef = useRef(0);
@@ -464,6 +437,8 @@ export const TripMap = React.memo(({
   const lastCameraTimeRef = useRef(0);
   const lastZoomTierRef = useRef(null);
   const freeRideCameraBootstrappedRef = useRef(false);
+  const prevNavigationModeRef = useRef(navigationMode);
+  const [mapReady, setMapReady] = useState(false);
 
   const routeCoords = useMemo(() => {
     if (Array.isArray(routeCoordsProp) && routeCoordsProp.length > 0) return routeCoordsProp;
@@ -559,7 +534,9 @@ export const TripMap = React.memo(({
       return getAnticipatedNavigationBearing(originPoint, bearingRoute, navigationSpeedKmh);
     }
     if (!isOnRoute && Number.isFinite(heading)) return heading;
-    if (!originPoint || bearingRoute.length < 2) return smoothHeadingRef.current ?? 0;
+    if (!originPoint || bearingRoute.length < 2) {
+      return Number.isFinite(heading) ? heading : 0;
+    }
     return getAnticipatedNavigationBearing(originPoint, bearingRoute, navigationSpeedKmh);
   }, [navigationMode, isOnRoute, heading, snappedDriverCoord, driverCoord, routeCoords, remainingRouteCoords, navigationSpeedKmh]);
 
@@ -580,6 +557,17 @@ export const TripMap = React.memo(({
   useEffect(() => {
     freeRideCameraBootstrappedRef.current = false;
   }, [freeRideMode]);
+
+  // Al reactivar 3D, re-alinear la cámara al rumbo de la polilínea (mismo default inicial).
+  const prevThreeDEnabledRef = useRef(threeDEnabled);
+  useEffect(() => {
+    const wasThreeD = prevThreeDEnabledRef.current;
+    prevThreeDEnabledRef.current = threeDEnabled;
+    if (wasThreeD || !threeDEnabled) return;
+    smoothHeadingRef.current = null;
+    lastCameraTimeRef.current = 0;
+    lastZoomTierRef.current = null;
+  }, [threeDEnabled]);
 
   /* ── Control de cámara unificado ──────────────────────────────────────── */
   const applyCameraStop = useCallback((stop) => {
@@ -607,44 +595,92 @@ export const TripMap = React.memo(({
     }
   }, []);
 
-  /* ── Reset de cámara al entrar en viaje libre (sale de nav 3D con ruta) ─── */
+  /* ── Al salir de navegación (retiro / elegir destino) volver a un zoom de manzana ── */
   useEffect(() => {
-    if (!freeRideMode || !driverCoord) return;
-    if (freeRideCameraBootstrappedRef.current) return;
+    const wasNavigating = prevNavigationModeRef.current;
+    prevNavigationModeRef.current = navigationMode;
+    if (!wasNavigating || navigationMode || freeRideMode) return;
+    if (!driverCoord || !mapReady) return;
+    lastZoomTierRef.current = null;
+    lastCameraTimeRef.current = 0;
+    applyCameraStop({
+      center: [driverCoord.longitude, driverCoord.latitude],
+      bearing: 0,
+      pitch: 0,
+      zoom: resolveSettledOverviewZoom({ width: viewportWidth, height: viewportHeight }),
+      duration: 450,
+    });
+  }, [
+    navigationMode,
+    freeRideMode,
+    mapReady,
+    applyCameraStop,
+    viewportWidth,
+    viewportHeight,
+    driverCoord,
+  ]);
+
+  /* ── Cámara 2D en viaje libre: sigue al auto y dibuja el recorrido ──────── */
+  useEffect(() => {
+    if (!freeRideMode || !driverCoord || !mapReady) return;
 
     let cancelled = false;
     let frameId = null;
-    const bootstrapFreeRideCamera = () => {
+    const followFreeRideCamera = () => {
       if (cancelled) return;
       if (!cameraRef.current) {
-        frameId = requestAnimationFrame(bootstrapFreeRideCamera);
+        frameId = requestAnimationFrame(followFreeRideCamera);
         return;
       }
+
+      const now = Date.now();
+      const isFirst = !freeRideCameraBootstrappedRef.current;
+      if (!isFirst && now - lastCameraTimeRef.current < 250) return;
+
       freeRideCameraBootstrappedRef.current = true;
+      lastCameraTimeRef.current = now;
       smoothHeadingRef.current = 0;
-      lastCameraTimeRef.current = 0;
       lastZoomTierRef.current = null;
+
+      const speedMps = Number(driverLocation?.speed) > 0 ? Number(driverLocation.speed) : 0;
+      const speedKmh = speedMps * 3.6;
       applyCameraStop({
         center: [driverCoord.longitude, driverCoord.latitude],
         bearing: 0,
         pitch: 0,
-        zoom: getFreeRideZoom(0, traveledRouteDisplayCoords),
+        zoom: getFreeRideZoom(speedKmh, traveledRouteDisplayCoords),
         padding: FREE_RIDE_CAMERA_PADDING,
-        duration: 0,
+        duration: isFirst ? 0 : 250,
       });
     };
 
-    bootstrapFreeRideCamera();
+    followFreeRideCamera();
     return () => {
       cancelled = true;
       if (frameId !== null) cancelAnimationFrame(frameId);
     };
-  }, [freeRideMode, driverCoord, traveledRouteDisplayCoords, applyCameraStop]);
+  }, [
+    freeRideMode,
+    driverCoord,
+    traveledRouteDisplayCoords,
+    applyCameraStop,
+    mapReady,
+    driverLocation?.speed,
+  ]);
 
   /* ── Fit inicial a la ruta ─────────────────────────────────────────────── */
   useEffect(() => {
-    if (navigationMode) return;
-    if (routeCoords.length > 0 && cameraRef.current && !hasFitted.current) {
+    if (navigationMode || !mapReady || hasFitted.current) return;
+    if (routeCoords.length === 0) return;
+
+    let cancelled = false;
+    let frameId = null;
+    const tryFit = () => {
+      if (cancelled || hasFitted.current) return;
+      if (!cameraRef.current) {
+        frameId = requestAnimationFrame(tryFit);
+        return;
+      }
       hasFitted.current = true;
       const points = [...routeCoords];
       if (driverCoord) points.push(driverCoord);
@@ -656,12 +692,18 @@ export const TripMap = React.memo(({
         60,
         600,
       );
-    }
-  }, [routeCoords, navigationMode, driverCoord]);
+    };
+
+    tryFit();
+    return () => {
+      cancelled = true;
+      if (frameId !== null) cancelAnimationFrame(frameId);
+    };
+  }, [routeCoords, navigationMode, driverCoord, mapReady]);
 
   /* ── Cámara de navegación ──────────────────────────────────────────────── */
   useEffect(() => {
-    if (!navigationMode || !driverCoord) return;
+    if (!navigationMode || !driverCoord || !mapReady) return;
 
     const now = Date.now();
     const speedMps = Number(driverLocation?.speed) > 0 ? Number(driverLocation.speed) : 0;
@@ -693,6 +735,7 @@ export const TripMap = React.memo(({
         ? getCornerAnticipationFactor(upcomingTurn.distanceMeters, speedKmh, upcomingTurn.turnAngle)
         : 0;
       const targetHeading = routeHeading;
+      // null = primera vez / vuelta a 3D: snap inmediato al rumbo de la ruta.
       if (!Number.isFinite(smoothHeadingRef.current)) {
         smoothHeadingRef.current = targetHeading;
       } else {
@@ -703,21 +746,15 @@ export const TripMap = React.memo(({
         }
       }
     } else {
-      smoothHeadingRef.current = 0;
+      // 2D: norte geográfico arriba; limpia el rumbo suavizado para el próximo 3D.
+      smoothHeadingRef.current = null;
     }
 
     if (now - lastCameraTimeRef.current < 250) return;
     lastCameraTimeRef.current = now;
-
-    let zoom = getZoomForSpeed(speedKmh, threeDEnabled);
     if (Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters < 250) {
-      // 17.4 en 3D para no exceder el techo de FOLLOW_ZOOM_TIERS al llegar al destino
-      zoom = Math.max(zoom, threeDEnabled ? 17.4 : 17.8);
+      lastZoomTierRef.current = null;
     }
-    if (lastZoomTierRef.current !== null && Math.abs(lastZoomTierRef.current - zoom) < 0.15) {
-      zoom = lastZoomTierRef.current;
-    }
-    lastZoomTierRef.current = zoom;
 
     if (threeDEnabled) {
       const cameraHeading = Number.isFinite(smoothHeadingRef.current) ? smoothHeadingRef.current : routeHeading;
@@ -728,14 +765,34 @@ export const TripMap = React.memo(({
         routeCoords: bearingRoute,
         northUp: false,
       });
-      const followPadding = buildCornerAwareFollowPadding(controlsBottomOffset, upcomingTurn, cornerFactor);
-      const pitch = NAV_PITCH_FOLLOW + cornerFactor * 10;
-      const cornerZoom = Math.max(zoom - cornerFactor * 0.45, MAP_MAX_ZOOM - 0.8);
+      const followPadding = buildCornerAwareFollowPadding(
+        controlsBottomOffset,
+        upcomingTurn,
+        cornerFactor,
+        viewportHeight,
+      );
+      const zoom = resolveNavigationCameraZoom({
+        speedKmh,
+        threeDEnabled: true,
+        remainingDistanceMeters,
+        cornerFactor,
+        viewportWidth,
+        viewportHeight,
+      });
+      const pitch = resolveNavigationCameraPitch({
+        threeDEnabled: true,
+        remainingDistanceMeters,
+        cornerFactor,
+        basePitch3d: NAV_PITCH_FOLLOW,
+      });
+      if (lastZoomTierRef.current === null || Math.abs(lastZoomTierRef.current - zoom) >= 0.15) {
+        lastZoomTierRef.current = zoom;
+      }
       applyCameraStop({
         center: [cameraCenter.longitude, cameraCenter.latitude],
         bearing: cameraHeading,
         pitch,
-        zoom: cornerZoom,
+        zoom: lastZoomTierRef.current,
         padding: followPadding,
       });
     } else {
@@ -747,20 +804,36 @@ export const TripMap = React.memo(({
         northUp: true,
       });
       const northPadding = buildCornerAwareNorthPadding(upcomingTurn, cornerFactor);
-      const pitch = NAV_PITCH_NORTH_UP + cornerFactor * 18;
-      const cornerZoom = Math.max(zoom - cornerFactor * 0.5, 16.4);
+      const zoom = resolveNavigationCameraZoom({
+        speedKmh,
+        threeDEnabled: false,
+        remainingDistanceMeters,
+        cornerFactor,
+        viewportWidth,
+        viewportHeight,
+      });
+      const pitch = resolveNavigationCameraPitch({
+        threeDEnabled: false,
+        remainingDistanceMeters,
+        cornerFactor,
+        basePitch2d: NAV_PITCH_NORTH_UP,
+      });
+      if (lastZoomTierRef.current === null || Math.abs(lastZoomTierRef.current - zoom) >= 0.15) {
+        lastZoomTierRef.current = zoom;
+      }
       applyCameraStop({
         center: [cameraCenter.longitude, cameraCenter.latitude],
         bearing: 0,
         pitch,
-        zoom: cornerZoom,
+        zoom: lastZoomTierRef.current,
         padding: northPadding,
       });
     }
   }, [
     navigationMode, threeDEnabled, freeRideMode, driverCoord, driverMarkerCoord, snappedDriverCoord,
     driverLocation?.speed, remainingDistanceMeters, remainingRouteCoords, routeCoords, routeHeading,
-    traveledRouteDisplayCoords, controlsBottomOffset, applyCameraStop,
+    traveledRouteDisplayCoords, controlsBottomOffset, applyCameraStop, mapReady,
+    viewportWidth, viewportHeight,
   ]);
 
   /* ── Marcadores ────────────────────────────────────────────────────────── */
@@ -799,94 +872,6 @@ export const TripMap = React.memo(({
     return routeHeading;
   }, [navigationMode, freeRideMode, threeDEnabled, routeCoords.length, routeHeading, heading]);
 
-  /* ── Botones de control ────────────────────────────────────────────────── */
-  const fitAll = useCallback(() => {
-    const points = freeRideMode && traveledRouteDisplayCoords.length > 0
-      ? [...traveledRouteDisplayCoords]
-      : [...routeCoords];
-    if (driverCoord) points.push(driverCoord);
-    if (!cameraRef.current) return;
-    if (points.length === 0) {
-      if (driverCoord) {
-        applyCameraStop({
-          center: [driverCoord.longitude, driverCoord.latitude],
-          bearing: 0,
-          pitch: 0,
-          zoom: getFreeRideZoom(0, traveledRouteDisplayCoords),
-          duration: 0,
-        });
-      }
-      return;
-    }
-    if (points.length === 1) {
-      applyCameraStop({ center: [points[0].longitude, points[0].latitude], zoom: 15 });
-      return;
-    }
-    const lngs = points.map((p) => p.longitude);
-    const lats = points.map((p) => p.latitude);
-    cameraRef.current.fitBounds(
-      [Math.max(...lngs), Math.max(...lats)],
-      [Math.min(...lngs), Math.min(...lats)],
-      60, 500,
-    );
-  }, [freeRideMode, traveledRouteDisplayCoords, routeCoords, driverCoord, applyCameraStop]);
-
-  const centerOnDriver = useCallback(() => {
-    const anchor = driverMarkerCoord ?? driverCoord;
-    if (!anchor) return;
-
-    if (freeRideMode) {
-      applyCameraStop({
-        center: [anchor.longitude, anchor.latitude],
-        bearing: 0,
-        pitch: 0,
-        zoom: getFreeRideZoom(navigationSpeedKmh, traveledRouteDisplayCoords),
-        padding: FREE_RIDE_CAMERA_PADDING,
-        duration: 0,
-      });
-      return;
-    }
-
-    if (navigationMode && threeDEnabled) {
-      const cameraHeading = Number.isFinite(smoothHeadingRef.current) ? smoothHeadingRef.current : routeHeading;
-      smoothHeadingRef.current = cameraHeading;
-      const bearingRoute = remainingRouteCoords.length >= 2 ? remainingRouteCoords : routeCoords;
-      const { center: cameraCenter, factor: cornerFactor, turn: upcomingTurn } = getAnticipatedCameraCenter({
-        navAnchor: anchor,
-        cameraHeading,
-        speedKmh: navigationSpeedKmh,
-        routeCoords: bearingRoute,
-        northUp: false,
-      });
-      const followPadding = buildCornerAwareFollowPadding(controlsBottomOffset, upcomingTurn, cornerFactor);
-      applyCameraStop({
-        center: [cameraCenter.longitude, cameraCenter.latitude],
-        bearing: cameraHeading,
-        pitch: NAV_PITCH_FOLLOW + cornerFactor * 10,
-        zoom: MAP_MAX_ZOOM - cornerFactor * 0.35,
-        padding: followPadding,
-      });
-    } else if (navigationMode) {
-      const bearingRoute = remainingRouteCoords.length >= 2 ? remainingRouteCoords : routeCoords;
-      const { center: cameraCenter, factor: cornerFactor, turn: upcomingTurn } = getAnticipatedCameraCenter({
-        navAnchor: anchor,
-        cameraHeading: 0,
-        speedKmh: navigationSpeedKmh,
-        routeCoords: bearingRoute,
-        northUp: true,
-      });
-      applyCameraStop({
-        center: [cameraCenter.longitude, cameraCenter.latitude],
-        bearing: 0,
-        pitch: NAV_PITCH_NORTH_UP + cornerFactor * 18,
-        zoom: 16.8 - cornerFactor * 0.4,
-        padding: buildCornerAwareNorthPadding(upcomingTurn, cornerFactor),
-      });
-    } else {
-      applyCameraStop({ center: [anchor.longitude, anchor.latitude], bearing: 0, pitch: 0, zoom: 16.5 });
-    }
-  }, [driverCoord, driverMarkerCoord, freeRideMode, traveledRouteDisplayCoords, navigationMode, threeDEnabled, routeHeading, navigationSpeedKmh, remainingRouteCoords, routeCoords, controlsBottomOffset, applyCameraStop]);
-
   /* ── Render ────────────────────────────────────────────────────────────── */
   return (
     <View style={[{ flex: 1 }, style]}>
@@ -898,6 +883,7 @@ export const TripMap = React.memo(({
         attributionEnabled={false}
         rotateEnabled={navigationMode && threeDEnabled && !freeRideMode}
         pitchEnabled={navigationMode && threeDEnabled && !freeRideMode}
+        onDidFinishLoadingMap={() => setMapReady(true)}
       >
         <MapLibreGL.Camera
           ref={cameraRef}
@@ -906,11 +892,13 @@ export const TripMap = React.memo(({
               ? [driverCoord.longitude, driverCoord.latitude]
               : SALTA_DEFAULT,
             zoomLevel: 14,
+            heading: 0,
+            pitch: 0,
           }}
         />
 
         {/* Ruta OSRM */}
-        {displayRouteCoords.length > 1 ? (
+        {displayRouteCoords.length > 1 && !freeRideMode ? (
           <MapRouteLayers
             coords={displayRouteCoords}
             routeSteps={routeSteps}
@@ -934,7 +922,7 @@ export const TripMap = React.memo(({
         {!navigationMode && originCoord && (
           <PointMarkerAnnotation coordinate={originCoord} type="origin" />
         )}
-        {!navigationMode && destCoord && (
+        {!navigationMode && destCoord && !freeRideMode && (
           <PointMarkerAnnotation coordinate={destCoord} type="dest" />
         )}
 
@@ -976,18 +964,9 @@ export const TripMap = React.memo(({
         )}
       </MapLibreGL.MapView>
 
-      {/* Botones flotantes */}
+      {freeRideMode ? null : (
       <View style={[styles.btnCol, { bottom: controlsBottomOffset }]}>
-        {navigationMode && typeof onToggleThreeD === 'function' && (
-          <Pressable onPress={onToggleThreeD} style={({ pressed }) => [styles.modeBtn, pressed && { opacity: 0.7 }]}>
-            <MaterialCommunityIcons
-              name={threeDEnabled ? 'compass-outline' : 'navigation-outline'}
-              size={18}
-              color={colors.secondary}
-            />
-          </Pressable>
-        )}
-        {typeof onToggleVoiceMute === 'function' && (
+        {typeof onToggleVoiceMute === 'function' ? (
           <Pressable onPress={onToggleVoiceMute} style={({ pressed }) => [styles.mapBtn, pressed && { opacity: 0.7 }]}>
             <MaterialCommunityIcons
               name={isVoiceMuted ? 'volume-off' : 'volume-high'}
@@ -995,14 +974,20 @@ export const TripMap = React.memo(({
               color={isVoiceMuted ? colors.textMuted : colors.primary}
             />
           </Pressable>
-        )}
-        <Pressable onPress={fitAll} style={({ pressed }) => [styles.mapBtn, pressed && { opacity: 0.7 }]}>
-          <Ionicons name="expand-outline" size={18} color={colors.secondary} />
-        </Pressable>
-        <Pressable onPress={centerOnDriver} style={({ pressed }) => [styles.mapBtn, pressed && { opacity: 0.7 }]}>
-          <Ionicons name="locate" size={18} color={colors.secondary} />
-        </Pressable>
+        ) : null}
+        {navigationMode && typeof onToggleThreeD === 'function' ? (
+          <Pressable
+            onPress={onToggleThreeD}
+            style={({ pressed }) => [styles.modeBtn, pressed && { opacity: 0.7 }]}
+            accessibilityLabel={threeDEnabled ? 'Cambiar a vista 2D' : 'Cambiar a vista 3D'}
+          >
+            <Text style={styles.modeBtnText}>
+              {threeDEnabled ? '2D' : '3D'}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
+      )}
     </View>
   );
 });
@@ -1045,6 +1030,12 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: '#E2E8F0',
     elevation: 3,
+  },
+  modeBtnText: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: colors.secondary,
+    letterSpacing: 0.3,
   },
   mapBtn: {
     width: 40, height: 40,

@@ -11,9 +11,28 @@ export const useTripStore = create((set, get) => ({
   /** Paso UI del viaje activo (sobrevive remounts de navegación). */
   driverFlowStep: null,
   driverFlowTripId: null,
+  /** Ir sin destino: atómico con el paso para no disparar OSRM un frame. */
+  driverFreeRide: false,
+  /** Abrir chat del viaje al tocar una push de mensaje. */
+  pendingOpenChatTripId: null,
+  /** Evita que un refetch/realtime resucite el viaje que acabamos de cerrar. */
+  ignoredTripId: null,
 
-  setActiveTrip: (trip) => set({ activeTrip: trip }),
-  setDriverFlowStep: (step, tripId) =>
+  setActiveTrip: (trip) =>
+    set((state) => {
+      if (!trip) return state;
+      const status = String(trip.status || '');
+      if (status === 'completed' || status === 'cancelled' || status === 'queued') return state;
+      if (state.ignoredTripId && trip.id === state.ignoredTripId) return state;
+      if (state.activeTrip === trip) return state;
+      return {
+        activeTrip: trip,
+        ignoredTripId: null,
+      };
+    }),
+  requestOpenChat: (tripId) => set({ pendingOpenChatTripId: tripId || null }),
+  clearPendingOpenChat: () => set({ pendingOpenChatTripId: null }),
+  setDriverFlowStep: (step, tripId, extras = {}) =>
     set((state) => {
       const resolvedTripId = tripId ?? state.activeTrip?.id ?? state.driverFlowTripId;
       const currentStep =
@@ -21,12 +40,32 @@ export const useTripStore = create((set, get) => ({
           ? state.driverFlowStep
           : null;
       const resolvedStep = typeof step === 'function' ? step(currentStep) : step;
+      const nextTripId = resolvedTripId ?? null;
+      const tripChanged = nextTripId !== state.driverFlowTripId;
+      let nextFreeRide = tripChanged ? false : Boolean(state.driverFreeRide);
+      if (extras.freeRide !== undefined) {
+        nextFreeRide = Boolean(extras.freeRide);
+      } else if (resolvedStep !== 'in_progress') {
+        nextFreeRide = false;
+      }
+      if (
+        state.driverFlowStep === resolvedStep
+        && state.driverFlowTripId === nextTripId
+        && state.driverFreeRide === nextFreeRide
+      ) {
+        return state;
+      }
       return {
         driverFlowStep: resolvedStep,
-        driverFlowTripId: resolvedTripId ?? null,
+        driverFlowTripId: nextTripId,
+        driverFreeRide: nextFreeRide,
       };
     }),
-  clearDriverFlowStep: () => set({ driverFlowStep: null, driverFlowTripId: null }),
+  clearDriverFlowStep: () => set({
+    driverFlowStep: null,
+    driverFlowTripId: null,
+    driverFreeRide: false,
+  }),
   setPendingTrip: (trip) => set({ pendingTrip: trip, showNewTripModal: !!trip }),
   setShowNewTripModal: (show) => set({ showNewTripModal: show }),
   setTripTimer: (timer) => set({ tripTimer: timer }),
@@ -59,7 +98,7 @@ export const useTripStore = create((set, get) => ({
     })),
 
   clearActiveTrip: () =>
-    set({
+    set((state) => ({
       activeTrip: null,
       tripTimer: 0,
       tripStartTime: null,
@@ -67,7 +106,9 @@ export const useTripStore = create((set, get) => ({
       lastTrackingLocation: null,
       driverFlowStep: null,
       driverFlowTripId: null,
-    }),
+      driverFreeRide: false,
+      ignoredTripId: state.activeTrip?.id ?? state.ignoredTripId,
+    })),
 
   clearPendingTrip: () =>
     set({

@@ -1,6 +1,8 @@
 // Silenciar warnings de deprecación que no afectan funcionalidad
 globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
+import 'expo-device';
 import './src/tasks/backgroundLocationTask';
+import './src/services/notificationsBackground';
 import { LogBox } from 'react-native';
 LogBox.ignoreLogs([
   '[expo-av]',
@@ -28,6 +30,7 @@ import { ErrorBoundary } from './src/components/ErrorBoundary';
 import AppNavigator from './src/navigation/AppNavigator';
 import { useAuth } from './src/hooks/useAuth';
 import { useAuthStore } from './src/stores/authStore';
+import { useAppResumeHydrator } from './src/hooks/useAppResumeHydration';
 import { useResponsive, ResponsiveProvider } from './src/hooks/useResponsive';
 import { useStoreUpdateCheck } from './src/hooks/useStoreUpdateCheck';
 import { StoreUpdateModal } from './src/components/ui/StoreUpdateModal';
@@ -35,6 +38,11 @@ import { DEV_AUTO_LOGIN, DEV_DRIVER_EMAIL, DEV_DRIVER_PASSWORD } from './src/con
 import { useTripStore } from './src/stores/tripStore';
 import { colors } from './src/theme/colors';
 import { navigateTo } from './src/navigation/navigationRef';
+import {
+  extractNotificationData,
+  subscribeToForegroundMessages,
+  subscribeToNotificationOpen,
+} from './src/services/notifications';
 
 try {
   SplashScreen.preventAutoHideAsync();
@@ -89,13 +97,58 @@ const toastConfig = {
   info: (props) => <ToastContent {...props} borderColor={colors.info} />,
 };
 
+function applyIncomingPushData(data) {
+  if (data?.type === 'new_trip' && data?.trip) {
+    useTripStore.getState().setPendingTrip(data.trip);
+  }
+}
+
+function handlePushTap(data) {
+  if (!data) return;
+
+  Notifications.setBadgeCountAsync(0).catch(() => {});
+
+  if (data.type === 'new_trip') {
+    if (data.trip) {
+      useTripStore.getState().setPendingTrip(data.trip);
+    }
+    navigateTo('Home');
+    return;
+  }
+
+  if (data.type === 'trip_chat') {
+    const tripId = data.tripId || data.trip_id;
+    if (tripId) {
+      useTripStore.getState().requestOpenChat(String(tripId));
+    }
+    navigateTo('Home', { screen: 'ActiveTrip' });
+    return;
+  }
+
+  if (data.type === 'dispatcher_message' || data.type === 'message') {
+    navigateTo('Home');
+  }
+}
+
 const AppContent = () => {
-  const { login } = useAuth({ enableBootstrap: true });
+  const { login, fetchDriverProfile } = useAuth({ enableBootstrap: true });
   const { isAuthenticated, isLoading } = useAuthStore();
-  const { visible: updateVisible, dismiss: dismissUpdate, openUpdate } = useStoreUpdateCheck();
+  useAppResumeHydrator(async () => {
+    const userId = useAuthStore.getState().user?.id;
+    if (userId) await fetchDriverProfile(userId);
+  });
+  const {
+    visible: storeUpdateVisible,
+    dismiss: dismissStoreUpdate,
+    openUpdate: openStoreUpdate,
+  } = useStoreUpdateCheck({
+    isAuthenticated,
+  });
   const devLoginAttempted = useRef(false);
   const notificationListener = useRef();
   const responseListener = useRef();
+  const fcmForegroundSub = useRef();
+  const fcmOpenSub = useRef();
 
   useEffect(() => {
     if (!DEV_AUTO_LOGIN || devLoginAttempted.current || isLoading || isAuthenticated) {
@@ -106,38 +159,29 @@ const AppContent = () => {
   }, [isAuthenticated, isLoading, login]);
 
   useEffect(() => {
-    // Listen for notifications received while app is foregrounded
     notificationListener.current = Notifications.addNotificationReceivedListener((notification) => {
-      const data = notification.request.content.data;
-      if (data?.type === 'new_trip' && data?.trip) {
-        useTripStore.getState().setPendingTrip(data.trip);
-      }
+      applyIncomingPushData(notification.request.content.data);
     });
 
-    // Handle user tapping on a notification
     responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
-      if (!data) return;
-
-      // Limpiar badge al responder a cualquier notificación
-      Notifications.setBadgeCountAsync(0).catch(() => {});
-
-      if (data.type === 'new_trip') {
-        if (data.trip) {
-          useTripStore.getState().setPendingTrip(data.trip);
-        }
-        navigateTo('Home');
-      } else if (data.type === 'dispatcher_message' || data.type === 'message') {
-        navigateTo('Home');
-      }
+      handlePushTap(response.notification.request.content.data);
     });
 
-    // Dismiss all delivered notifications to prevent re-delivery loop
+    fcmForegroundSub.current = subscribeToForegroundMessages((remoteMessage) => {
+      applyIncomingPushData(extractNotificationData(remoteMessage));
+    });
+
+    fcmOpenSub.current = subscribeToNotificationOpen((remoteMessage) => {
+      handlePushTap(extractNotificationData(remoteMessage));
+    });
+
     Notifications.dismissAllNotificationsAsync().catch(() => {});
 
     return () => {
-      if (notificationListener.current) notificationListener.current.remove();
-      if (responseListener.current) responseListener.current.remove();
+      notificationListener.current?.remove?.();
+      responseListener.current?.remove?.();
+      fcmForegroundSub.current?.remove?.();
+      fcmOpenSub.current?.remove?.();
     };
   }, []);
 
@@ -145,9 +189,9 @@ const AppContent = () => {
     <>
       <AppNavigator />
       <StoreUpdateModal
-        visible={updateVisible}
-        onUpdate={openUpdate}
-        onDismiss={dismissUpdate}
+        visible={storeUpdateVisible}
+        onUpdate={openStoreUpdate}
+        onDismiss={dismissStoreUpdate}
       />
     </>
   );
@@ -157,6 +201,14 @@ export default function App() {
   const [appReady, setAppReady] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    const forceReady = setTimeout(() => {
+      if (!cancelled) {
+        setAppReady(true);
+        SplashScreen.hideAsync().catch(() => {});
+      }
+    }, 4000);
+
     async function prepare() {
       try {
         await Font.loadAsync({
@@ -168,11 +220,17 @@ export default function App() {
       } catch (e) {
         console.warn('Error loading fonts:', e);
       } finally {
-        setAppReady(true);
-        try { SplashScreen.hideAsync(); } catch (_) {}
+        if (!cancelled) {
+          setAppReady(true);
+          SplashScreen.hideAsync().catch(() => {});
+        }
       }
     }
     prepare();
+    return () => {
+      cancelled = true;
+      clearTimeout(forceReady);
+    };
   }, []);
 
   if (!appReady) {

@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { normalizeDriverPhone } from '../utils/driverRoles';
+import { normalizeDriverPhone, normalizeLoginEmail } from '../utils/driverRoles';
 
 const DASHBOARD_URL =
   process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://profesional-dashboard.vercel.app';
@@ -22,6 +22,15 @@ export async function lookupDriverPhoneLogin(phone, driverNumber = null, loginKi
   return data || { found: false };
 }
 
+export async function lookupDriverEmailLogin(email) {
+  const { data, error } = await supabase.rpc('lookup_driver_email_login', {
+    p_email: normalizeLoginEmail(email),
+  });
+
+  if (error) throw error;
+  return data || { found: false };
+}
+
 export async function lookupAssignedDriverLogin(phone, driverNumber = null) {
   const params = {
     p_phone: normalizeDriverPhone(phone) || phone,
@@ -36,6 +45,58 @@ export async function lookupAssignedDriverLogin(phone, driverNumber = null) {
   return data || { found: false };
 }
 
+function isOwnerLookupPending(result) {
+  return Boolean(
+    result?.needs_driver_number
+    && Array.isArray(result.choices)
+    && result.choices.length > 0,
+  );
+}
+
+/**
+ * Detecta si el teléfono corresponde a chofer asignado, propietario, o ambos.
+ * No muta los resultados del RPC.
+ */
+export function detectDriverLoginKind(assignedResult, ownerResult) {
+  const assignedFound = Boolean(assignedResult?.found);
+  const ownerFound = Boolean(ownerResult?.found);
+  const ownerPending = isOwnerLookupPending(ownerResult);
+
+  if (assignedFound && (ownerFound || ownerPending)) {
+    return {
+      kind: 'ambiguous',
+      assigned: assignedResult,
+      owner: ownerResult,
+    };
+  }
+  if (assignedFound) {
+    return { kind: 'assigned', result: assignedResult };
+  }
+  if (ownerPending || ownerFound) {
+    return { kind: 'owner', result: ownerResult };
+  }
+  return { kind: null, result: { found: false } };
+}
+
+/** Lookup unificado: dueño y asignado en paralelo, sin que el usuario elija el tipo. */
+export async function resolveUnifiedDriverPhoneLogin(phone, driverNumber = null) {
+  const [assigned, owner] = await Promise.all([
+    lookupDriverPhoneLogin(phone, driverNumber, 'assigned'),
+    lookupDriverPhoneLogin(phone, driverNumber, 'owner'),
+  ]);
+
+  const detected = detectDriverLoginKind(assigned, owner);
+  if (detected.kind === 'ambiguous') {
+    return {
+      found: false,
+      needs_account_choice: true,
+      assigned: detected.assigned,
+      owner: detected.owner,
+    };
+  }
+  return detected.result || { found: false };
+}
+
 /**
  * Primera configuración de contraseña vía dashboard (admin API, sin enviar emails).
  */
@@ -46,6 +107,28 @@ export async function provisionDriverPhoneAuth({ driverId, phone, password }) {
     body: JSON.stringify({
       driverId,
       phone: normalizeDriverPhone(phone) || phone,
+      password,
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok || payload?.ok === false) {
+    const error = new Error(payload?.message || `Error del servidor (${response.status})`);
+    error.httpStatus = response.status;
+    throw error;
+  }
+
+  return payload;
+}
+
+export async function provisionDriverEmailAuth({ driverId, email, password }) {
+  const response = await fetch(`${DASHBOARD_URL}/api/auth/driver-email/provision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      driverId,
+      email: normalizeLoginEmail(email),
       password,
     }),
   });

@@ -1,5 +1,5 @@
 /**
- * Estilo híbrido MapLibre: base raster Carto + flechas de sentido único (OSM).
+ * Estilo híbrido MapLibre: base raster OSM + flechas de sentido único.
  * Las flechas usan tiles vectoriales OpenFreeMap / OpenMapTiles (capa transportation).
  */
 
@@ -8,12 +8,12 @@ const OPENFREEMAP_PLANET = 'https://tiles.openfreemap.org/planet';
 const OPENFREEMAP_SPRITE = 'https://tiles.openfreemap.org/sprites/ofm_f384/ofm';
 const OPENFREEMAP_GLYPHS = 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf';
 
-const CARTO_SUBDOMAINS = ['a', 'b', 'c', 'd'];
+const OSM_RASTER_SUBDOMAINS = ['a', 'b', 'c'];
+const OSM_RASTER_ATTRIBUTION = '© OpenStreetMap contributors';
 
-function cartoTiles(style, { retina = false } = {}) {
-  const suffix = retina ? '@2x' : '';
-  return CARTO_SUBDOMAINS.map(
-    (sub) => `https://${sub}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}${suffix}.png`,
+function osmRasterTiles() {
+  return OSM_RASTER_SUBDOMAINS.map(
+    (sub) => `https://${sub}.tile.openstreetmap.org/{z}/{x}/{y}.png`,
   );
 }
 
@@ -137,7 +137,7 @@ function buildOneWayLayers(emphasizeOneway = false) {
 }
 
 /**
- * Carto Voyager + flechas OSM (OpenFreeMap vector).
+ * Raster OSM (sin API key) + flechas OSM (OpenFreeMap vector).
  * @param {{ maxZoom?: number }} [options]
  */
 function buildHybridMapStyle(options = {}) {
@@ -149,11 +149,11 @@ function buildHybridMapStyle(options = {}) {
     sprite: OPENFREEMAP_SPRITE,
     glyphs: OPENFREEMAP_GLYPHS,
     sources: {
-      'carto-voyager': {
+      'osm-raster': {
         type: 'raster',
-        tiles: cartoTiles('voyager'),
+        tiles: osmRasterTiles(),
         tileSize: 256,
-        attribution: '© OpenStreetMap contributors © CARTO',
+        attribution: OSM_RASTER_ATTRIBUTION,
         maxzoom: maxZoom,
       },
       openmaptiles: {
@@ -170,7 +170,7 @@ function buildHybridMapStyle(options = {}) {
       {
         id: 'osm-tiles',
         type: 'raster',
-        source: 'carto-voyager',
+        source: 'osm-raster',
         minzoom: 0,
         maxzoom: maxZoom,
       },

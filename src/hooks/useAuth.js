@@ -60,14 +60,16 @@ export const useAuth = (options = {}) => {
   } = useAuthStore();
 
   const fetchDriverProfile = useCallback(async (userId) => {
+    if (!userId) return null;
     try {
       const { data, error } = await supabase
         .from('drivers')
         .select('*')
-        .eq('user_id', userId)
-        .single();
+        .or(`user_id.eq.${userId},email_user_id.eq.${userId}`)
+        .maybeSingle();
 
       if (error) throw error;
+      if (!data?.id) return null;
 
       let profile = { ...data };
 
@@ -254,6 +256,12 @@ export const useAuth = (options = {}) => {
         } catch (_) {}
       }
       clearTokenRefreshSub();
+      try {
+        const { clearDriverGpsContext } = await import('../lib/driverGpsPublish');
+        const { stopBackgroundLocationUpdates } = await import('../tasks/backgroundLocationTask');
+        await clearDriverGpsContext();
+        await stopBackgroundLocationUpdates();
+      } catch (_) {}
       await supabase.auth.signOut();
       logoutStore();
       Toast.show({

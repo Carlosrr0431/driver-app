@@ -2,6 +2,7 @@ import { decodePolyline } from '../utils/polyline';
 import { classifyStepOneway } from '../utils/routeOneway';
 import {
   buildRouteCacheKey,
+  hasInFlightCacheKey,
   routeCache,
   withCachedFetch,
 } from '../lib/geoCache';
@@ -120,6 +121,37 @@ async function fetchOsrmRoute(from, to) {
 }
 
 /**
+ * Polilínea rápida sin turn-by-turn. Sirve para pintar el mapa mientras
+ * llega la ruta completa con steps.
+ */
+async function fetchOsrmOverview(from, to) {
+  const coordinates = `${from.lng},${from.lat};${to.lng},${to.lat}`;
+  const params = new URLSearchParams({
+    steps: 'false',
+    overview: 'simplified',
+    geometries: 'polyline',
+    annotations: 'false',
+  });
+
+  const route = await fetchOsrmJson(coordinates, params);
+  const leg = route?.legs?.[0];
+  if (!leg) {
+    throw new Error('Ruta sin tramos');
+  }
+
+  const polylineCoords = route.geometry ? decodePolyline(route.geometry) : [];
+  return {
+    distance: formatMeters(leg.distance || 0),
+    duration: formatSeconds(leg.duration || 0),
+    distanceValue: Math.round(Number(leg.distance) || 0),
+    durationValue: Math.round(Number(leg.duration) || 0),
+    polyline: route.geometry || '',
+    steps: [],
+    polylineCoords,
+  };
+}
+
+/**
  * Solo distancia/duración — sin geometría ni pasos (tarifas, previews).
  */
 async function fetchOsrmSummary(from, to) {
@@ -165,6 +197,37 @@ export async function getDirections(origin, destination, { bypassCache = false }
 
   const cacheKey = buildRouteCacheKey(from, to);
   return withCachedFetch(routeCache, cacheKey, () => fetchOsrmRoute(from, to));
+}
+
+export function peekCachedDirections(origin, destination) {
+  const from = toLatLng(origin);
+  const to = toLatLng(destination);
+  if (![from.lat, from.lng, to.lat, to.lng].every(Number.isFinite)) return undefined;
+  return routeCache.get(buildRouteCacheKey(from, to));
+}
+
+export function isDirectionsInFlight(origin, destination) {
+  const from = toLatLng(origin);
+  const to = toLatLng(destination);
+  if (![from.lat, from.lng, to.lat, to.lng].every(Number.isFinite)) return false;
+  return hasInFlightCacheKey(buildRouteCacheKey(from, to));
+}
+
+/**
+ * Polilínea liviana, sin cachear como ruta guiada (los steps van aparte).
+ */
+export async function getDirectionsOverview(origin, destination) {
+  const from = toLatLng(origin);
+  const to = toLatLng(destination);
+  if (![from.lat, from.lng, to.lat, to.lng].every(Number.isFinite)) {
+    throw new Error('Coordenadas de ruta inválidas');
+  }
+  return fetchOsrmOverview(from, to);
+}
+
+/** Precarga fire-and-forget. Deduplica con getDirections vía cache/inFlight. */
+export function prefetchNavigationRoute(origin, destination) {
+  return getDirections(origin, destination).catch(() => null);
 }
 
 /**

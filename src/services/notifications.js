@@ -159,9 +159,26 @@ export const registerForPushNotifications = async (driverId) => {
   }
 };
 
+function buildLocalNotificationIdentifier(data = {}) {
+  const type = String(data?.type || '').trim();
+  const tripId = String(data?.tripId || data?.trip_id || '').trim();
+  const messageId = String(data?.messageId || data?.message_id || '').trim();
+  if (type && tripId) return `${type}:${tripId}`;
+  if (type && messageId) return `${type}:${messageId}`;
+  if (tripId) return `trip:${tripId}`;
+  if (messageId) return `message:${messageId}`;
+  return undefined;
+}
+
 export const sendLocalNotification = async (title, body, data = {}) => {
   try {
+    const identifier = buildLocalNotificationIdentifier(data);
+    // Si ya hay una con el mismo id, la reemplazamos (evita duplicados en bandeja).
+    if (identifier) {
+      await Notifications.dismissNotificationAsync(identifier).catch(() => {});
+    }
     await Notifications.scheduleNotificationAsync({
+      identifier,
       content: {
         title,
         body,
@@ -203,6 +220,68 @@ export const sendPaymentSuccessNotification = async (formattedAmount) => {
   } catch (e) {
     console.warn('Payment success notification failed:', e);
   }
+};
+
+export const extractNotificationData = (remoteMessage) => {
+  const data = remoteMessage?.data && typeof remoteMessage.data === 'object'
+    ? { ...remoteMessage.data }
+    : {};
+
+  if (typeof data.trip === 'string') {
+    try {
+      data.trip = JSON.parse(data.trip);
+    } catch {
+      // El trip compactado a veces no es JSON válido; se ignora.
+    }
+  }
+
+  return data;
+};
+
+export const subscribeToForegroundMessages = (handler) => {
+  const messaging = getMessagingModule();
+  if (!messaging) {
+    return { remove: () => {} };
+  }
+
+  const unsubscribe = messaging().onMessage(handler);
+  return {
+    remove: () => {
+      try {
+        unsubscribe();
+      } catch (e) {
+        console.warn('Foreground message unsubscribe failed:', e);
+      }
+    },
+  };
+};
+
+export const subscribeToNotificationOpen = (handler) => {
+  const messaging = getMessagingModule();
+  if (!messaging) {
+    return { remove: () => {} };
+  }
+
+  const unsubscribeOpened = messaging().onNotificationOpenedApp(handler);
+
+  messaging()
+    .getInitialNotification()
+    .then((remoteMessage) => {
+      if (remoteMessage) handler(remoteMessage);
+    })
+    .catch((error) => {
+      console.warn('getInitialNotification failed:', error?.message || error);
+    });
+
+  return {
+    remove: () => {
+      try {
+        unsubscribeOpened();
+      } catch (e) {
+        console.warn('Notification open unsubscribe failed:', e);
+      }
+    },
+  };
 };
 
 /**

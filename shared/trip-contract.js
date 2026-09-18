@@ -49,10 +49,18 @@ const TRIP_STATUSES = ['pending', 'accepted', 'going_to_pickup', 'in_progress', 
 // ── Notas embebidas conocidas ──────────────────────────────────────────────────
 const NOTES_MARKERS = {
   APPROACH_ONLY: '[APPROACH_ONLY]',
+  WHATSAPP: '[WHATSAPP]',
+  DASHBOARD: '[DASHBOARD]',
+  PASSENGER_APP: '[PASSENGER_APP]',
   FINAL_DEST_JSON_PREFIX: '[FINAL_DEST_JSON:',
   PICKUP_JSON_PREFIX: '[PICKUP_JSON:',
   WAYPOINTS_JSON_PREFIX: '[WAYPOINTS_JSON:',
+  STREET_HAIL: '[STREET_HAIL]',
 };
+
+/** Destino placeholder hasta que el chofer elija dirección o viaje libre. */
+const STREET_HAIL_PENDING_DESTINATION = 'A confirmar';
+const STREET_HAIL_PASSENGER_NAME = 'Pasajero en calle';
 
 /**
  * Crea un objeto trip de ejemplo que cumple el contrato.
@@ -116,7 +124,103 @@ function isApproachOnlyTrip(trip) {
 }
 
 function isPassengerAppTrip(trip) {
-  return String(trip?.notes || '').includes('[PASSENGER_APP]');
+  return String(trip?.notes || '').includes(NOTES_MARKERS.PASSENGER_APP);
+}
+
+function isStreetHailTrip(trip) {
+  return String(trip?.notes || '').includes(NOTES_MARKERS.STREET_HAIL);
+}
+
+function buildStreetHailNotes(origin = {}) {
+  const lines = [
+    NOTES_MARKERS.STREET_HAIL,
+    'Viaje tomado en calle. Destino a definir.',
+  ];
+  const pickupMarker = buildPickupJsonMarker(origin);
+  if (pickupMarker) lines.push(pickupMarker);
+  return lines.join('\n');
+}
+
+/**
+ * Payload de INSERT para un viaje en calle (pasajero ya a bordo).
+ * Origen = GPS del chofer. Destino pendiente → needsDriverDestinationChoice.
+ */
+function buildStreetHailTripInsert({
+  driverId,
+  originAddress,
+  originLat,
+  originLng,
+  nowIso,
+} = {}) {
+  const lat = Number(originLat);
+  const lng = Number(originLng);
+  const address = String(originAddress || '').trim()
+    || (Number.isFinite(lat) && Number.isFinite(lng)
+      ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+      : '');
+  const now = nowIso || new Date().toISOString();
+
+  return {
+    driver_id: driverId,
+    passenger_name: STREET_HAIL_PASSENGER_NAME,
+    passenger_phone: null,
+    origin_address: address,
+    origin_lat: Number.isFinite(lat) ? lat : null,
+    origin_lng: Number.isFinite(lng) ? lng : null,
+    destination_address: STREET_HAIL_PENDING_DESTINATION,
+    destination_lat: null,
+    destination_lng: null,
+    status: 'accepted',
+    dispatch_status: 'accepted',
+    notes: buildStreetHailNotes({ address, lat, lng }),
+    assigned_at: now,
+    accepted_at: now,
+    pickup_at: now,
+    wa_context: { source: 'street_hail', dispatch_excluded_driver_ids: [] },
+  };
+}
+
+/**
+ * Viaje pedido por WhatsApp (no app de pasajeros ni panel).
+ * Marcador explícito [WHATSAPP], o APPROACH_ONLY sin [PASSENGER_APP]/[DASHBOARD].
+ */
+function isWhatsAppTrip(trip) {
+  const notes = String(trip?.notes || '');
+  if (
+    notes.includes(NOTES_MARKERS.PASSENGER_APP)
+    || notes.includes(NOTES_MARKERS.DASHBOARD)
+    || notes.includes(NOTES_MARKERS.STREET_HAIL)
+  ) {
+    return false;
+  }
+  if (notes.includes(NOTES_MARKERS.WHATSAPP)) return true;
+  if (isApproachOnlyTrip(trip)) return true;
+  return getScheduledTripSource(trip) === 'whatsapp';
+}
+
+/**
+ * Origen del viaje programado: 'passenger_app' | 'whatsapp' | null.
+ * WhatsApp no marca [PASSENGER_APP]; la app marca [SCHEDULED_SOURCE] passenger_app.
+ */
+function getScheduledTripSource(trip) {
+  const notes = String(trip?.notes || '');
+  const sourceMatch = notes.match(/\[SCHEDULED_SOURCE\]\s*([a-z_]+)/i);
+  if (sourceMatch?.[1]) return sourceMatch[1].toLowerCase();
+
+  const isScheduled = String(trip?.status || '') === 'scheduled'
+    || Boolean(trip?.scheduled_for)
+    || notes.includes('[SCHEDULED_FOR]');
+  if (!isScheduled) return null;
+
+  return isPassengerAppTrip(trip) ? 'passenger_app' : 'whatsapp';
+}
+
+function isPassengerAppScheduledTrip(trip) {
+  return getScheduledTripSource(trip) === 'passenger_app';
+}
+
+function isWhatsAppScheduledTrip(trip) {
+  return getScheduledTripSource(trip) === 'whatsapp';
 }
 
 function isCoordLikeAddress(address) {
@@ -226,6 +330,10 @@ function cleanTripNotesForDriverDisplay(notes) {
   result = result
     .replace(/\[APPROACH_ONLY\]/gi, '')
     .replace(/\[PASSENGER_APP\]/gi, '')
+    .replace(/\[WHATSAPP\]/gi, '')
+    .replace(/\[DASHBOARD\]/gi, '')
+    .replace(/\[STREET_HAIL\]/gi, '')
+    .replace(/Viaje tomado en calle[^.]*\./gi, '')
     .replace(/Creado autom[aá]ticamente desde WhatsApp[^.]*\./gi, '')
     .replace(/chofer\s*->\s*retiro pasajero[^.]*\./gi, '')
     .replace(/Destino final:[^.]*\./gi, '')
@@ -386,13 +494,14 @@ function hasReadablePickupInOrigin(trip = {}) {
  * Al asignar chofer: no pisar origin_* si ya hay retiro legible o PICKUP_JSON en notes.
  */
 function shouldPreservePickupOriginOnAssign(trip = {}) {
+  if (isStreetHailTrip(trip)) return true;
   if (isPassengerAppTrip(trip)) return true;
   if (notesContainPickupJson(trip?.notes)) return true;
   return hasReadablePickupInOrigin(trip);
 }
 
 function resolveTripPickupCoords(trip = {}) {
-  if (usesPassengerAppPickupSchema(trip)) {
+  if (isStreetHailTrip(trip) || usesPassengerAppPickupSchema(trip)) {
     return resolvePassengerAppPickupCoords(trip);
   }
 
@@ -438,17 +547,19 @@ function resolveTripFinalDestCoords(trip = {}) {
     }
   }
 
-  const destLat = Number(trip.destination_lat);
-  const destLng = Number(trip.destination_lng);
+  const destLat = trip.destination_lat == null ? NaN : Number(trip.destination_lat);
+  const destLng = trip.destination_lng == null ? NaN : Number(trip.destination_lng);
   const destAddress = String(trip.destination_address || '').trim();
   if (!destAddress || !Number.isFinite(destLat) || !Number.isFinite(destLng)) {
     return null;
   }
 
   const candidate = { address: destAddress, lat: destLat, lng: destLng };
-  const shouldIgnoreDuplicatePickup = isApproachOnlyTrip(trip) || isPassengerAppTrip(trip);
+  const shouldIgnoreDuplicatePickup = isApproachOnlyTrip(trip)
+    || isPassengerAppTrip(trip)
+    || isStreetHailTrip(trip);
   if (shouldIgnoreDuplicatePickup) {
-    const pickup = isPassengerAppTrip(trip)
+    const pickup = (isPassengerAppTrip(trip) || isStreetHailTrip(trip))
       ? resolvePassengerAppPickupCoords(trip)
       : resolveWhatsappApproachPickupCoords(trip);
     if (locationsMatch(pickup, candidate)) {
@@ -551,11 +662,18 @@ module.exports = {
   DRIVER_APP_READS_FIELDS,
   TRIP_STATUSES,
   NOTES_MARKERS,
+  STREET_HAIL_PENDING_DESTINATION,
+  STREET_HAIL_PASSENGER_NAME,
   makeTripPayload,
   makeRealtimeInsertPayload,
   getMissingRequiredFields,
   isApproachOnlyTrip,
   isPassengerAppTrip,
+  isStreetHailTrip,
+  isWhatsAppTrip,
+  getScheduledTripSource,
+  isPassengerAppScheduledTrip,
+  isWhatsAppScheduledTrip,
   isCoordLikeAddress,
   hasReadablePickupInOrigin,
   shouldPreservePickupOriginOnAssign,
@@ -569,6 +687,8 @@ module.exports = {
   extractPickupFromNotes,
   buildFinalDestJsonMarker,
   buildPickupJsonMarker,
+  buildStreetHailNotes,
+  buildStreetHailTripInsert,
   notesContainFinalDestJson,
   notesContainPickupJson,
   normalizeWaypointList,

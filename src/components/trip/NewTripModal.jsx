@@ -10,7 +10,6 @@ import {
   View,
   Text,
   Modal,
-  Linking,
   Vibration,
   TouchableOpacity,
   Pressable,
@@ -40,12 +39,14 @@ import { TRIP_ACCEPT_TIMEOUT, CANCEL_REASONS } from '../../utils/constants';
 import {
   isApproachOnlyTrip,
   isPassengerAppTrip,
+  isWhatsAppTrip,
   resolveTripPickupCoords,
   resolveTripFinalDestCoords,
   resolveTripWaypoints,
   cleanTripNotesForDriverDisplay,
 } from '../../../shared/trip-contract';
 import { TripRouteTimeline } from './TripRouteTimeline';
+import { WhatsAppSourceBadge } from './WhatsAppTripThread';
 import { useResponsive } from '../../hooks/useResponsive';
 import { CONTENT_MAX_WIDTH } from '../../utils/responsive';
 
@@ -171,6 +172,10 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
         const result = await onAccept(trip?.id);
         if (!result?.success) {
           setIsAccepting(false);
+          decidedRef.current = false;
+          if (result?.cancelled || result?.unavailable) {
+            return;
+          }
           Alert.alert(
             result?.isTimeout ? 'Tiempo agotado' : 'Error al aceptar',
             result?.isTimeout
@@ -206,6 +211,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
   const isUrgent = countdown <= 10;
   const approachOnly = isApproachOnlyTrip(trip);
   const passengerAppTrip = isPassengerAppTrip(trip);
+  const whatsAppTrip = isWhatsAppTrip(trip);
   const pickupResolved = resolveTripPickupCoords(trip);
   const finalDestResolved = resolveTripFinalDestCoords(trip);
   const tripWaypoints = resolveTripWaypoints(trip);
@@ -346,20 +352,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                       </Text>
                     </View>
                   ) : null}
-                  {approachOnly && !passengerAppTrip ? (
-                    <View style={{
-                      backgroundColor: '#25D36620',
-                      paddingHorizontal: 8,
-                      paddingVertical: 3,
-                      borderRadius: 8,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 3,
-                    }}>
-                      <MaterialCommunityIcons name="whatsapp" size={13} color="#25D366" />
-                      <Text style={{ color: '#25D366', fontSize: 11, fontFamily: 'Inter_600SemiBold' }}>WA</Text>
-                    </View>
-                  ) : null}
+                  {whatsAppTrip ? <WhatsAppSourceBadge compact /> : null}
                   {passengerAppTrip ? (
                     <View style={{
                       backgroundColor: `${colors.primary}15`,
@@ -428,23 +421,6 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                     {trip.passenger_name || 'Pasajero'}
                   </Text>
                 </View>
-                {/* Contact quick-actions */}
-                {trip?.passenger_phone && (
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <TouchableOpacity
-                      onPress={() => Linking.openURL(`tel:${trip.passenger_phone}`)}
-                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: `${colors.success}18`, alignItems: 'center', justifyContent: 'center' }}
-                    >
-                      <MaterialCommunityIcons name="phone" size={18} color={colors.success} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => Linking.openURL(`whatsapp://send?phone=${trip.passenger_phone.replace(/\D/g, '')}`)}
-                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#25D36620', alignItems: 'center', justifyContent: 'center' }}
-                    >
-                      <MaterialCommunityIcons name="whatsapp" size={18} color="#25D366" />
-                    </TouchableOpacity>
-                  </View>
-                )}
               </View>
 
               {isAccumulatedTrip ? (
@@ -516,7 +492,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                     marginLeft: 4,
                     lineHeight: 15,
                   }}>
-                    Orden: recogida → paradas numeradas → destino final
+                    Orden: origen → paradas numeradas → destino final
                   </Text>
                 ) : null}
               </View>

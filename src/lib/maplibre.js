@@ -85,7 +85,7 @@ const CameraCompat = forwardRef(function CameraCompat(props, ref) {
     const api = {
     /** v10: setCamera({ centerCoordinate, zoomLevel, heading, pitch, animationDuration, animationMode }) */
     setCamera(options = {}) {
-      if (!innerRef.current || !mountedRef.current) return;
+      if (!innerRef.current || !mountedRef.current) return false;
       const center = options.centerCoordinate ?? options.center;
       const zoom = options.zoomLevel ?? options.zoom;
       const bearing = options.heading ?? options.bearing;
@@ -101,12 +101,17 @@ const CameraCompat = forwardRef(function CameraCompat(props, ref) {
       if (options.padding !== undefined) payload.padding = options.padding;
       if (duration > 0) payload.duration = duration;
 
-      if (duration === 0) {
-        innerRef.current.jumpTo(payload);
-      } else if (mode === 'flyTo') {
-        innerRef.current.flyTo(payload);
-      } else {
-        innerRef.current.easeTo(payload);
+      try {
+        if (duration === 0) {
+          innerRef.current.jumpTo(payload);
+        } else if (mode === 'flyTo') {
+          innerRef.current.flyTo(payload);
+        } else {
+          innerRef.current.easeTo(payload);
+        }
+        return true;
+      } catch {
+        return false;
       }
     },
 

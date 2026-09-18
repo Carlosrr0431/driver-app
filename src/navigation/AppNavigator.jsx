@@ -2,10 +2,13 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { NavigationContainer } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/authStore';
 import { useGpsSimulation } from '../hooks/useGpsSimulation';
 import { useNavigationPersistence } from '../hooks/useNavigationPersistence';
+import { useAppResumeHydration } from '../hooks/useAppResumeHydration';
+import { AppResumeSkeleton } from '../components/ui/AppResumeSkeleton';
 import AuthNavigator from './AuthNavigator';
 import MainNavigator from './MainNavigator';
 import { colors } from '../theme/colors';
@@ -14,6 +17,14 @@ import { navigationRef } from './navigationRef';
 function GpsSimulationBridge() {
   useGpsSimulation();
   return null;
+}
+
+function AppResumeBridge() {
+  const queryClient = useQueryClient();
+  const visible = useAppResumeHydration({
+    hydrate: () => queryClient.invalidateQueries({ refetchType: 'all' }),
+  });
+  return <AppResumeSkeleton visible={visible} />;
 }
 
 const AppNavigator = () => {
@@ -64,10 +75,11 @@ const AppNavigator = () => {
           )}
         </NavigationContainer>
       ) : null}
+      <AppResumeBridge />
       {showLoadingOverlay ? (
         <View style={styles.loadingOverlay} pointerEvents="auto">
           <Image
-            source={require('../../assets/adaptive-icon.png')}
+            source={require('../../assets/icon.png')}
             style={styles.logo}
             contentFit="contain"
           />
@@ -93,8 +105,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logo: {
-    width: 140,
-    height: 140,
+    width: 280,
+    height: 280,
   },
   splashFooter: {
     position: 'absolute',

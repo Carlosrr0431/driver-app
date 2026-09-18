@@ -3,7 +3,9 @@ import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-quer
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { useTripStore } from '../stores/tripStore';
+import { useLocationStore } from '../stores/locationStore';
 import { TRIP_STATUS, PAGINATION_LIMIT, TRIP_ACCEPT_TIMEOUT } from '../utils/constants';
+import { isLiveDriverTrip } from '../utils/activeTripNavigation';
 import Toast from 'react-native-toast-message';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { notifyTripAcceptedTransition, notifyPassengerTripAccepted } from '../services/tripTransition';
@@ -18,6 +20,13 @@ import {
   isApproachOnlyTrip,
   resolveTripPickupCoords,
 } from '../../shared/trip-contract';
+import {
+  applyStreetHailStart,
+  createStreetHailTrip as requestStreetHailTrip,
+} from '../services/streetHailTrip';
+import { prefetchDriverToPickupRoute } from '../services/navigationRoutePrefetch';
+import { isAcceptedOfferStatus, isCancelledTripStatus } from '../utils/pendingTripRealtime';
+import { reverseGeocode } from '../services/nominatim';
 import {
   resolveCommissionOverdue,
   isDriverDispatchBlocked,
@@ -71,6 +80,7 @@ export const useTrips = () => {
     clearActiveTrip,
     clearPendingTrip,
     updateActiveTrip,
+    setDriverFlowStep,
   } = useTripStore();
   const queryClient = useQueryClient();
 
@@ -93,12 +103,13 @@ export const useTrips = () => {
           .maybeSingle();
 
         if (error) throw error;
-        if (data) {
+        if (data && isLiveDriverTrip(data)) {
           const currentActiveTrip = useTripStore.getState().activeTrip;
           const enriched = enrichApproachTrip(data, currentActiveTrip?.id === data.id ? currentActiveTrip : null);
           setActiveTrip(enriched);
+          return data;
         }
-        return data;
+        return null;
       },
       enabled: !!driver?.id,
     });
@@ -344,18 +355,32 @@ export const useTrips = () => {
 
       if (error) throw error;
 
-      if (!data) {
+      if (!data || !isAcceptedOfferStatus(data.status) || isCancelledTripStatus(data.status)) {
         clearPendingTrip();
+        let cancelled = isCancelledTripStatus(data?.status);
+        if (!cancelled) {
+          try {
+            const { data: latest } = await supabase
+              .from('trips')
+              .select('status')
+              .eq('id', tripId)
+              .maybeSingle();
+            cancelled = isCancelledTripStatus(latest?.status);
+          } catch (_) {}
+        }
         Toast.show({
-          type: 'error',
-          text1: 'Tiempo agotado',
-          text2: 'El viaje ya no está disponible para aceptar.',
+          type: cancelled ? 'info' : 'error',
+          text1: cancelled ? 'Viaje cancelado' : 'Viaje no disponible',
+          text2: cancelled
+            ? 'El viaje fue cancelado y ya no se puede aceptar.'
+            : 'El viaje ya no está disponible para aceptar.',
         });
-        return { success: false, isTimeout: true };
+        return { success: false, unavailable: true, cancelled };
       }
 
       const enrichedActiveTrip = enrichApproachTrip(data, pendingTripSnapshot?.id === tripId ? pendingTripSnapshot : null);
       setActiveTrip(enrichedActiveTrip);
+      prefetchDriverToPickupRoute(enrichedActiveTrip, useLocationStore.getState().currentLocation);
       clearPendingTrip();
       queryClient.invalidateQueries({ queryKey: ['activeTrip'] });
 
@@ -540,6 +565,63 @@ export const useTrips = () => {
     }
   }, [driver?.id, clearPendingTrip]);
 
+  const releaseAssignedTrip = useCallback(async (tripId) => {
+    const normalizedTripId = String(tripId || '').trim();
+    if (!normalizedTripId || !driver?.id) {
+      return { success: false, error: new Error('trip_or_driver_invalid') };
+    }
+
+    const finishRelease = async () => {
+      clearActiveTrip();
+      queryClient.setQueryData(['activeTrip', driver.id], null);
+      try {
+        await supabase.from('drivers').update({ is_available: true }).eq('id', driver.id);
+      } catch (availabilityError) {
+        console.warn('Error setting driver available:', availabilityError);
+      }
+      Toast.show({
+        type: 'info',
+        text1: 'Viaje liberado',
+        text2: 'Se buscará otro chofer disponible.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['activeTrip'] });
+      queryClient.invalidateQueries({ queryKey: ['todayStats'] });
+      return { success: true };
+    };
+
+    try {
+      const apiResult = await rejectTripViaDashboard(
+        normalizedTripId,
+        'Cancelado por el chofer',
+        { driverId: driver.id, timeoutMs: 20000 },
+      );
+      if (apiResult.success) {
+        return finishRelease();
+      }
+    } catch (apiError) {
+      const released = await verifyTripAlreadyReleased(normalizedTripId, driver.id);
+      if (released) {
+        return finishRelease();
+      }
+      const details = String(apiError?.message || '').trim();
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: details.includes('row-level security')
+          ? 'No se pudo liberar el viaje. Contactá al operador si persiste.'
+          : (details || 'No se pudo buscar otro chofer. Intentá de nuevo.'),
+      });
+      return { success: false, error: apiError };
+    }
+
+    Toast.show({
+      type: 'error',
+      text1: 'Error',
+      text2: 'No se pudo buscar otro chofer. Intentá de nuevo.',
+    });
+    return { success: false };
+  }, [driver?.id, clearActiveTrip, queryClient]);
+
   const updateTripStatus = useCallback(async (tripId, status, extraFields = {}) => {
     try {
       const updates = { status, ...extraFields };
@@ -614,11 +696,14 @@ export const useTrips = () => {
 
       if (error) throw error;
 
-      if (status === TRIP_STATUS.COMPLETED) {
+      if (status === TRIP_STATUS.COMPLETED || status === TRIP_STATUS.CANCELLED) {
         clearActiveTrip();
+        if (driver?.id) {
+          queryClient.setQueryData(['activeTrip', driver.id], null);
+        }
         // Limpieza en segundo plano: no bloquear la UI del chofer al finalizar.
         void (async () => {
-          if (driver?.id) {
+          if (driver?.id && (status === TRIP_STATUS.COMPLETED || status === TRIP_STATUS.CANCELLED)) {
             try {
               await supabase.from('drivers').update({ is_available: true }).eq('id', driver.id);
             } catch (availabilityError) {
@@ -647,6 +732,101 @@ export const useTrips = () => {
     }
   }, [driver?.id]);
 
+  const createStreetHailTrip = useCallback(async ({
+    lat,
+    lng,
+    address,
+    destination = null,
+    startNow = false,
+  } = {}) => {
+    try {
+      if (!driver?.id) {
+        Toast.show({ type: 'error', text1: 'Error', text2: 'No se encontró sesión de chofer' });
+        return { success: false, error: new Error('driver_not_ready') };
+      }
+
+      const store = useTripStore.getState();
+      if (isLiveDriverTrip(store.activeTrip)) {
+        Toast.show({ type: 'error', text1: 'Viaje activo', text2: 'Terminá el viaje actual para tomar uno en calle.' });
+        return { success: false, error: new Error('driver_busy') };
+      }
+      if (store.pendingTrip?.id) {
+        Toast.show({
+          type: 'error',
+          text1: 'Tenés un viaje asignado',
+          text2: 'Aceptá o rechazá la solicitud antes de tomar un viaje en calle.',
+        });
+        return { success: false, error: new Error('pending_trip') };
+      }
+
+      const originLat = Number(lat);
+      const originLng = Number(lng);
+      if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
+        Toast.show({ type: 'error', text1: 'Sin GPS', text2: 'Esperá a que se fije tu ubicación.' });
+        return { success: false, error: new Error('origin_required') };
+      }
+
+      let originAddress = String(address || '').trim();
+      if (!originAddress) {
+        try {
+          originAddress = await reverseGeocode(originLat, originLng);
+        } catch {
+          originAddress = `${originLat.toFixed(5)}, ${originLng.toFixed(5)}`;
+        }
+      }
+
+      const result = await requestStreetHailTrip({
+        originAddress,
+        originLat,
+        originLng,
+      });
+      let trip = result?.trip;
+      if (!trip?.id) {
+        throw new Error('create_failed');
+      }
+
+      if (startNow) {
+        try {
+          trip = await applyStreetHailStart({
+            tripId: trip.id,
+            destination,
+            notes: trip.notes,
+          });
+          const hasDest = Boolean(String(destination?.address || '').trim())
+            && Number.isFinite(Number(destination?.lat))
+            && Number.isFinite(Number(destination?.lng));
+          setDriverFlowStep('in_progress', trip.id, { freeRide: !hasDest });
+        } catch (startError) {
+          const hasDest = Boolean(String(destination?.address || '').trim());
+          setDriverFlowStep(hasDest ? 'set_destination' : 'choose_dest_mode', trip.id);
+          setActiveTrip(trip);
+          queryClient.setQueryData(['activeTrip', driver.id], trip);
+          Toast.show({
+            type: 'error',
+            text1: 'Atención',
+            text2: 'El viaje quedó creado. Tocá Empezar viaje para continuar.',
+          });
+          return { success: true, data: trip };
+        }
+      } else {
+        setDriverFlowStep('choose_dest_mode', trip.id);
+      }
+      setActiveTrip(trip);
+      queryClient.setQueryData(['activeTrip', driver.id], trip);
+      queryClient.invalidateQueries({ queryKey: ['activeTrip'] });
+
+      return { success: true, data: trip };
+    } catch (error) {
+      const code = String(error?.code || error?.message || '');
+      let text2 = 'No se pudo iniciar el viaje en calle.';
+      if (code === 'driver_busy') text2 = 'Ya tenés un viaje activo.';
+      else if (code === 'driver_blocked') text2 = 'Tu cuenta no puede tomar viajes ahora.';
+      else if (code === 'origin_required') text2 = 'No hay ubicación GPS.';
+      Toast.show({ type: 'error', text1: 'Error', text2 });
+      return { success: false, error };
+    }
+  }, [driver?.id, queryClient, setActiveTrip, setDriverFlowStep]);
+
   return {
     useActiveTrip,
     useTripHistory,
@@ -654,6 +834,8 @@ export const useTrips = () => {
     useCommissionBalance,
     acceptTrip,
     rejectTrip,
+    releaseAssignedTrip,
     updateTripStatus,
+    createStreetHailTrip,
   };
 };

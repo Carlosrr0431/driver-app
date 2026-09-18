@@ -43,6 +43,7 @@ function resetStore() {
     tripStartTime: null,
     tripDistanceKm: 0,
     lastTrackingLocation: null,
+    ignoredTripId: null,
   });
 }
 
@@ -145,16 +146,14 @@ describe('Ciclo de vida del viaje — pending → completed', () => {
 // Grupo 3 — Cancelación
 // ─────────────────────────────────────────────────────────────────────────────
 describe('Cancelación del viaje', () => {
-  it('UPDATE cancelled actualiza el status en el store', () => {
+  it('UPDATE cancelled limpia el viaje activo', () => {
     const trip = contract.makeTripPayload();
     getState().setActiveTrip({ ...trip, status: TRIP_STATUS.ACCEPTED });
 
-    // Simular el UPDATE de Supabase Realtime (payload.new)
-    const updatedTrip = { ...trip, status: TRIP_STATUS.CANCELLED, cancel_reason: 'Pasajero no encontrado' };
-    getState().updateActiveTrip({ status: updatedTrip.status, cancel_reason: updatedTrip.cancel_reason });
+    getState().clearActiveTrip();
 
-    expect(getState().activeTrip.status).toBe(TRIP_STATUS.CANCELLED);
-    expect(getState().activeTrip.cancel_reason).toBe('Pasajero no encontrado');
+    expect(getState().activeTrip).toBeNull();
+    expect(getState().ignoredTripId).toBe(trip.id);
   });
 
   it('cancelled mientras pending: limpiar el modal', () => {
@@ -166,6 +165,17 @@ describe('Cancelación del viaje', () => {
 
     expect(getState().pendingTrip).toBeNull();
     expect(getState().showNewTripModal).toBe(false);
+  });
+
+  it('no activa un viaje cancelado desde la oferta', () => {
+    const trip = contract.makeTripPayload();
+    getState().setPendingTrip(trip);
+    getState().clearPendingTrip();
+    getState().setActiveTrip({ ...trip, status: TRIP_STATUS.CANCELLED });
+
+    expect(getState().pendingTrip).toBeNull();
+    expect(getState().showNewTripModal).toBe(false);
+    expect(getState().activeTrip).toBeNull();
   });
 });
 

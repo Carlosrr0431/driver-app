@@ -1,6 +1,6 @@
 /**
  * Estilo de mapa inline para MapLibre Native.
- * Base raster Carto Voyager + flechas de sentido único (OpenFreeMap / OSM).
+ * Base raster OSM + flechas de sentido único (OpenFreeMap / OSM).
  */
 
 const { buildHybridMapStyle } = require('../../shared/geo/hybridMapStyle');

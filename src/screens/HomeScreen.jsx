@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, SlideInRight } from 'react-native-reanimated';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, useIsFocused } from '@react-navigation/native';
 import MapLibreGL from '../lib/maplibre';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
@@ -25,25 +25,37 @@ import { useLocationStore } from '../stores/locationStore';
 import { useTrips } from '../hooks/useTrips';
 import { useRealtime } from '../hooks/useRealtime';
 import { useQueryClient } from '@tanstack/react-query';
+import { useAppResumeHydrator } from '../hooks/useAppResumeHydration';
 import { useLocation } from '../hooks/useLocation';
 import { useResponsive } from '../hooks/useResponsive';
 import { supabase } from '../services/supabase';
 import { setDriverOnlineStatus } from '../services/assignedDriverService';
 import { NewTripModal } from '../components/trip/NewTripModal';
+import { StreetHailHomeButton } from '../components/trip/StreetHailHomeButton';
+import { StreetHailSetupSheet } from '../components/trip/StreetHailSetupSheet';
+import { prefetchDriverToPickupRoute } from '../services/navigationRoutePrefetch';
 import { VoiceChatModal } from '../components/VoiceChatModal';
 import { formatPrice, formatDistance } from '../utils/formatters';
 import { DEFAULT_REGION } from '../utils/constants';
+import { resolveLiveTripForNavigation } from '../utils/activeTripNavigation';
+import {
+  HOME_CAMERA_ZOOM,
+  nextHomeFollowCenter,
+  shouldSkipHomeCameraFollow,
+  toCameraLngLat,
+} from '../utils/homeMapCamera';
 import Toast from 'react-native-toast-message';
 import * as Haptics from 'expo-haptics';
 
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
   const { isLandscape, isCompactHeight } = useResponsive();
   const { driver, updateDriver } = useAuthStore();
-  const { pendingTrip, showNewTripModal, activeTrip } = useTripStore();
+  const { pendingTrip, showNewTripModal, activeTrip, ignoredTripId } = useTripStore();
   const currentLocation = useLocationStore((s) => s.currentLocation);
-  const { useTodayStats, useActiveTrip, useCommissionBalance, acceptTrip, rejectTrip, useTripHistory } = useTrips();
+  const { useTodayStats, useActiveTrip, useCommissionBalance, acceptTrip, rejectTrip, useTripHistory, createStreetHailTrip } = useTrips();
   const {
     subscribeToNewTrips,
     subscribeToMessages,
@@ -51,15 +63,25 @@ const HomeScreen = () => {
     unsubscribeAll,
   } = useRealtime();
   const queryClient = useQueryClient();
-  const { requestPermissions, getCurrentPosition, startWatching, stopWatching } = useLocation();
+  const { getCurrentPosition, startWatching, stopWatching } = useLocation();
   const mapRef = useRef(null);
+  const mapReadyRef = useRef(false);
+  const pendingCenterRef = useRef(null);
+  const lastCameraFollowRef = useRef(null);
+  const isHomeFocusedRef = useRef(false);
+  const [followCenter, setFollowCenter] = useState(() => (
+    nextHomeFollowCenter(null, useLocationStore.getState().currentLocation, { force: true })
+  ));
+  const followCenterRef = useRef(followCenter);
   const bottomSheetRef = useRef(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
-  const [sheetIndex, setSheetIndex] = useState(0);
-  const snapPoints = useMemo(() => (
-    isLandscape || isCompactHeight ? ['36%', '88%'] : ['28%', '72%']
-  ), [isLandscape, isCompactHeight]);
+  const [startingStreetHail, setStartingStreetHail] = useState(false);
+  const [streetHailSetup, setStreetHailSetup] = useState(null);
+  const snapPoints = useMemo(() => {
+    if (isLandscape || isCompactHeight) return ['36%', '88%'];
+    return activeTrip ? ['28%', '72%'] : ['36%', '72%'];
+  }, [isLandscape, isCompactHeight, activeTrip]);
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
   const { data: activeTripData } = useActiveTrip();
@@ -68,17 +90,36 @@ const HomeScreen = () => {
 
   const isOnline = driver?.is_available || false;
 
-  const centerMapOnLocation = useCallback((loc, duration = 800) => {
-    if (!loc || !mapRef.current) return;
-    mapRef.current.setCamera({
-      centerCoordinate: [loc.lng, loc.lat],
-      zoomLevel: 15,
-      animationDuration: duration,
-      animationMode: 'easeTo',
-    });
+  const applyHomeCameraTarget = useCallback((loc, options = {}) => {
+    const { force = false, duration = 0 } = options;
+    const next = nextHomeFollowCenter(followCenterRef.current, loc, { force });
+    if (!next) return false;
+    const changed = !followCenterRef.current
+      || followCenterRef.current.lat !== next.lat
+      || followCenterRef.current.lng !== next.lng;
+    followCenterRef.current = next;
+    lastCameraFollowRef.current = next;
+    pendingCenterRef.current = next;
+    if (changed) setFollowCenter(next);
+    if (mapReadyRef.current && mapRef.current) {
+      mapRef.current.setCamera({
+        centerCoordinate: [next.lng, next.lat],
+        zoomLevel: HOME_CAMERA_ZOOM,
+        animationDuration: duration,
+        animationMode: 'easeTo',
+      });
+      pendingCenterRef.current = null;
+    }
+    return true;
   }, []);
 
-  const isHomeFocusedRef = useRef(false);
+  const handleMapReady = useCallback(() => {
+    mapReadyRef.current = true;
+    const loc = pendingCenterRef.current
+      || followCenterRef.current
+      || useLocationStore.getState().currentLocation;
+    if (loc) applyHomeCameraTarget(loc, { force: true, duration: 0 });
+  }, [applyHomeCameraTarget]);
 
   // Solo mientras Home tiene foco: evita que este watcher compita con
   // startNavigationWatch de ActiveTrip (Home queda montado en el stack).
@@ -87,14 +128,14 @@ const HomeScreen = () => {
       if (!driver?.id) return undefined;
 
       isHomeFocusedRef.current = true;
+      lastCameraFollowRef.current = null;
       let cancelled = false;
       const init = async () => {
-        await requestPermissions();
         const loc = await getCurrentPosition({ syncToSupabase: isOnline, force: true });
         if (cancelled) return;
         startWatching({ mapOnly: !isOnline });
         const coords = loc || useLocationStore.getState().currentLocation;
-        if (coords) centerMapOnLocation(coords, 600);
+        if (coords) applyHomeCameraTarget(coords, { force: true, duration: 0 });
       };
       init();
 
@@ -103,7 +144,7 @@ const HomeScreen = () => {
         isHomeFocusedRef.current = false;
         stopWatching();
       };
-    }, [driver?.id, isOnline, requestPermissions, getCurrentPosition, startWatching, stopWatching, centerMapOnLocation]),
+    }, [driver?.id, isOnline, getCurrentPosition, startWatching, stopWatching, applyHomeCameraTarget]),
   );
 
   // Recover any pending trip that arrived while the app was in the background/killed
@@ -134,6 +175,8 @@ const HomeScreen = () => {
     } catch (_) {}
   }, [driver?.id]);
 
+  useAppResumeHydrator(checkPendingTripFromDB);
+
   useEffect(() => {
     if (!driver?.id) return undefined;
 
@@ -157,15 +200,22 @@ const HomeScreen = () => {
     unsubscribeAll,
   ]);
 
-  // Re-check every time the app comes back to foreground
+  // Al volver, el GPS se recentra; el viaje pendiente lo rehidrata el overlay raíz.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        checkPendingTripFromDB();
-      }
+      if (nextState !== 'active') return;
+      if (!isHomeFocusedRef.current || !driver?.id) return;
+      void (async () => {
+        const loc = await getCurrentPosition({
+          syncToSupabase: isOnline,
+          force: true,
+        });
+        const coords = loc || useLocationStore.getState().currentLocation;
+        if (coords) applyHomeCameraTarget(coords, { force: true, duration: 0 });
+      })();
     });
     return () => sub.remove();
-  }, [checkPendingTripFromDB]);
+  }, [applyHomeCameraTarget, driver?.id, getCurrentPosition, isOnline]);
 
   // Fallback liviano: si Realtime/push fallan, revalidar pending asignado periódicamente.
   useEffect(() => {
@@ -176,27 +226,46 @@ const HomeScreen = () => {
     return () => clearInterval(intervalId);
   }, [driver?.id, checkPendingTripFromDB]);
 
+  const hasGpsFix = Number.isFinite(Number(currentLocation?.lat))
+    && Number.isFinite(Number(currentLocation?.lng));
+
+  useEffect(() => {
+    if (!pendingTrip?.id || !hasGpsFix) return;
+    prefetchDriverToPickupRoute(pendingTrip, useLocationStore.getState().currentLocation);
+  }, [
+    pendingTrip?.id,
+    pendingTrip?.origin_lat,
+    pendingTrip?.origin_lng,
+    pendingTrip?.destination_lat,
+    pendingTrip?.destination_lng,
+    hasGpsFix,
+  ]);
+
   // Seguir GPS en Home solo con foco y si el punto se movió lo suficiente.
-  const lastCameraFollowRef = useRef(null);
   useEffect(() => {
     if (!currentLocation || !isHomeFocusedRef.current) return;
-    const last = lastCameraFollowRef.current;
-    if (last) {
-      const dLat = Math.abs(last.lat - currentLocation.lat);
-      const dLng = Math.abs(last.lng - currentLocation.lng);
-      // ~25 m a latitud de Salta
-      if (dLat < 0.00023 && dLng < 0.00025) return;
+    if (shouldSkipHomeCameraFollow(lastCameraFollowRef.current, currentLocation)) {
+      return;
     }
-    lastCameraFollowRef.current = {
-      lat: currentLocation.lat,
-      lng: currentLocation.lng,
-    };
-    centerMapOnLocation(currentLocation, 700);
-  }, [currentLocation?.lat, currentLocation?.lng, centerMapOnLocation]);
+    applyHomeCameraTarget(currentLocation, {
+      duration: lastCameraFollowRef.current ? 400 : 0,
+    });
+  }, [currentLocation?.lat, currentLocation?.lng, applyHomeCameraTarget]);
+
+  useEffect(() => {
+    if (!isFocused) {
+      mapReadyRef.current = false;
+    }
+  }, [isFocused]);
 
   const autoNavTripIdRef = useRef(null);
   useEffect(() => {
-    const tripId = activeTripData?.id ?? null;
+    const liveTrip = resolveLiveTripForNavigation(
+      useTripStore.getState().activeTrip,
+      activeTripData,
+      useTripStore.getState().ignoredTripId,
+    );
+    const tripId = liveTrip?.id ?? null;
     if (!tripId) {
       autoNavTripIdRef.current = null;
       return;
@@ -205,7 +274,20 @@ const HomeScreen = () => {
     if (autoNavTripIdRef.current === tripId) return;
     autoNavTripIdRef.current = tripId;
     navigation.navigate('ActiveTrip');
-  }, [activeTripData?.id, navigation]);
+  }, [activeTripData?.id, activeTripData?.status, ignoredTripId, navigation]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const liveTrip = resolveLiveTripForNavigation(
+        useTripStore.getState().activeTrip,
+        activeTripData,
+        useTripStore.getState().ignoredTripId,
+      );
+      if (!liveTrip?.id) return undefined;
+      navigation.navigate('ActiveTrip');
+      return undefined;
+    }, [activeTripData?.id, activeTripData?.status, ignoredTripId, navigation]),
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -248,8 +330,9 @@ const HomeScreen = () => {
       updateDriver({ is_available: newStatus });
       if (newStatus) {
         await getCurrentPosition({ syncToSupabase: true, force: true });
+        await startWatching({ mapOnly: false });
       } else {
-        stopWatching();
+        await stopWatching({ markOffline: true });
       }
 
       Toast.show({
@@ -262,34 +345,112 @@ const HomeScreen = () => {
     }
   };
 
+  const handleStartStreetHail = useCallback(async () => {
+    if (startingStreetHail || activeTrip || streetHailSetup) return;
+
+    if (commissionData?.isBlocked) {
+      Toast.show({
+        type: 'error',
+        text1: 'Cuenta bloqueada',
+        text2: 'Regularizá tu cuenta para tomar viajes en calle.',
+      });
+      return;
+    }
+
+    if (!isOnline) {
+      Toast.show({
+        type: 'error',
+        text1: 'Ponete en línea',
+        text2: 'Activá tu estado para tomar un viaje en calle.',
+      });
+      return;
+    }
+
+    if (pendingTrip?.id) {
+      Toast.show({
+        type: 'error',
+        text1: 'Tenés un viaje asignado',
+        text2: 'Aceptá o rechazá la solicitud antes de tomar un viaje en calle.',
+      });
+      return;
+    }
+
+    let loc = currentLocation;
+    if (!Number.isFinite(Number(loc?.lat)) || !Number.isFinite(Number(loc?.lng))) {
+      loc = await getCurrentPosition({ force: true });
+    }
+    if (!Number.isFinite(Number(loc?.lat)) || !Number.isFinite(Number(loc?.lng))) {
+      Toast.show({
+        type: 'error',
+        text1: 'Sin GPS',
+        text2: 'Esperá a que se fije tu ubicación y volvé a intentar.',
+      });
+      return;
+    }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setStreetHailSetup({
+      lat: loc.lat,
+      lng: loc.lng,
+      address: loc.address || '',
+    });
+  }, [
+    startingStreetHail,
+    activeTrip,
+    streetHailSetup,
+    commissionData?.isBlocked,
+    isOnline,
+    pendingTrip?.id,
+    currentLocation,
+    getCurrentPosition,
+  ]);
+
+  const startStreetHailTripNow = useCallback(async (destination = null) => {
+    if (startingStreetHail || !streetHailSetup) return;
+    setStartingStreetHail(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    try {
+      const result = await createStreetHailTrip({
+        lat: streetHailSetup.lat,
+        lng: streetHailSetup.lng,
+        address: streetHailSetup.address,
+        destination,
+        startNow: true,
+      });
+      if (result?.success) {
+        setStreetHailSetup(null);
+        navigation.navigate('ActiveTrip');
+      }
+    } finally {
+      setStartingStreetHail(false);
+    }
+  }, [startingStreetHail, streetHailSetup, createStreetHailTrip, navigation]);
+
   const handleRejectTrip = async (tripId, reason) => {
     await rejectTrip(tripId, reason);
   };
 
   const recenter = () => {
-    if (!currentLocation) return;
-    lastCameraFollowRef.current = {
-      lat: currentLocation.lat,
-      lng: currentLocation.lng,
-    };
-    centerMapOnLocation(currentLocation, 500);
+    const loc = currentLocation || followCenterRef.current;
+    if (!loc) return;
+    applyHomeCameraTarget(loc, { force: true, duration: 500 });
   };
 
-  const initialRegion = useMemo(() => {
-    if (currentLocation) {
-      return {
-        latitude: currentLocation.lat,
-        longitude: currentLocation.lng,
-        latitudeDelta: 0.006,
-        longitudeDelta: 0.006,
-      };
-    }
-    return DEFAULT_REGION;
-  }, [currentLocation?.lat, currentLocation?.lng]);
+  const cameraCoordinate = useMemo(
+    () => toCameraLngLat(followCenter) ?? toCameraLngLat(currentLocation),
+    [followCenter?.lat, followCenter?.lng, currentLocation?.lat, currentLocation?.lng],
+  );
+  const cameraBootKey = cameraCoordinate ? 'gps' : 'boot';
 
   const allTrips = todayTrips?.pages?.flatMap((p) => p.data) || [];
   const firstName = driver?.full_name?.split(' ')[0] || 'Chofer';
   const initials = driver?.full_name?.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || '?';
+
+  // Home queda montado detrás de ActiveTrip. Si el BottomSheet sigue vivo,
+  // Gorhom dispara onChange(-1/0) en loop y tumba toda la app.
+  if (!isFocused) {
+    return <View style={{ flex: 1, backgroundColor: colors.background }} />;
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -302,15 +463,21 @@ const HomeScreen = () => {
         compassEnabled={false}
         logoEnabled={false}
         attributionEnabled={false}
+        onDidFinishLoadingMap={handleMapReady}
+        onDidFinishLoadingStyle={handleMapReady}
       >
         <MapLibreGL.Camera
+          key={cameraBootKey}
           ref={mapRef}
           defaultSettings={{
-            centerCoordinate: initialRegion
-              ? [initialRegion.longitude, initialRegion.latitude]
-              : [-65.42, -24.78],
-            zoomLevel: 14,
+            centerCoordinate: cameraCoordinate
+              ?? [DEFAULT_REGION.longitude, DEFAULT_REGION.latitude],
+            zoomLevel: HOME_CAMERA_ZOOM,
           }}
+          {...(cameraCoordinate ? {
+            center: cameraCoordinate,
+            zoom: HOME_CAMERA_ZOOM,
+          } : {})}
         />
         {currentLocation && (
           <DriverLocationMarker location={currentLocation} />
@@ -418,7 +585,20 @@ const HomeScreen = () => {
         </Pressable>
       </View>
 
+      {streetHailSetup ? (
+        <StreetHailSetupSheet
+          confirming={startingStreetHail}
+          onCancel={() => {
+            if (startingStreetHail) return;
+            setStreetHailSetup(null);
+          }}
+          onChooseFreeRide={() => startStreetHailTripNow(null)}
+          onConfirmDestination={(destination) => startStreetHailTripNow(destination)}
+        />
+      ) : null}
+
       {/* ========== BOTTOM SHEET ========== */}
+      {streetHailSetup ? null : (
       <BottomSheet
         ref={bottomSheetRef}
         index={0}
@@ -437,7 +617,6 @@ const HomeScreen = () => {
           borderRadius: 2,
         }}
         enablePanDownToClose={false}
-        onChange={(index) => setSheetIndex(index)}
       >
         {/* ── ZONA FIJA: siempre visible aunque el sheet esté en el snap mínimo ── */}
         <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 10 }}>
@@ -509,6 +688,16 @@ const HomeScreen = () => {
               </LinearGradient>
             </Pressable>
           )}
+
+          {!activeTrip ? (
+            <StreetHailHomeButton
+              online={isOnline}
+              loading={startingStreetHail}
+              compact={isLandscape || isCompactHeight}
+              disabled={Boolean(pendingTrip)}
+              onPress={handleStartStreetHail}
+            />
+          ) : null}
 
         </View>
 
@@ -760,6 +949,7 @@ const HomeScreen = () => {
           </Animated.View>
         </BottomSheetScrollView>
       </BottomSheet>
+      )}
 
       <NewTripModal
         visible={showNewTripModal}

@@ -4,8 +4,12 @@ const {
   resolveTripWaypoints,
   cleanTripNotesForDriverDisplay,
   isApproachOnlyTrip,
+  isStreetHailTrip,
+  isWhatsAppTrip,
   needsDriverDestinationChoice,
   shouldPreservePickupOriginOnAssign,
+  buildStreetHailTripInsert,
+  STREET_HAIL_PENDING_DESTINATION,
 } = require('../../shared/trip-contract');
 
 const WHATSAPP_APPROACH_NOTES = '[APPROACH_ONLY]\nEn cola de espera. Retiro confirmado.';
@@ -122,5 +126,52 @@ describe('trip waypoints — passenger app multi-stop', () => {
     expect(cleaned).not.toContain('WAYPOINTS_JSON');
     expect(cleaned).not.toContain('PICKUP_JSON');
     expect(cleaned).not.toContain('FINAL_DEST_JSON');
+  });
+});
+
+describe('viaje en calle (STREET_HAIL)', () => {
+  const payload = buildStreetHailTripInsert({
+    driverId: 'driver-street-1',
+    originAddress: 'Balcarce 500, Salta',
+    originLat: -24.79,
+    originLng: -65.41,
+    nowIso: '2026-09-02T12:00:00.000Z',
+  });
+
+  it('crea origen GPS, destino pendiente y pide elección al chofer', () => {
+    expect(payload.status).toBe('accepted');
+    expect(payload.origin_address).toBe('Balcarce 500, Salta');
+    expect(payload.origin_lat).toBeCloseTo(-24.79, 5);
+    expect(payload.destination_address).toBe(STREET_HAIL_PENDING_DESTINATION);
+    expect(payload.destination_lat).toBeNull();
+    expect(payload.destination_lng).toBeNull();
+    expect(isStreetHailTrip(payload)).toBe(true);
+    expect(isWhatsAppTrip(payload)).toBe(false);
+    expect(needsDriverDestinationChoice(payload)).toBe(true);
+    expect(shouldPreservePickupOriginOnAssign(payload)).toBe(true);
+  });
+
+  it('el pickup sigue siendo el origen aunque después haya destino', () => {
+    const pickup = resolveTripPickupCoords(payload);
+    expect(pickup.address).toBe('Balcarce 500, Salta');
+    expect(pickup.lat).toBeCloseTo(-24.79, 5);
+    expect(resolveTripFinalDestCoords(payload)).toBeNull();
+
+    const withDest = {
+      ...payload,
+      destination_address: 'Belgrano 200, Salta',
+      destination_lat: -24.7921,
+      destination_lng: -65.4115,
+    };
+    const pickupAfterDest = resolveTripPickupCoords(withDest);
+    expect(pickupAfterDest.address).toBe('Balcarce 500, Salta');
+    expect(resolveTripFinalDestCoords(withDest).address).toContain('Belgrano');
+    expect(needsDriverDestinationChoice(withDest)).toBe(false);
+  });
+
+  it('oculta el marcador [STREET_HAIL] en las notas del chofer', () => {
+    const cleaned = cleanTripNotesForDriverDisplay(payload.notes);
+    expect(cleaned).not.toContain('[STREET_HAIL]');
+    expect(cleaned).not.toContain('PICKUP_JSON');
   });
 });

@@ -32,7 +32,12 @@
  *   3. Google Place Details Essentials — solo si los dos anteriores fallan
  */
 
-const { isWithinSaltaCapital, SALTA_CAPITAL_BOUNDS } = require('./mapConfig');
+const {
+  isWithinSaltaCapital,
+  SALTA_CAPITAL_BOUNDS,
+  SALTA_CENTER_LAT,
+  SALTA_CENTER_LNG,
+} = require('./mapConfig');
 
 const PLACES_NEW_BASE = 'https://places.googleapis.com/v1';
 
@@ -56,10 +61,21 @@ const SALTA_CAPITAL_RESTRICTION = {
   },
 };
 
+/** Origen para ranking (como el viewport de Google Maps centrado en Capital). */
+const SALTA_CAPITAL_ORIGIN = {
+  latitude: SALTA_CENTER_LAT,
+  longitude: SALTA_CENTER_LNG,
+};
+
 /** Localidades de la provincia que Google puede mezclar aun con restricción geográfica. */
 const OUTSIDE_SALTA_CAPITAL_SUBTITLE = [
   /jujuy/,
   /\bvaqueros\b/,
+  /\bsan lorenzo\b/,
+  /\brosario de lerma\b/,
+  /\bcampo quijano\b/,
+  /\bla caldera\b/,
+  /\blesser\b/,
   /\bcerrillos\b/,
   /\bchimilas\b/,
   /\bel carril\b/,
@@ -305,8 +321,27 @@ function scoreAutocompleteSuggestion(mainText, secondaryText, query) {
   else if (title.startsWith(q)) score += 2.8;
   else if (title.includes(q)) score += 1.9;
   if (subtitle.includes(q)) score += 0.7;
-  if (subtitle.includes('salta') || title.includes('salta')) score += 0.9;
+  if (isOutsideSaltaCapitalSubtitle(secondaryText)) score -= 6;
+  else if (subtitle.includes('salta capital') || (subtitle.includes('salta') && !subtitle.includes('san lorenzo'))) {
+    score += 2.4;
+  }
   return score;
+}
+
+function biasAutocompleteInputToSaltaCapital(input) {
+  const text = String(input || '').trim();
+  if (!text) return text;
+  if (/salta\s*capital/i.test(text)) return text;
+  if (/,\s*salta\s*,\s*argentina\s*$/i.test(text)) {
+    return text.replace(/,\s*salta\s*,\s*argentina\s*$/i, ', Salta Capital, Argentina');
+  }
+  if (/,\s*salta\s*$/i.test(text)) {
+    return text.replace(/,\s*salta\s*$/i, ', Salta Capital');
+  }
+  if (!/\b(salta|argentina|jujuy)\b/i.test(text)) {
+    return `${text}, Salta Capital`;
+  }
+  return text;
 }
 
 function escapeRegex(value) {
@@ -451,10 +486,11 @@ async function placesAutocompleteRequest(input, sessionToken) {
         'X-Goog-FieldMask': AUTOCOMPLETE_FIELD_MASK,
       },
       body: JSON.stringify({
-        input: text,
+        input: biasAutocompleteInputToSaltaCapital(text),
         sessionToken,
         includedRegionCodes: ['ar'],
         languageCode: 'es',
+        origin: SALTA_CAPITAL_ORIGIN,
         locationRestriction: SALTA_CAPITAL_RESTRICTION,
       }),
       signal: controller?.signal,
@@ -508,7 +544,7 @@ async function autocompleteAddressSalta(query, limit = 8, options = {}) {
       }))
       .filter(Boolean)
       .filter((item) => !isOutsideSaltaCapitalSubtitle(item.subtitle))
-      .sort((a, b) => a._index - b._index);
+      .sort((a, b) => (Number(b._score || 0) - Number(a._score || 0)) || (a._index - b._index));
 
     const enriched = await enrichGuemesStreetNumberResults(mapped, text, sessionToken, normalizedLimit);
     const result = enriched.map(({ _score, _index, ...rest }) => rest);

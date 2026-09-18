@@ -14,6 +14,7 @@ import { getRegionForCoordinates } from '../utils/mapHelpers';
 import { MAPLIBRE_STYLE } from '../utils/mapProvider';
 import { MapRouteLayers } from '../components/map/MapRouteLayers';
 import { useResponsive } from '../hooks/useResponsive';
+import { useAppResumeHydrator } from '../hooks/useAppResumeHydration';
 
 const TripDetailScreen = () => {
   const insets = useSafeAreaInsets();
@@ -56,6 +57,8 @@ const TripDetailScreen = () => {
       setLoading(false);
     }
   };
+
+  useAppResumeHydrator(fetchTripDetail);
 
   if (loading || !trip) {
     return (
@@ -201,7 +204,7 @@ const TripDetailScreen = () => {
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ marginBottom: 14 }}>
-                    <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium' }}>ORIGEN</Text>
+                    <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_500Medium' }}>Origen</Text>
                     <Text style={{ color: colors.text, fontSize: 13, fontFamily: 'Inter_500Medium', marginTop: 2 }}>
                       {trip.origin_address}
                     </Text>
@@ -259,7 +262,7 @@ const TripDetailScreen = () => {
               {[
                 { label: 'Asignado', time: trip.assigned_at, icon: 'bell-outline' },
                 { label: 'Aceptado', time: trip.accepted_at, icon: 'check' },
-                { label: 'Recogida', time: trip.pickup_at, icon: 'account-check' },
+                { label: 'Origen', time: trip.pickup_at, icon: 'account-check' },
                 { label: 'Iniciado', time: trip.started_at, icon: 'play' },
                 { label: 'Completado', time: trip.completed_at, icon: 'flag-checkered' },
               ]

@@ -2,10 +2,13 @@ import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { useTripStore } from '../stores/tripStore';
+import { useLocationStore } from '../stores/locationStore';
 import { TRIP_STATUS } from '../utils/constants';
 import * as Haptics from 'expo-haptics';
 import { sendLocalNotification } from '../services/notifications';
 import { resolveTripPickupCoords } from '../../shared/trip-contract';
+import { prefetchDriverToPickupRoute } from '../services/navigationRoutePrefetch';
+import { resolveDriverTripRealtimeActions } from '../utils/pendingTripRealtime';
 
 export const useRealtime = () => {
   const { driver } = useAuthStore();
@@ -13,12 +16,15 @@ export const useRealtime = () => {
   const tripChannelRef = useRef(null);
   const messageChannelRef = useRef(null);
   const commissionChannelRef = useRef(null);
+  /** Evita múltiples locales por el mismo viaje cancelado (suscripciones/updates repetidos). */
+  const notifiedCancelTripIdsRef = useRef(new Set());
 
   const handlePendingTripAssigned = useCallback(async (trip, { source = 'unknown', onNewTrip } = {}) => {
     if (!trip || trip.status !== TRIP_STATUS.PENDING) return;
 
     const { pendingTrip: currentPendingTrip, showNewTripModal } = useTripStore.getState();
     setPendingTrip(trip);
+    prefetchDriverToPickupRoute(trip, useLocationStore.getState().currentLocation);
 
     // Avoid re-triggering haptics/local notifications when receiving repeated updates for the same pending trip.
     const isDuplicatePendingSignal =
@@ -37,7 +43,7 @@ export const useRealtime = () => {
     await sendLocalNotification(
       '🚖 Nuevo viaje asignado',
       `${trip.passenger_name} - ${pickupAddress}`,
-      { tripId: trip.id }
+      { type: 'new_trip', tripId: trip.id }
     );
 
     if (onNewTrip) onNewTrip(trip);
@@ -80,39 +86,41 @@ export const useRealtime = () => {
         async (payload) => {
           const trip = payload?.new || {};
           const previousTrip = payload?.old || {};
-          const currentDriverId = String(driver.id);
-          const ownsNow = String(trip?.driver_id || '') === currentDriverId;
-          const ownedBefore = String(previousTrip?.driver_id || '') === currentDriverId;
-          const activeTripId = useTripStore.getState().activeTrip?.id;
-          const isCurrentActive = Boolean(activeTripId) && String(trip?.id) === String(activeTripId);
+          const storeState = useTripStore.getState();
+          const actions = resolveDriverTripRealtimeActions({
+            trip,
+            previousTrip,
+            driverId: driver.id,
+            pendingTripId: storeState.pendingTrip?.id,
+            activeTripId: storeState.activeTrip?.id,
+          });
 
           // El worker puede hacer queued -> pending seteando driver_id en el mismo UPDATE.
-          // Si filtramos por driver_id en el servidor, ese cambio puede perderse según el payload.
           // Escuchamos UPDATE sin filtro y filtramos localmente para este chofer.
-          if (!ownsNow && !ownedBefore && !isCurrentActive) {
+          // Incluye la oferta abierta (pendingTripId) aunque payload.old venga vacío
+          // o cancelen liberando driver_id.
+          if (!actions.relevant) {
             return;
           }
 
-          const statusNow = String(trip?.status || '').toLowerCase();
-          const previousStatus = String(previousTrip?.status || '').toLowerCase();
-
-          if (ownsNow && statusNow === TRIP_STATUS.PENDING && (previousStatus !== TRIP_STATUS.PENDING || !ownedBefore)) {
+          if (actions.assignPending) {
             await handlePendingTripAssigned(trip, { source: 'update', onNewTrip });
             return;
           }
 
-          if (ownedBefore && previousStatus === TRIP_STATUS.PENDING && (!ownsNow || statusNow !== TRIP_STATUS.PENDING)) {
-            const { pendingTrip: currentPendingTrip } = useTripStore.getState();
-            if (currentPendingTrip?.id === trip.id) {
-              clearPendingTrip();
-            }
+          if (actions.clearPending) {
+            clearPendingTrip();
           }
 
-          if (
-            statusNow === TRIP_STATUS.CANCELLED
-            && (ownsNow || ownedBefore || isCurrentActive)
-          ) {
-            // Update the Zustand store so ActiveTripScreen can react immediately
+          if (actions.notifyCancelled) {
+            const cancelTripId = actions.tripId;
+            if (cancelTripId && notifiedCancelTripIdsRef.current.has(cancelTripId)) {
+              return;
+            }
+            if (cancelTripId) {
+              notifiedCancelTripIdsRef.current.add(cancelTripId);
+            }
+
             updateActiveTrip({ status: TRIP_STATUS.CANCELLED, cancel_reason: trip.cancel_reason || '' });
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
             sendLocalNotification(
@@ -161,7 +169,10 @@ export const useRealtime = () => {
           );
 
           const title = message.type === 'emergency' ? '🚨 EMERGENCIA' : '📩 Mensaje del despachador';
-          await sendLocalNotification(title, message.message, { messageId: message.id });
+          await sendLocalNotification(title, message.message, {
+            type: 'dispatcher_message',
+            messageId: message.id,
+          });
 
           if (onMessage) onMessage(message);
         }

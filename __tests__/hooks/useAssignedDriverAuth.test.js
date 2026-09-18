@@ -11,7 +11,10 @@ const mockGetSession = jest.fn();
 jest.mock('../../src/services/assignedDriverService', () => ({
   lookupAssignedDriverLogin: (...args) => mockLookup(...args),
   lookupDriverPhoneLogin: (...args) => mockLookup(...args),
+  lookupDriverEmailLogin: jest.fn(),
+  resolveUnifiedDriverPhoneLogin: (...args) => mockLookup(...args),
   provisionDriverPhoneAuth: (...args) => mockProvision(...args),
+  provisionDriverEmailAuth: jest.fn(),
   provisionAssignedDriverAuth: (...args) => mockProvision(...args),
 }));
 

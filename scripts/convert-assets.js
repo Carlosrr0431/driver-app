@@ -43,14 +43,15 @@ async function convertAssets() {
     .toFile(path.join(assetsDir, 'splash.png'));
   console.log('splash.png generado (' + splashW + 'x' + splashH + ')');
 
-  // 2. icon.png: isotipo 1024x1024 sobre fondo #0F0F1A
+  // 2. icon.png: isotipo 1024x1024 sobre fondo blanco (el splash JS y el plugin de Android lo muestran sobre blanco)
   const iconSize = 1024;
   const isotipo = renderSvg(path.join(assetsDir, 'isotipo profesional-04.svg'), ICON_ISOTIPO_WIDTH);
   const iconLeft = Math.round((iconSize - isotipo.width) / 2);
   const iconTop = Math.round((iconSize - isotipo.height) / 2);
+  const iconBg = { r: 255, g: 255, b: 255, alpha: 1 };
 
   await sharp({
-    create: { width: iconSize, height: iconSize, channels: 4, background: bgColor },
+    create: { width: iconSize, height: iconSize, channels: 4, background: iconBg },
   })
     .composite([{ input: isotipo.buffer, left: iconLeft, top: iconTop }])
     .png()

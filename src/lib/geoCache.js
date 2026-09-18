@@ -63,6 +63,10 @@ export function buildNominatimCacheKey(path, params = {}) {
   return `nom:${path}?${sorted}`;
 }
 
+export function hasInFlightCacheKey(key) {
+  return inFlight.has(key);
+}
+
 export async function withCachedFetch(cache, key, fetcher, ttlMs) {
   const cached = cache.get(key);
   if (cached !== undefined) return cached;

@@ -27,6 +27,8 @@ import { formatPrice, formatDate, formatDistance } from '../utils/formatters';
 import { TRIP_STATUS_LABELS, TRIP_STATUS_COLORS } from '../utils/constants';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
+import { summarizeDriverRating } from '../../shared/driver-rating';
+import DriverRatingCard from '../components/DriverRatingCard';
 
 const FILTERS = [
   { key: 'today', label: 'Hoy' },
@@ -325,13 +327,17 @@ const OwnerDriverDetailScreen = () => {
                   <MiniStat label="Comisiones" value={formatPrice(stats?.totalCommission || 0)} icon="percent" color={colors.warning} />
                   <View style={{ width: 1, backgroundColor: colors.border }} />
                   <MiniStat
-                    label="Rating"
-                    value={`★ ${Number(linkedDriver?.rating || 5).toFixed(1)}`}
+                    label="Calificación"
+                    value={summarizeDriverRating(linkedDriver).averageLabel}
                     icon="star"
                     color={colors.warning}
                   />
                 </View>
               </View>
+            </Animated.View>
+
+            <Animated.View entering={FadeInDown.delay(170).duration(400)} style={{ marginBottom: 14 }}>
+              <DriverRatingCard driver={linkedDriver} />
             </Animated.View>
 
             {/* Period filters */}

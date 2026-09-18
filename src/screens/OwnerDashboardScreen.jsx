@@ -22,6 +22,7 @@ import { useAuthStore } from '../stores/authStore';
 import { Avatar } from '../components/ui/Avatar';
 import { formatPrice } from '../utils/formatters';
 import { MAX_ASSIGNED_DRIVERS } from '../utils/driverRoles';
+import { summarizeDriverRating } from '../../shared/driver-rating';
 
 const OwnerDashboardScreen = () => {
   const insets = useSafeAreaInsets();
@@ -84,7 +85,9 @@ const OwnerDashboardScreen = () => {
     );
   }, [removeAssignedDriver]);
 
-  const renderDriver = useCallback(({ item, index }) => (
+  const renderDriver = useCallback(({ item, index }) => {
+    const rating = summarizeDriverRating(item);
+    return (
     <Animated.View entering={FadeInDown.delay(index * 60).duration(350)}>
       <Pressable
         onPress={() => navigation.navigate('OwnerDriverDetail', { driverId: item.id, driverName: item.full_name })}
@@ -132,10 +135,27 @@ const OwnerDashboardScreen = () => {
               </View>
             )}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-            <MaterialCommunityIcons name="star" size={12} color={colors.warning} />
-            <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_400Regular', marginLeft: 3 }}>
-              {Number(item.rating || 5).toFixed(1)} · {item.total_trips || 0} viajes
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: 6, gap: 6 }}>
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: rating.hasRatings ? `${colors.warning}18` : colors.surfaceLight,
+              borderRadius: 999,
+              paddingHorizontal: 7,
+              paddingVertical: 2,
+              gap: 3,
+            }}>
+              <MaterialCommunityIcons
+                name={rating.hasRatings ? 'star' : 'star-outline'}
+                size={11}
+                color={rating.hasRatings ? colors.warning : colors.textMuted}
+              />
+              <Text style={{ color: colors.textDark, fontSize: 11, fontFamily: 'Inter_600SemiBold' }}>
+                {rating.hasRatings ? rating.averageLabel : 'Nuevo'}
+              </Text>
+            </View>
+            <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+              {item.total_trips || 0} viajes
             </Text>
           </View>
           {item.phone ? (
@@ -193,7 +213,8 @@ const OwnerDashboardScreen = () => {
         </View>
       </Pressable>
     </Animated.View>
-  ), [navigation, handleToggleStatus, handleRemoveDriver]);
+    );
+  }, [navigation, handleToggleStatus, handleRemoveDriver]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>

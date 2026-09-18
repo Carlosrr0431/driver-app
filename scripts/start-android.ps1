@@ -13,7 +13,7 @@
 param(
   [switch]$Install,
   [switch]$SkipEmulator,
-  [string]$AvdName = 'Pixel_4',
+  [string]$AvdName = 'Pixel_8',
   [switch]$Clear,
   [switch]$SameWindow
 )
@@ -138,6 +138,28 @@ function Set-AdbReverse {
   Write-Step "adb reverse tcp:$MetroPort tcp:$MetroPort"
 }
 
+function Set-EmulatorGpsSalta {
+  # El GPS nativo del emulador suele quedar en null; mock location en Salta Capital.
+  $adb = Get-Adb
+  $serial = Get-AndroidSerial
+  if (-not $serial) { return }
+
+  $lat = '-24.7955683'
+  $lng = '-65.3754467'
+
+  & $adb -s $serial shell settings put global window_animation_scale 0 | Out-Null
+  & $adb -s $serial shell settings put global transition_animation_scale 0 | Out-Null
+  & $adb -s $serial shell settings put global animator_duration_scale 0 | Out-Null
+  & $adb -s $serial shell cmd location set-location-enabled true 2>$null | Out-Null
+  & $adb -s $serial shell appops set com.android.shell android:mock_location allow 2>$null | Out-Null
+  & $adb -s $serial shell appops set $PackageName android:mock_location allow 2>$null | Out-Null
+  & $adb -s $serial shell cmd location providers add-test-provider gps --requiresSatellite --supportsAltitude --supportsSpeed --supportsBearing --powerRequirement 1 --accuracy 1 2>$null | Out-Null
+  & $adb -s $serial shell cmd location providers set-test-provider-enabled gps true 2>$null | Out-Null
+  & $adb -s $serial shell cmd location providers set-test-provider-location gps --location "${lat},${lng}" --accuracy 5 2>$null | Out-Null
+  & $adb -s $serial emu geo fix $lng $lat 1200 2>$null | Out-Null
+  Write-Step "GPS emulador: $lat, $lng (Salta)"
+}
+
 function Test-DriverAppInstalled {
   $adb = Get-Adb
   $packages = & $adb shell pm list packages $PackageName 2>$null
@@ -254,6 +276,7 @@ if (-not (Test-AndroidDevice)) {
 
 Wait-AndroidBoot
 Set-AdbReverse
+Set-EmulatorGpsSalta
 Start-MetroBundler
 
 $needsInstall = $Install -or -not (Test-DriverAppInstalled)

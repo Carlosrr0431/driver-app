@@ -25,6 +25,8 @@ export const TRIP_STATUS_COLORS = {
   cancelled: '#FF4757',
 };
 
+export const DRIVER_RELEASE_REASON = 'Cancelado por el chofer';
+
 export const CANCEL_REASONS = [
   'Pasajero no encontrado',
   'Dirección incorrecta',

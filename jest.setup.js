@@ -16,6 +16,7 @@ jest.mock('expo-location', () => ({
   requestBackgroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
   getForegroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
   getBackgroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
+  getLastKnownPositionAsync: jest.fn().mockResolvedValue(null),
   getCurrentPositionAsync: jest.fn().mockResolvedValue({
     coords: { latitude: -24.79, longitude: -65.41, accuracy: 5, speed: 0 },
   }),
@@ -24,6 +25,7 @@ jest.mock('expo-location', () => ({
   startLocationUpdatesAsync: jest.fn().mockResolvedValue(undefined),
   stopLocationUpdatesAsync: jest.fn().mockResolvedValue(undefined),
   Accuracy: { BestForNavigation: 6, High: 4, Balanced: 3, Low: 2 },
+  ActivityType: { Other: 1, AutomotiveNavigation: 2, Fitness: 3, OtherNavigation: 4 },
 }));
 
 jest.mock('expo-notifications', () => ({
@@ -165,13 +167,16 @@ jest.mock('react-native-reanimated', () => {
 });
 
 jest.mock('@gorhom/bottom-sheet', () => {
-  const { View } = require('react-native');
+  const { View, ScrollView, TextInput } = require('react-native');
   return {
     __esModule: true,
     default: View,
     BottomSheetModal: View,
     BottomSheetView: View,
     BottomSheetBackdrop: View,
+    BottomSheetScrollView: ScrollView,
+    BottomSheetTextInput: TextInput,
+    BottomSheetFooter: View,
     useBottomSheetModal: jest.fn(() => ({ present: jest.fn(), dismiss: jest.fn() })),
   };
 });

@@ -1,8 +1,19 @@
--- Migration: add billing_mode to drivers (dual cobro)
+-- Migration: add billing_mode + commission_blocked to drivers (dual cobro)
 -- Run this in the Supabase SQL Editor
 --
 -- commission_current  → cobro por comisiones con gracia de 3 días (default, comportamiento actual)
 -- weekly_traditional  → cobro semanal; siempre recibe viajes salvo commission_blocked manual
+--
+-- Sin estas columnas el dispatch-worker revienta:
+--   "column drivers.billing_mode does not exist"
+-- y deja el viaje en dispatch_queue.queue_status = dead_letter.
+
+ALTER TABLE public.drivers
+  ADD COLUMN IF NOT EXISTS commission_blocked boolean NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS idx_drivers_commission_blocked
+  ON public.drivers (commission_blocked)
+  WHERE commission_blocked = true;
 
 ALTER TABLE public.drivers
   ADD COLUMN IF NOT EXISTS billing_mode text NOT NULL DEFAULT 'commission_current';

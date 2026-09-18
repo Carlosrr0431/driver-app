@@ -31,7 +31,7 @@ const HomeStack = () => (
     <Stack.Screen
       name="ActiveTrip"
       component={ActiveTripScreen}
-      options={{ gestureEnabled: false }}
+      options={{ gestureEnabled: false, fullScreenGestureEnabled: false }}
     />
     <Stack.Screen name="TripDetail" component={TripDetailScreen} />
     <Stack.Screen name="CommissionPayment" component={CommissionPaymentScreen} />

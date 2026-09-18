@@ -27,11 +27,26 @@
     },
     "production": {
       "channel": "production",
+      "env": {
+        "EXPO_USE_PRECOMPILED_MODULES": "0"
+      },
       "android": {
         "buildType": "app-bundle"
       },
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "autoIncrement": "buildNumber",
+        "credentialsSource": "local"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "ascAppId": "6792967642",
+        "ascApiKeyPath": "./.secrets/AuthKey_9WC3L85985.p8",
+        "ascApiKeyIssuerId": "3af4a453-d781-4c91-b81a-a9777fb8c484",
+        "ascApiKeyId": "9WC3L85985"
       }
     }
   }

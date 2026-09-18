@@ -17,6 +17,10 @@ beforeEach(() => {
     tripStartTime: null,
     tripDistanceKm: 0,
     lastTrackingLocation: null,
+    driverFlowStep: null,
+    driverFlowTripId: null,
+    driverFreeRide: false,
+    ignoredTripId: null,
   });
 });
 
@@ -63,6 +67,36 @@ describe('setActiveTrip', () => {
     useTripStore.getState().setActiveTrip(MOCK_TRIP);
     expect(useTripStore.getState().activeTrip).toEqual(MOCK_TRIP);
   });
+
+  it('no revive un viaje completado, cancelado o reencolado', () => {
+    useTripStore.getState().setActiveTrip({ ...MOCK_TRIP, status: 'completed' });
+    expect(useTripStore.getState().activeTrip).toBeNull();
+
+    useTripStore.getState().setActiveTrip({ ...MOCK_TRIP, status: 'cancelled' });
+    expect(useTripStore.getState().activeTrip).toBeNull();
+
+    useTripStore.getState().setActiveTrip({ ...MOCK_TRIP, status: 'going_to_pickup' });
+    useTripStore.getState().setActiveTrip({ ...MOCK_TRIP, status: 'queued' });
+    expect(useTripStore.getState().activeTrip.status).toBe('going_to_pickup');
+  });
+
+  it('no revive el mismo viaje después de clearActiveTrip', () => {
+    const live = { ...MOCK_TRIP, status: 'in_progress' };
+    useTripStore.getState().setActiveTrip(live);
+    useTripStore.getState().clearActiveTrip();
+    useTripStore.getState().setActiveTrip(live);
+    expect(useTripStore.getState().activeTrip).toBeNull();
+    expect(useTripStore.getState().ignoredTripId).toBe('trip-001');
+  });
+
+  it('acepta un viaje nuevo distinto al que se acaba de cerrar', () => {
+    useTripStore.getState().setActiveTrip({ ...MOCK_TRIP, status: 'in_progress' });
+    useTripStore.getState().clearActiveTrip();
+    const next = { ...MOCK_TRIP, id: 'trip-002', status: 'accepted' };
+    useTripStore.getState().setActiveTrip(next);
+    expect(useTripStore.getState().activeTrip).toEqual(next);
+    expect(useTripStore.getState().ignoredTripId).toBeNull();
+  });
 });
 
 describe('updateActiveTrip', () => {
@@ -94,6 +128,7 @@ describe('clearActiveTrip', () => {
     expect(state.tripTimer).toBe(0);
     expect(state.tripDistanceKm).toBe(0);
     expect(state.tripStartTime).toBeNull();
+    expect(state.ignoredTripId).toBe('trip-001');
   });
 });
 
@@ -152,3 +187,32 @@ describe('addTripDistance', () => {
     expect(useTripStore.getState().tripDistanceKm).toBe(0);
   });
 });
+
+describe('driverFreeRide', () => {
+  it('se activa junto al paso in_progress para no disparar navegación guiada', () => {
+    useTripStore.getState().setActiveTrip({ ...MOCK_TRIP, status: 'accepted' });
+    useTripStore.getState().setDriverFlowStep('in_progress', 'trip-001', { freeRide: true });
+    const state = useTripStore.getState();
+    expect(state.driverFlowStep).toBe('in_progress');
+    expect(state.driverFreeRide).toBe(true);
+  });
+
+  it('se apaga al cambiar de viaje o al volver a un paso con destino', () => {
+    useTripStore.getState().setDriverFlowStep('in_progress', 'trip-001', { freeRide: true });
+    useTripStore.getState().setDriverFlowStep('going_to_pickup', 'trip-002');
+    expect(useTripStore.getState().driverFreeRide).toBe(false);
+    expect(useTripStore.getState().driverFlowTripId).toBe('trip-002');
+  });
+
+  it('clearActiveTrip también limpia el modo libre', () => {
+    useTripStore.setState({
+      activeTrip: { ...MOCK_TRIP, status: 'in_progress' },
+      driverFreeRide: true,
+      driverFlowStep: 'in_progress',
+      driverFlowTripId: 'trip-001',
+    });
+    useTripStore.getState().clearActiveTrip();
+    expect(useTripStore.getState().driverFreeRide).toBe(false);
+  });
+});
+
