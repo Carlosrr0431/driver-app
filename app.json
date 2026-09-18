@@ -2,10 +2,12 @@
   "expo": {
     "name": "Profesional Conductor",
     "slug": "driver-app",
-    "version": "1.0.9",
-    "runtimeVersion": "1.0.9",
+    "version": "1.0.40",
+    "runtimeVersion": "1.0.40",
     "updates": {
-      "url": "https://u.expo.dev/21599c2c-8f85-4d49-84d7-71202995c3e5"
+      "url": "https://u.expo.dev/21599c2c-8f85-4d49-84d7-71202995c3e5",
+      "enabled": false,
+      "checkAutomatically": "NEVER"
     },
     "platforms": [
       "ios",
@@ -24,13 +26,19 @@
     ],
     "ios": {
       "supportsTablet": false,
+      "requireFullScreen": true,
       "bundleIdentifier": "com.remises.driverapp",
+      "buildNumber": "34",
       "googleServicesFile": "./GoogleService-Info.plist",
+      "entitlements": {
+        "aps-environment": "production"
+      },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "UIRequiresFullScreen": true,
         "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para mostrar tu posición en el mapa y asignarte viajes cercanos.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Necesitamos tu ubicación en segundo plano para el seguimiento de viajes activos.",
-        "NSLocationAlwaysUsageDescription": "Necesitamos tu ubicación siempre activa para rastrear viajes en curso.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Necesitamos tu ubicación en segundo plano, incluso con la app cerrada, para que la central vea tu posición en tiempo real mientras estás en línea o en un viaje.",
+        "NSLocationAlwaysUsageDescription": "Necesitamos tu ubicación siempre activa para que la central actualice tu pin en tiempo real con la app en segundo plano.",
         "NSMicrophoneUsageDescription": "Necesitamos acceso al micrófono para el asistente de voz.",
         "NSPhotoLibraryUsageDescription": "Necesitamos acceso a tus fotos para actualizar tu foto de perfil.",
         "NSCameraUsageDescription": "Necesitamos acceso a la cámara para tomar tu foto de perfil.",
@@ -43,12 +51,13 @@
       }
     },
     "android": {
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.remises.driverapp",
-      "versionCode": 11,
+      "versionCode": 44,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "ACCESS_FINE_LOCATION",
@@ -99,7 +108,10 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Permitir que Driver App use tu ubicación para rastrear viajes.",
+          "locationWhenInUsePermission": "Necesitamos tu ubicación para mostrar tu posición en el mapa y asignarte viajes cercanos.",
+          "locationAlwaysAndWhenInUsePermission": "Necesitamos tu ubicación en segundo plano, incluso con la app cerrada, para que la central vea tu posición en tiempo real mientras estás en línea o en un viaje.",
+          "locationAlwaysPermission": "Necesitamos tu ubicación siempre activa para que la central actualice tu pin en tiempo real con la app en segundo plano.",
+          "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
@@ -108,9 +120,12 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon-monochrome.png",
-          "color": "#282e69"
+          "color": "#282e69",
+          "mode": "production",
+          "enableBackgroundRemoteNotifications": true
         }
       ],
+      "./plugins/withLocationForegroundNotification.js",
       "@maplibre/maplibre-react-native",
       "@react-native-firebase/app",
       "@react-native-firebase/messaging",
