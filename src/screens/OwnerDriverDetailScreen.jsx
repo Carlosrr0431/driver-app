@@ -29,6 +29,7 @@ import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { summarizeDriverRating } from '../../shared/driver-rating';
 import DriverRatingCard from '../components/DriverRatingCard';
+import { shouldShowCommissionDebtUi } from '../../shared/driver-billing';
 
 const FILTERS = [
   { key: 'today', label: 'Hoy' },
@@ -80,6 +81,7 @@ const OwnerDriverDetailScreen = () => {
   } = useDriverTripHistory(driverId, activeFilter);
 
   const allTrips = tripPages?.pages?.flatMap(p => p.data) || [];
+  const showAssignedCommission = shouldShowCommissionDebtUi(linkedDriver);
 
   const handleToggleStatus = useCallback(() => {
     if (!linkedDriver) return;
@@ -165,7 +167,7 @@ const OwnerDriverDetailScreen = () => {
                 {formatPrice(item.price)}
               </Text>
             </View>
-            {item.commission_amount > 0 && (
+            {showAssignedCommission && item.commission_amount > 0 && (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <MaterialCommunityIcons name="percent" size={12} color={colors.warning} style={{ marginRight: 4 }} />
                 <Text style={{ color: colors.warning, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
@@ -182,7 +184,7 @@ const OwnerDriverDetailScreen = () => {
         </View>
       </Animated.View>
     );
-  }, []);
+  }, [showAssignedCommission]);
 
   const driverInitials = linkedDriver?.full_name?.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || '?';
 
@@ -324,8 +326,12 @@ const OwnerDriverDetailScreen = () => {
                 <View style={{ flexDirection: 'row' }}>
                   <MiniStat label="Ganancias" value={formatPrice(stats?.totalEarnings || 0)} icon="cash" color={colors.success} />
                   <View style={{ width: 1, backgroundColor: colors.border }} />
-                  <MiniStat label="Comisiones" value={formatPrice(stats?.totalCommission || 0)} icon="percent" color={colors.warning} />
-                  <View style={{ width: 1, backgroundColor: colors.border }} />
+                  {showAssignedCommission ? (
+                    <>
+                      <MiniStat label="Comisiones" value={formatPrice(stats?.totalCommission || 0)} icon="percent" color={colors.warning} />
+                      <View style={{ width: 1, backgroundColor: colors.border }} />
+                    </>
+                  ) : null}
                   <MiniStat
                     label="Calificación"
                     value={summarizeDriverRating(linkedDriver).averageLabel}

@@ -330,18 +330,144 @@ function cleanTripNotesForDriverDisplay(notes) {
   result = result
     .replace(/\[APPROACH_ONLY\]/gi, '')
     .replace(/\[PASSENGER_APP\]/gi, '')
+    .replace(/\[PASSENGER_WEB\]/gi, '')
     .replace(/\[WHATSAPP\]/gi, '')
+    .replace(/\[DASHBOARD_ASSIGN\]/gi, '')
     .replace(/\[DASHBOARD\]/gi, '')
     .replace(/\[STREET_HAIL\]/gi, '')
+    .replace(/\[SCHEDULED_FOR\][^\n]*/gi, '')
+    .replace(/\[SCHEDULED_DISPLAY\][^\n]*/gi, '')
+    .replace(/\[SCHEDULED_SOURCE\][^\n]*/gi, '')
+    .replace(/\[PASSENGER_PHONE\][^\n]*/gi, '')
     .replace(/Viaje tomado en calle[^.]*\./gi, '')
     .replace(/Creado autom[aá]ticamente desde WhatsApp[^.]*\./gi, '')
     .replace(/chofer\s*->\s*retiro pasajero[^.]*\./gi, '')
     .replace(/Destino final:[^.]*\./gi, '')
     .replace(/Destino final sugerido:.*/gi, '')
     .replace(/Solicitado desde la app de pasajeros\./gi, '')
+    .replace(/Solicitado desde la web de pasajeros\./gi, '')
+    .replace(/Viaje ingresado desde el panel de operaciones\.?/gi, '')
+    .replace(/Viaje asignado desde el panel de operaciones\.?/gi, '')
+    .replace(/En cola de espera\. Retiro confirmado\.?/gi, '')
+    .replace(/\[FREE_RIDE\]/gi, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return result || null;
+}
+
+const HUMAN_TRIP_NOTES_MAX_LENGTH = 800;
+
+const MACHINE_NOTE_TAGS = [
+  NOTES_MARKERS.APPROACH_ONLY,
+  NOTES_MARKERS.WHATSAPP,
+  NOTES_MARKERS.PASSENGER_APP,
+  '[PASSENGER_WEB]',
+  '[DASHBOARD_ASSIGN]',
+  NOTES_MARKERS.DASHBOARD,
+  NOTES_MARKERS.STREET_HAIL,
+  '[FREE_RIDE]',
+];
+
+const MACHINE_NOTE_LINE_PATTERNS = [
+  /\[SCHEDULED_FOR\][^\n]*/gi,
+  /\[SCHEDULED_DISPLAY\][^\n]*/gi,
+  /\[SCHEDULED_SOURCE\][^\n]*/gi,
+  /\[PASSENGER_PHONE\][^\n]*/gi,
+  /Viaje tomado en calle[^.]*\./gi,
+  /Creado autom[aá]ticamente desde WhatsApp[^.]*\./gi,
+  /chofer\s*->\s*retiro pasajero[^.]*\./gi,
+  /Destino final:[^.]*\./gi,
+  /Destino final sugerido:.*/gi,
+  /Solicitado desde la app de pasajeros\./gi,
+  /Solicitado desde la web de pasajeros\./gi,
+  /Viaje ingresado desde el panel de operaciones\.?/gi,
+  /Viaje asignado desde el panel de operaciones\.?/gi,
+  /En cola de espera\. Retiro confirmado\.?/gi,
+];
+
+function extractEmbeddedJsonMarkerBlock(notes, prefix) {
+  const text = String(notes || '');
+  const start = text.indexOf(prefix);
+  if (start === -1) return null;
+  const jsonStart = start + prefix.length;
+  const jsonEnd = findEmbeddedJsonEndIndex(text, jsonStart);
+  if (jsonEnd == null) return null;
+  let markerEnd = jsonEnd + 1;
+  if (text[markerEnd] === ']') markerEnd += 1;
+  return text.slice(start, markerEnd);
+}
+
+function collectMachineTripNoteParts(notes) {
+  const text = String(notes || '');
+  const parts = [];
+  const seen = new Set();
+  const pushUnique = (value) => {
+    const next = String(value || '').trim();
+    if (!next || seen.has(next)) return;
+    seen.add(next);
+    parts.push(next);
+  };
+
+  MACHINE_NOTE_TAGS.forEach((tag) => {
+    if (!tag) return;
+    const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(escaped, 'i').test(text)) pushUnique(tag);
+  });
+
+  MACHINE_NOTE_LINE_PATTERNS.forEach((pattern) => {
+    const matches = text.match(pattern);
+    if (!matches) return;
+    matches.forEach(pushUnique);
+  });
+
+  [
+    NOTES_MARKERS.PICKUP_JSON_PREFIX,
+    NOTES_MARKERS.FINAL_DEST_JSON_PREFIX,
+    NOTES_MARKERS.WAYPOINTS_JSON_PREFIX,
+  ].forEach((prefix) => {
+    const block = extractEmbeddedJsonMarkerBlock(text, prefix);
+    if (block) pushUnique(block);
+  });
+
+  return parts;
+}
+
+function sanitizeHumanTripNotes(text) {
+  let result = String(text || '');
+  result = removeEmbeddedJsonMarkerBlock(result, NOTES_MARKERS.WAYPOINTS_JSON_PREFIX);
+  result = removeEmbeddedJsonMarkerBlock(result, NOTES_MARKERS.FINAL_DEST_JSON_PREFIX);
+  result = removeEmbeddedJsonMarkerBlock(result, NOTES_MARKERS.PICKUP_JSON_PREFIX);
+  result = result
+    .replace(/\[APPROACH_ONLY\]/gi, '')
+    .replace(/\[PASSENGER_APP\]/gi, '')
+    .replace(/\[PASSENGER_WEB\]/gi, '')
+    .replace(/\[WHATSAPP\]/gi, '')
+    .replace(/\[DASHBOARD_ASSIGN\]/gi, '')
+    .replace(/\[DASHBOARD\]/gi, '')
+    .replace(/\[STREET_HAIL\]/gi, '')
+    .replace(/\[FREE_RIDE\]/gi, '')
+    .replace(/\[SCHEDULED_FOR\][^\n]*/gi, '')
+    .replace(/\[SCHEDULED_DISPLAY\][^\n]*/gi, '')
+    .replace(/\[SCHEDULED_SOURCE\][^\n]*/gi, '')
+    .replace(/\[PASSENGER_PHONE\][^\n]*/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (result.length > HUMAN_TRIP_NOTES_MAX_LENGTH) {
+    result = result.slice(0, HUMAN_TRIP_NOTES_MAX_LENGTH).trim();
+  }
+  return result;
+}
+
+/**
+ * Reemplaza el texto operativo que ve el chofer, conservando marcadores internos.
+ */
+function replaceHumanTripNotes(existingNotes, humanText) {
+  const machine = collectMachineTripNoteParts(existingNotes);
+  const human = sanitizeHumanTripNotes(humanText);
+  const tagsAndLines = machine.filter((part) => !part.includes('_JSON:'));
+  const jsonParts = machine.filter((part) => part.includes('_JSON:'));
+  const combined = [...tagsAndLines, human, ...jsonParts].filter(Boolean);
+  return combined.length ? combined.join('\n') : null;
 }
 
 /**
@@ -697,4 +823,7 @@ module.exports = {
   notesContainWaypointsJson,
   resolveTripWaypoints,
   cleanTripNotesForDriverDisplay,
+  sanitizeHumanTripNotes,
+  replaceHumanTripNotes,
+  HUMAN_TRIP_NOTES_MAX_LENGTH,
 };

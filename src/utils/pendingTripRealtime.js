@@ -35,6 +35,11 @@ export function resolveDriverTripRealtimeActions({
   );
 
   const notifyCancelled = relevant && statusNow === CANCELLED && previousStatus !== CANCELLED;
+  const mergePending = isCurrentPending
+    && ownsNow
+    && statusNow === PENDING
+    && !assignPending
+    && !clearPending;
 
   return {
     tripId,
@@ -43,6 +48,7 @@ export function resolveDriverTripRealtimeActions({
     assignPending,
     clearPending,
     notifyCancelled,
+    mergePending,
   };
 }
 

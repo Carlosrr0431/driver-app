@@ -33,6 +33,7 @@ import {
   isWeeklyBillingMode,
   resolveDispatchBlockReason,
   normalizeBillingMode,
+  shouldShowCommissionDebtUi,
   COMMISSION_BLOCK_AFTER_DAYS,
 } from '../../shared/driver-billing';
 
@@ -275,12 +276,19 @@ export const useTrips = () => {
 
         if (driverErr) throw driverErr;
 
+        const billingMode = normalizeBillingMode(
+          driverData?.billing_mode ?? driver?.billing_mode,
+        );
+        const billingRow = { ...driverData, billing_mode: billingMode };
         const balance = Math.round((Number(driverData?.pending_commission) || 0) * 100) / 100;
-        const isOverdue = resolveCommissionOverdue(driverData);
-        const isBlocked = isDriverDispatchBlocked(driverData);
-        const blockReason = resolveDispatchBlockReason(driverData);
-        const billingMode = normalizeBillingMode(driverData?.billing_mode);
+        const isOverdue = resolveCommissionOverdue(billingRow);
+        const isBlocked = isDriverDispatchBlocked(billingRow);
+        const blockReason = resolveDispatchBlockReason(billingRow);
         const isWeekly = isWeeklyBillingMode(billingMode);
+
+        if (driver?.billing_mode !== billingMode) {
+          useAuthStore.getState().updateDriver({ billing_mode: billingMode });
+        }
 
         return {
           balance,
@@ -289,6 +297,7 @@ export const useTrips = () => {
           blockReason,
           billingMode,
           isWeekly,
+          showDebtUi: shouldShowCommissionDebtUi({ billingMode, isWeekly }),
         };
       },
       enabled: !!driver?.id,

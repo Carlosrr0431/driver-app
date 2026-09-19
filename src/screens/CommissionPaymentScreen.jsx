@@ -23,6 +23,7 @@ import { createPaymentSession, getPaymentStatus } from '../services/paypertic';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../services/supabase';
 import { sendPaymentSuccessNotification } from '../services/notifications';
+import { isWeeklyBillingMode } from '../../shared/driver-billing';
 import {
   getPayperticRejectionTitle,
   isRejectedPaymentStatus,
@@ -812,6 +813,8 @@ export default function CommissionPaymentScreen() {
   const balance = commissionData?.balance || 0;
   const isOverdue = commissionData?.isOverdue || false;
   const balanceColor = isOverdue ? '#282e69' : '#D97706';
+  const weeklyPlan = isWeeklyBillingMode(commissionData?.billingMode ?? driver?.billing_mode)
+    || commissionData?.isWeekly === true;
 
   // Estados: 'idle' | 'loading' | 'webview' | 'verifying' | 'approved' | 'rejected'
   const [phase, setPhase] = useState('idle');
@@ -1316,12 +1319,23 @@ export default function CommissionPaymentScreen() {
   };
 
   useEffect(() => {
+    if (!weeklyPlan) return undefined;
+    navigation.goBack();
+    return undefined;
+  }, [weeklyPlan, navigation]);
+
+  useEffect(() => {
+    if (weeklyPlan) return;
     if (!autoStart || autoStartTriggered.current) return;
     autoStartTriggered.current = true;
     startPaymentFlow();
-  }, [autoStart, balance]);
+  }, [autoStart, balance, weeklyPlan]);
 
   // ── Pantalla aprobada con comprobante ─────────────────────────────────────
+  if (weeklyPlan) {
+    return <View style={styles.screen} />;
+  }
+
   if (phase === 'approved') {
     return (
       <View style={styles.screen}>

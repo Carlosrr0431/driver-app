@@ -187,6 +187,26 @@ export function clampBottomSheetIndex(index, fallback = 0) {
   return next;
 }
 
+/**
+ * Un -1 con restore trabado, un overlay o el modal de cobro no deben
+ * pelearse con el snap. Si no, el sheet queda cerrado y no se puede subir.
+ */
+export function shouldRestoreClosedBottomSheet({
+  restoring = false,
+  showingFinishModal = false,
+  overlayOpen = false,
+} = {}) {
+  if (showingFinishModal || overlayOpen || restoring) return false;
+  return true;
+}
+
+export function recoverClosedBottomSheetIndex(restoreIndex, lastIndex) {
+  return clampBottomSheetIndex(
+    restoreIndex,
+    clampBottomSheetIndex(lastIndex, 0),
+  );
+}
+
 function toPositiveMeters(value) {
   const meters = Number(value);
   return Number.isFinite(meters) && meters > 0 ? meters : 0;
@@ -527,12 +547,17 @@ export function shouldShowActiveTripNavHud({
     || flowStep === 'in_progress';
 }
 
-/** Si el viaje activo se borró, volver al Home salvo resumen o modal del pasajero. */
+/**
+ * Si el viaje activo se borró, volver al Home salvo el resumen de cobro.
+ * El modal de cancelación no debe retener al chofer: se renderiza detrás del
+ * early-return en blanco y dejaba la app trabada sin mapa ni botón.
+ */
 export function shouldLeaveHomeWhenTripCleared({
   showingSummary = false,
   showingCancelledModal = false,
 } = {}) {
-  return !showingSummary && !showingCancelledModal;
+  void showingCancelledModal;
+  return !showingSummary;
 }
 
 /** Evita setState en cada GPS tick si el HUD de navegación no cambió. */

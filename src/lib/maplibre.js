@@ -79,7 +79,7 @@ const CameraCompat = forwardRef(function CameraCompat(props, ref) {
     const regionToZoom = (latitudeDelta) => {
       const latDelta = Number(latitudeDelta) || 0.02;
       const zoom = Math.log2(360 / latDelta);
-      return Math.max(11, Math.min(18.5, zoom));
+      return Math.max(11, Math.min(16, zoom));
     };
 
     const api = {
@@ -154,6 +154,7 @@ const CameraCompat = forwardRef(function CameraCompat(props, ref) {
       innerRef.current.fitBounds([west, south, east, north], {
         padding,
         duration,
+        maxZoom: 16,
         easing: duration > 0 ? 'ease' : undefined,
       });
     },

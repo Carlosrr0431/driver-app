@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useAnimatedStyle,
@@ -7,12 +7,48 @@ import Animated, {
   withRepeat,
   withTiming,
 } from 'react-native-reanimated';
+import MapLibreGL from '../../lib/maplibre';
 import { colors } from '../../theme/colors';
 import { useResponsive } from '../../hooks/useResponsive';
 import { CONTENT_MAX_WIDTH } from '../../utils/responsive';
+import { MAPLIBRE_STYLE } from '../../utils/mapProvider';
+import { DEFAULT_REGION } from '../../utils/constants';
+import { HOME_CAMERA_ZOOM } from '../../utils/homeMapCamera';
+import { useLocationStore } from '../../stores/locationStore';
 
 function PulseBlock({ style, animatedStyle }) {
   return <Animated.View style={[styles.block, style, animatedStyle]} />;
+}
+
+function ResumeMapBackdrop() {
+  const loc = useLocationStore((s) => s.currentLocation);
+  const lat = Number(loc?.lat);
+  const lng = Number(loc?.lng);
+  const center = Number.isFinite(lat) && Number.isFinite(lng)
+    ? [lng, lat]
+    : [DEFAULT_REGION.longitude, DEFAULT_REGION.latitude];
+
+  return (
+    <MapLibreGL.MapView
+      style={StyleSheet.absoluteFillObject}
+      mapStyle={MAPLIBRE_STYLE}
+      compassEnabled={false}
+      logoEnabled={false}
+      attributionEnabled={false}
+      rotateEnabled={false}
+      pitchEnabled={false}
+      zoomEnabled={false}
+      scrollEnabled={false}
+      pointerEvents="none"
+    >
+      <MapLibreGL.Camera
+        defaultSettings={{
+          centerCoordinate: center,
+          zoomLevel: HOME_CAMERA_ZOOM,
+        }}
+      />
+    </MapLibreGL.MapView>
+  );
 }
 
 export function AppResumeSkeleton({ visible }) {
@@ -51,6 +87,9 @@ export function AppResumeSkeleton({ visible }) {
       pointerEvents="auto"
       style={styles.overlay}
     >
+      <ResumeMapBackdrop />
+      <View pointerEvents="none" style={styles.mapVeil} />
+
       <View
         style={[
           styles.frame,
@@ -65,16 +104,15 @@ export function AppResumeSkeleton({ visible }) {
         ]}
       >
         <View style={[styles.main, isLandscape && styles.mainRow]}>
-          <PulseBlock
-            animatedStyle={animatedStyle}
-            style={[
-              styles.hero,
-              {
-                minHeight: isCompactHeight ? vs(120, { min: 96 }) : vs(180, { min: 140 }),
-                borderRadius: s(22, { min: 18, max: 28 }),
-              },
-            ]}
-          />
+          <View style={styles.mapSlot}>
+            <View
+              accessibilityLabel="Actualizando mapa…"
+              style={styles.statusChip}
+            >
+              <Animated.View style={[styles.statusDot, animatedStyle]} />
+              <Text style={styles.statusText}>Actualizando mapa…</Text>
+            </View>
+          </View>
           <View
             style={[
               styles.sheet,
@@ -141,8 +179,11 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     zIndex: 998,
     elevation: 998,
-    backgroundColor: colors.background,
-    alignItems: 'center',
+    backgroundColor: '#F4F4F0',
+  },
+  mapVeil: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(245, 246, 250, 0.14)',
   },
   frame: {
     flex: 1,
@@ -164,6 +205,35 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     gap: 12,
   },
+  mapSlot: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 56,
+  },
+  statusChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(226,232,240,0.9)',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.primary,
+  },
+  statusText: {
+    color: colors.text,
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+  },
   topBar: {
     position: 'absolute',
     top: 0,
@@ -177,10 +247,6 @@ const styles = StyleSheet.create({
   block: {
     backgroundColor: colors.surfaceLight,
     borderCurve: 'continuous',
-  },
-  hero: {
-    flex: 1,
-    minWidth: 0,
   },
   sheet: {
     marginTop: 12,

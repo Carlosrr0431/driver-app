@@ -59,6 +59,26 @@ describe('shouldAcceptLocationStep', () => {
       speed: 1.5,
     })).toBe(true);
   });
+
+  it('rechaza un salto corto hacia atrás si iba en movimiento', () => {
+    const movingEast = { lat: -24.79, lng: -65.41, speed: 10, heading: 90 };
+    expect(shouldAcceptLocationStep(movingEast, {
+      lat: -24.79,
+      lng: -65.41018,
+      speed: 10,
+      heading: 90,
+    })).toBe(false);
+  });
+
+  it('acepta seguir hacia el este', () => {
+    const movingEast = { lat: -24.79, lng: -65.41, speed: 10, heading: 90 };
+    expect(shouldAcceptLocationStep(movingEast, {
+      lat: -24.79,
+      lng: -65.40982,
+      speed: 10,
+      heading: 90,
+    })).toBe(true);
+  });
 });
 
 describe('resolveForcedFixAccuracy', () => {

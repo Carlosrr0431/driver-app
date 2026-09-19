@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { bearingDegrees } from '../utils/locationWatch';
 
 // Velocidad mínima (m/s) para actualizar el heading del mapa.
 // Por debajo de este valor el auto se considera detenido y el heading
@@ -16,10 +17,19 @@ export const useLocationStore = create((set, get) => ({
   setCurrentLocation: (location) => {
     const prev = get();
     const prevHeading = prev.heading;
+    const prevLoc = prev.currentLocation;
     const speed = location?.speed ?? 0;
     const isMoving = speed > MIN_SPEED_FOR_HEADING_MS;
-    const heading = isMoving ? (location?.heading ?? prevHeading) : prevHeading;
-    const prevLoc = prev.currentLocation;
+    const reportedHeading = Number(location?.heading);
+    const hasReportedHeading = Number.isFinite(reportedHeading) && reportedHeading >= 0;
+    let heading = prevHeading;
+    if (isMoving) {
+      if (hasReportedHeading) {
+        heading = reportedHeading;
+      } else if (prevLoc && Number.isFinite(prevLoc.lat) && Number.isFinite(prevLoc.lng)) {
+        heading = bearingDegrees(prevLoc.lat, prevLoc.lng, location.lat, location.lng);
+      }
+    }
     if (
       prevLoc
       && prevLoc.lat === location?.lat

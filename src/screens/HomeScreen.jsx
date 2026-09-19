@@ -46,6 +46,8 @@ import {
 } from '../utils/homeMapCamera';
 import Toast from 'react-native-toast-message';
 import * as Haptics from 'expo-haptics';
+import CommissionDebtBanner from '../components/CommissionDebtBanner';
+import { shouldShowCommissionDebtUi } from '../../shared/driver-billing';
 
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
@@ -85,7 +87,12 @@ const HomeScreen = () => {
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
   const { data: activeTripData } = useActiveTrip();
-  const { data: commissionData } = useCommissionBalance();
+  const { data: commissionData, refetch: refetchCommission } = useCommissionBalance();
+  const showCommissionDebt = shouldShowCommissionDebtUi(commissionData)
+    && (Boolean(commissionData?.isBlocked) || commissionData?.balance > 0);
+  const showWeeklyManualLock = Boolean(
+    commissionData?.isWeekly && commissionData?.blockReason === 'manual',
+  );
   const { data: todayTrips, isLoading: tripsLoading, refetch: refetchTrips } = useTripHistory('today');
 
   const isOnline = driver?.is_available || false;
@@ -150,7 +157,7 @@ const HomeScreen = () => {
   // Recover any pending trip that arrived while the app was in the background/killed
   const checkPendingTripFromDB = useCallback(async () => {
     if (!driver?.id) return;
-    const { pendingTrip: current, showNewTripModal, setPendingTrip, clearPendingTrip } = useTripStore.getState();
+    const { pendingTrip: current, showNewTripModal, setPendingTrip, clearPendingTrip, updatePendingTrip } = useTripStore.getState();
 
     try {
       const { data } = await supabase
@@ -167,6 +174,8 @@ const HomeScreen = () => {
         // Si cambió el pending o el modal no está visible, refrescar estado para mostrarlo.
         if (current?.id !== data.id || !showNewTripModal) {
           setPendingTrip(data);
+        } else if (current.notes !== data.notes) {
+          updatePendingTrip(data);
         }
       } else if (current) {
         // Evita quedar con pending stale cuando Realtime/push fallan.
@@ -291,7 +300,7 @@ const HomeScreen = () => {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([refetchStats(), refetchTrips(), getCurrentPosition()]);
+    await Promise.all([refetchStats(), refetchTrips(), refetchCommission(), getCurrentPosition()]);
     setRefreshing(false);
   }, []);
 
@@ -713,86 +722,34 @@ const HomeScreen = () => {
           }
           showsVerticalScrollIndicator={false}
         >
-          {/* Alerta de comisiones:
-              Semanal → sin cartel por deuda; si hay bloqueo manual → solo "Cuenta bloqueada".
-              Comisiones → cartel si hay saldo o está bloqueado por vencimiento. */}
-          {commissionData
-            && (
-              commissionData.isBlocked
-              || (!commissionData.isWeekly && commissionData.balance > 0)
-            )
-            && (
+          {/* Comisiones pendientes: solo plan commission_current. Semanal acumula
+              en BD para el dashboard, pero no muestra saldo al chofer. */}
+          {showWeeklyManualLock ? (
             <Animated.View entering={FadeInUp.delay(60).duration(350)}>
-              {commissionData.isWeekly && commissionData.blockReason === 'manual' ? (
-                <View style={{
-                  backgroundColor: '#EEEEF8',
-                  borderRadius: 14, padding: 14, marginBottom: 12,
-                  borderWidth: 1, borderColor: '#C5C8E8',
-                  flexDirection: 'row', alignItems: 'center',
-                }}>
-                  <MaterialCommunityIcons name="lock" size={17} color="#282e69" />
-                  <Text style={{
-                    color: '#DC2626',
-                    fontSize: 13, fontFamily: 'Inter_700Bold', marginLeft: 7,
-                  }}>
-                    Cuenta bloqueada
-                  </Text>
-                </View>
-              ) : (
               <View style={{
-                backgroundColor: commissionData.isBlocked ? '#EEEEF8' : '#FFFBEB',
+                backgroundColor: '#EEEEF8',
                 borderRadius: 14, padding: 14, marginBottom: 12,
-                borderWidth: 1, borderColor: commissionData.isBlocked ? '#C5C8E8' : '#FDE68A',
+                borderWidth: 1, borderColor: '#C5C8E8',
+                flexDirection: 'row', alignItems: 'center',
               }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 5 }}>
-                  <MaterialCommunityIcons
-                    name={commissionData.isBlocked ? 'alert-circle' : 'cash-clock'}
-                    size={17} color={commissionData.isBlocked ? '#282e69' : '#D97706'}
-                  />
-                  <Text style={{
-                    color: commissionData.isBlocked ? '#DC2626' : '#D97706',
-                    fontSize: 13, fontFamily: 'Inter_700Bold', marginLeft: 7,
-                  }}>
-                    {commissionData.isBlocked ? 'Cuenta suspendida' : 'Comisión pendiente'}
-                  </Text>
-                </View>
-                <Text style={{ color: '#6B7280', fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 }}>
-                  {commissionData.isBlocked
-                    ? 'Tu cuenta está bloqueada por comisiones vencidas. Regularizá tu deuda para recibir viajes.'
-                    : 'Tenés comisiones pendientes. Tenés 1 semana de trabajo + 3 días de gracia para regularizar.'}
-                </Text>
-                <View style={{
-                  flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-                  marginTop: 8, paddingTop: 8,
-                  borderTopWidth: 1, borderTopColor: commissionData.isBlocked ? '#D5D8F0' : '#FEF3C7',
+                <MaterialCommunityIcons name="lock" size={17} color="#282e69" />
+                <Text style={{
+                  color: '#DC2626',
+                  fontSize: 13, fontFamily: 'Inter_700Bold', marginLeft: 7,
                 }}>
-                  <Text style={{ color: '#9CA3AF', fontSize: 10, fontFamily: 'Inter_500Medium' }}>Deuda actual</Text>
-                  <Text style={{
-                    color: commissionData.isBlocked ? '#282e69' : '#D97706',
-                    fontSize: 16, fontFamily: 'Inter_700Bold',
-                  }}>
-                    {formatPrice(commissionData.balance)}
-                  </Text>
-                </View>
-                <Pressable
-                  onPress={() => navigation.navigate('CommissionPayment', { commissionData, autoStart: true })}
-                  style={({ pressed }) => ({
-                    marginTop: 10,
-                    backgroundColor: commissionData.isBlocked ? '#282e69' : '#D97706',
-                    borderRadius: 10, paddingVertical: 9,
-                    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    opacity: pressed ? 0.85 : 1,
-                  })}
-                >
-                  <MaterialCommunityIcons name="credit-card-outline" size={15} color="#FFFFFF" />
-                  <Text style={{ color: '#FFFFFF', fontSize: 13, fontFamily: 'Inter_700Bold' }}>
-                    Pagar comisión
-                  </Text>
-                </Pressable>
+                  Cuenta bloqueada
+                </Text>
               </View>
-              )}
             </Animated.View>
-          )}
+          ) : null}
+          {showCommissionDebt ? (
+            <Animated.View entering={FadeInUp.delay(60).duration(350)}>
+              <CommissionDebtBanner
+                commissionData={commissionData}
+                onPayPress={() => navigation.navigate('CommissionPayment', { commissionData, autoStart: true })}
+              />
+            </Animated.View>
+          ) : null}
 
           {/* ── Card de ganancias del día ── */}
           <Animated.View entering={FadeInUp.delay(60).duration(350)} style={{ marginBottom: 10 }}>

@@ -72,7 +72,7 @@ export function WhatsAppTripThread({ visible, loading, messages }) {
     return list.slice(list.length - WHATSAPP_THREAD_PREVIEW_COUNT);
   }, [expanded, list]);
 
-  if (!visible) return null;
+  if (!visible || list.length === 0) return null;
 
   return (
     <View style={[styles.card, compact ? styles.cardCompact : null]}>

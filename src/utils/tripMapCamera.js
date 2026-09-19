@@ -3,28 +3,31 @@ import { MAP_MAX_ZOOM } from './mapProvider';
 /** A menos de esta distancia al retiro/destino, la cámara se aleja. */
 export const ARRIVAL_DISTANCE_METERS = 250;
 
-/** Piso: más cerca que esto los tiles raster OSM se ven en blanco. */
-export const NAV_ZOOM_FLOOR = 15.0;
-export const NAV_ZOOM_CEILING = MAP_MAX_ZOOM - 1.2;
+/**
+ * Techo: OSM raster + padding del sheet se ven grises/vacíos cerca de z17+
+ * (quedan solo la ruta y las flechas de sentido).
+ */
+export const NAV_ZOOM_FLOOR = 13.8;
+export const NAV_ZOOM_CEILING = Math.min(16.0, MAP_MAX_ZOOM - 2);
 
-export const ARRIVAL_ZOOM_3D = 15.7;
-export const ARRIVAL_ZOOM_2D = 15.5;
-export const SETTLED_OVERVIEW_ZOOM = 15.4;
+export const ARRIVAL_ZOOM_3D = 14.4;
+export const ARRIVAL_ZOOM_2D = 14.2;
+export const SETTLED_OVERVIEW_ZOOM = 14.2;
 export const ARRIVAL_PITCH_3D = 28;
 export const ARRIVAL_PITCH_2D = 8;
 
 const ZOOM_TIERS = [
-  { minKmh: 65, zoom: 15.7 },
-  { minKmh: 40, zoom: 16.2 },
-  { minKmh: 20, zoom: 16.8 },
-  { minKmh: 0, zoom: 16.4 },
+  { minKmh: 65, zoom: 14.8 },
+  { minKmh: 40, zoom: 15.2 },
+  { minKmh: 20, zoom: 15.5 },
+  { minKmh: 0, zoom: 15.2 },
 ];
 
 const FOLLOW_ZOOM_TIERS = [
-  { minKmh: 65, zoom: 17.2 },
-  { minKmh: 40, zoom: 17.6 },
-  { minKmh: 20, zoom: 17.9 },
-  { minKmh: 0, zoom: 16.2 },
+  { minKmh: 65, zoom: 15.2 },
+  { minKmh: 40, zoom: 15.6 },
+  { minKmh: 20, zoom: 15.8 },
+  { minKmh: 0, zoom: 15.0 },
 ];
 
 export function getZoomFromTiers(speedKmh, tiers, fallback) {
@@ -39,7 +42,7 @@ export function getZoomFromTiers(speedKmh, tiers, fallback) {
 
 export function getZoomForSpeed(speedKmh, followRoute = false) {
   const tiers = followRoute ? FOLLOW_ZOOM_TIERS : ZOOM_TIERS;
-  return getZoomFromTiers(speedKmh, tiers, followRoute ? 16.2 : 16.4);
+  return getZoomFromTiers(speedKmh, tiers, followRoute ? 15.0 : 15.2);
 }
 
 export function isArrivalCameraDistance(remainingDistanceMeters) {
@@ -86,7 +89,7 @@ export function resolveNavigationCameraZoom({
     ? factor * (threeDEnabled ? 0.45 : 0.5)
     : 0;
   const pulled = Math.max(NAV_ZOOM_FLOOR, zoom - pull);
-  return arriving ? Math.min(NAV_ZOOM_CEILING, pulled) : pulled;
+  return Math.min(NAV_ZOOM_CEILING, pulled);
 }
 
 export function resolveNavigationCameraPitch({

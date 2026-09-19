@@ -60,6 +60,15 @@ describe('setPendingTrip', () => {
     expect(pendingTrip).toBeNull();
     expect(showNewTripModal).toBe(false);
   });
+
+  it('updatePendingTrip fusiona notas sin cerrar el modal', () => {
+    useTripStore.getState().setPendingTrip(MOCK_TRIP);
+    useTripStore.getState().updatePendingTrip({ notes: 'Esperar en la esquina' });
+    const { pendingTrip, showNewTripModal } = useTripStore.getState();
+    expect(pendingTrip.notes).toBe('Esperar en la esquina');
+    expect(pendingTrip.id).toBe(MOCK_TRIP.id);
+    expect(showNewTripModal).toBe(true);
+  });
 });
 
 describe('setActiveTrip', () => {

@@ -3,6 +3,9 @@ const {
   resolveTripFinalDestCoords,
   resolveTripWaypoints,
   cleanTripNotesForDriverDisplay,
+  replaceHumanTripNotes,
+  notesContainPickupJson,
+  notesContainFinalDestJson,
   isApproachOnlyTrip,
   isStreetHailTrip,
   isWhatsAppTrip,
@@ -127,6 +130,16 @@ describe('trip waypoints — passenger app multi-stop', () => {
     expect(cleaned).not.toContain('PICKUP_JSON');
     expect(cleaned).not.toContain('FINAL_DEST_JSON');
   });
+
+  it('replaceHumanTripNotes conserva JSON y cambia el texto del chofer', () => {
+    const next = replaceHumanTripNotes(`${MULTI_STOP_NOTES}\nLlevar silla de bebé.`, 'Esperar en la esquina');
+    expect(cleanTripNotesForDriverDisplay(next)).toBe('Esperar en la esquina');
+    expect(notesContainPickupJson(next)).toBe(true);
+    expect(notesContainFinalDestJson(next)).toBe(true);
+    expect(next).toContain('[APPROACH_ONLY]');
+    expect(next).toContain('[PASSENGER_APP]');
+    expect(next).not.toContain('Llevar silla de bebé');
+  });
 });
 
 describe('viaje en calle (STREET_HAIL)', () => {
@@ -173,5 +186,17 @@ describe('viaje en calle (STREET_HAIL)', () => {
     const cleaned = cleanTripNotesForDriverDisplay(payload.notes);
     expect(cleaned).not.toContain('[STREET_HAIL]');
     expect(cleaned).not.toContain('PICKUP_JSON');
+  });
+
+  it('deja las notas del operador y oculta el boilerplate del panel', () => {
+    const withNotes = cleanTripNotesForDriverDisplay(
+      '[APPROACH_ONLY]\n[DASHBOARD]\nPortón negro, timbre 2.'
+    );
+    expect(withNotes).toBe('Portón negro, timbre 2.');
+
+    const boilerplateOnly = cleanTripNotesForDriverDisplay(
+      '[APPROACH_ONLY]\n[DASHBOARD]\nViaje ingresado desde el panel de operaciones.'
+    );
+    expect(boilerplateOnly).toBeNull();
   });
 });

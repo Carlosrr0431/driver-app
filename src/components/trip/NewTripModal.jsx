@@ -46,6 +46,7 @@ import {
   cleanTripNotesForDriverDisplay,
 } from '../../../shared/trip-contract';
 import { TripRouteTimeline } from './TripRouteTimeline';
+import { TripNotesCard } from './TripNotesCard';
 import { WhatsAppSourceBadge } from './WhatsAppTripThread';
 import { useResponsive } from '../../hooks/useResponsive';
 import { CONTENT_MAX_WIDTH } from '../../utils/responsive';
@@ -517,23 +518,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                 />
               </View>
 
-              {/* Clean user notes (no boilerplate) */}
-              {cleanNotes && (
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'flex-start',
-                  backgroundColor: `${colors.warning}12`,
-                  padding: 12,
-                  borderRadius: 12,
-                  marginBottom: 14,
-                  gap: 8,
-                }}>
-                  <MaterialCommunityIcons name="note-text-outline" size={16} color={colors.warning} style={{ marginTop: 1 }} />
-                  <Text style={{ color: colors.warning, fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1, lineHeight: 18 }}>
-                    {cleanNotes}
-                  </Text>
-                </View>
-              )}
+              <TripNotesCard notes={cleanNotes} alertOnChange tripId={trip?.id} />
             </ScrollView>
 
             {/* ── CTA buttons ── */}

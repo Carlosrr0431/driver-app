@@ -34,7 +34,7 @@ describe('getViewportArrivalZoomBias', () => {
 describe('resolveNavigationCameraZoom', () => {
   it('aleja al llegar al pickup en vez de acercar a 17.8', () => {
     const cruising = getZoomForSpeed(51, true);
-    expect(cruising).toBeGreaterThan(17);
+    expect(cruising).toBeLessThanOrEqual(NAV_ZOOM_CEILING);
 
     const arriving = resolveNavigationCameraZoom({
       speedKmh: 51,
@@ -45,7 +45,7 @@ describe('resolveNavigationCameraZoom', () => {
     });
 
     expect(arriving).toBeLessThanOrEqual(ARRIVAL_ZOOM_3D);
-    expect(arriving).toBeGreaterThanOrEqual(15);
+    expect(arriving).toBeGreaterThanOrEqual(13.5);
     expect(arriving).toBeLessThan(cruising);
   });
 
@@ -93,6 +93,11 @@ describe('resolveNavigationCameraZoom', () => {
       remainingDistanceMeters: 10,
       cornerFactor: -2,
     })).toBeLessThanOrEqual(NAV_ZOOM_CEILING);
+    expect(resolveNavigationCameraZoom({
+      speedKmh: 80,
+      threeDEnabled: true,
+      remainingDistanceMeters: null,
+    })).toBeLessThanOrEqual(NAV_ZOOM_CEILING);
   });
 });
 
@@ -112,8 +117,8 @@ describe('resolveNavigationCameraPitch', () => {
 describe('resolveSettledOverviewZoom', () => {
   it('deja una vista de manzana al salir de navegación', () => {
     const zoom = resolveSettledOverviewZoom({ width: 360, height: 800 });
-    expect(zoom).toBeGreaterThanOrEqual(15);
-    expect(zoom).toBeLessThan(16.2);
+    expect(zoom).toBeGreaterThanOrEqual(13.8);
+    expect(zoom).toBeLessThan(15.2);
   });
 });
 

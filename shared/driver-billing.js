@@ -41,6 +41,26 @@ function isWeeklyBillingMode(mode) {
   return normalizeBillingMode(mode) === BILLING_MODE_WEEKLY;
 }
 
+function billingModeOf(driverOrMode) {
+  if (driverOrMode && typeof driverOrMode === 'object') {
+    return normalizeBillingMode(driverOrMode.billingMode ?? driverOrMode.billing_mode);
+  }
+  return normalizeBillingMode(driverOrMode);
+}
+
+/**
+ * Cartel/deuda de comisiones en la app del chofer: solo plan
+ * commission_current. El semanal acumula igual para el dashboard, pero
+ * no muestra saldo ni botón de pago.
+ */
+function shouldShowCommissionDebtUi(driverOrMode) {
+  if (driverOrMode == null) return false;
+  if (typeof driverOrMode === 'object' && driverOrMode.isWeekly === true) {
+    return false;
+  }
+  return !isWeeklyBillingMode(billingModeOf(driverOrMode));
+}
+
 /**
  * Deuda vencida: pending > 0 y commission_debt_since_at hace más de
  * COMMISSION_BLOCK_AFTER_DAYS (7 de trabajo + 3 de gracia).
@@ -102,6 +122,8 @@ module.exports = {
   COMMISSION_GRACE_DAYS,
   normalizeBillingMode,
   isWeeklyBillingMode,
+  billingModeOf,
+  shouldShowCommissionDebtUi,
   resolveCommissionOverdue,
   isDriverEligibleForDispatch,
   isDriverDispatchBlocked,

@@ -13,9 +13,11 @@ import {
   FOREGROUND_WATCH_DISTANCE_INTERVAL_M,
   FOREGROUND_WATCH_TIME_INTERVAL_MS,
   MOVING_ACCEPT_METERS,
+  MOVING_SPEED_MPS,
   NAV_WATCH_DISTANCE_INTERVAL_M,
   NAV_WATCH_TIME_INTERVAL_MS,
   STOPPED_ACCEPT_METERS,
+  bearingDegrees,
   shouldAcceptLocationStep,
   resolveForcedFixAccuracy,
   shouldRefreshLocationOnForeground,
@@ -475,6 +477,18 @@ export const useLocation = () => {
       stoppedMeters: minStoppedMeters,
     })) {
       return false;
+    }
+
+    const reportedHeading = Number(pos.heading);
+    if (
+      last
+      && Number(pos.speed) > MOVING_SPEED_MPS
+      && (!Number.isFinite(reportedHeading) || reportedHeading < 0)
+    ) {
+      pos = {
+        ...pos,
+        heading: bearingDegrees(last.lat, last.lng, pos.lat, pos.lng),
+      };
     }
 
     lastLocationRef.current = pos;

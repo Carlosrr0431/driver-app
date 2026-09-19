@@ -12,7 +12,7 @@ import { resolveDriverTripRealtimeActions } from '../utils/pendingTripRealtime';
 
 export const useRealtime = () => {
   const { driver } = useAuthStore();
-  const { setPendingTrip, clearPendingTrip, updateActiveTrip } = useTripStore();
+  const { setPendingTrip, clearPendingTrip, updateActiveTrip, updatePendingTrip } = useTripStore();
   const tripChannelRef = useRef(null);
   const messageChannelRef = useRef(null);
   const commissionChannelRef = useRef(null);
@@ -106,6 +106,17 @@ export const useRealtime = () => {
           if (actions.assignPending) {
             await handlePendingTripAssigned(trip, { source: 'update', onNewTrip });
             return;
+          }
+
+          if (actions.mergePending) {
+            const currentPending = useTripStore.getState().pendingTrip;
+            if (
+              currentPending
+              && Object.prototype.hasOwnProperty.call(trip, 'notes')
+              && trip.notes !== currentPending.notes
+            ) {
+              updatePendingTrip(trip);
+            }
           }
 
           if (actions.clearPending) {

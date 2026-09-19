@@ -1,6 +1,6 @@
 {
   "name": "driver-app",
-  "version": "1.0.40",
+  "version": "1.0.43",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "node scripts/start-expo.js",

@@ -95,14 +95,14 @@ describe('WhatsAppTripThread', () => {
     expect(findByText(json, 'Chofer').length).toBe(0);
   });
 
-  it('muestra estado vacío y el badge de origen', () => {
+  it('oculta el cartel si el viaje no tiene mensajes y muestra el badge de origen', () => {
     let thread;
     let badge;
     act(() => {
       thread = TestRenderer.create(<WhatsAppTripThread visible loading={false} messages={[]} />);
       badge = TestRenderer.create(<WhatsAppSourceBadge />);
     });
-    expect(findByText(thread.toJSON(), 'Todavía no hay mensajes de este viaje').length).toBeGreaterThan(0);
+    expect(thread.toJSON()).toBeNull();
     expect(findByText(badge.toJSON(), 'WhatsApp').length).toBeGreaterThan(0);
   });
 

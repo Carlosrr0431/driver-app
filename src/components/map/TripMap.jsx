@@ -12,6 +12,8 @@ import { decodePolyline } from '../../utils/polyline';
 import { projectPointOntoPolyline, prependDriverConnector } from '../../services/navigation';
 import { MAPLIBRE_STYLE } from '../../utils/mapProvider';
 import {
+  ARRIVAL_DISTANCE_METERS,
+  NAV_ZOOM_CEILING,
   resolveFollowPadding,
   resolveNavigationCameraPitch,
   resolveNavigationCameraZoom,
@@ -21,6 +23,7 @@ import { MapRouteLayers } from './MapRouteLayers';
 import RouteEndMarker from './RouteEndMarker';
 import DriverNavMarker from './DriverNavMarker';
 import { DRIVER_PUCK_SIZE_IDLE } from './driverPuckSizes';
+import { useSmoothMapCoords } from '../../hooks/useSmoothMapCoords';
 
 /* ── Constantes de navegación ────────────────────────────────────────────── */
 const NAV_PITCH_NORTH_UP = 12;
@@ -438,6 +441,7 @@ export const TripMap = React.memo(({
   const lastZoomTierRef = useRef(null);
   const freeRideCameraBootstrappedRef = useRef(false);
   const prevNavigationModeRef = useRef(navigationMode);
+  const needsSettleRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
 
   const routeCoords = useMemo(() => {
@@ -447,10 +451,19 @@ export const TripMap = React.memo(({
   }, [routeCoordsProp, polyline]);
 
   /* ── Coordenadas del conductor ─────────────────────────────────────────── */
+  const smoothGps = useSmoothMapCoords(
+    driverLocation?.lat,
+    driverLocation?.lng,
+    driverLocation?.speed,
+    heading,
+  );
   const driverCoord = useMemo(() => {
-    if (!driverLocation) return null;
-    return { latitude: driverLocation.lat, longitude: driverLocation.lng };
-  }, [driverLocation?.lat, driverLocation?.lng]);
+    if (!Number.isFinite(Number(smoothGps?.lat)) || !Number.isFinite(Number(smoothGps?.lng))) {
+      return null;
+    }
+    if (!smoothGps.lat && !smoothGps.lng) return null;
+    return { latitude: smoothGps.lat, longitude: smoothGps.lng };
+  }, [smoothGps.lat, smoothGps.lng]);
 
   /* ── Proyección sobre la ruta ──────────────────────────────────────────── */
   const getRemainingRouteCoords = useCallback(() => {
@@ -583,9 +596,13 @@ export const TripMap = React.memo(({
       return;
     }
     if (stop.center) {
+      const rawZoom = Number(stop.zoom);
+      const zoom = Number.isFinite(rawZoom)
+        ? Math.min(rawZoom, NAV_ZOOM_CEILING)
+        : 15;
       cameraRef.current.setCamera({
         centerCoordinate: stop.center,
-        zoomLevel: stop.zoom ?? 16,
+        zoomLevel: zoom,
         heading: stop.bearing ?? 0,
         pitch: stop.pitch ?? 0,
         padding: stop.padding,
@@ -599,8 +616,17 @@ export const TripMap = React.memo(({
   useEffect(() => {
     const wasNavigating = prevNavigationModeRef.current;
     prevNavigationModeRef.current = navigationMode;
-    if (!wasNavigating || navigationMode || freeRideMode) return;
+    if (navigationMode) {
+      needsSettleRef.current = true;
+      return;
+    }
+    if (freeRideMode) {
+      needsSettleRef.current = false;
+      return;
+    }
+    if (!wasNavigating && !needsSettleRef.current) return;
     if (!driverCoord || !mapReady) return;
+    needsSettleRef.current = false;
     lastZoomTierRef.current = null;
     lastCameraTimeRef.current = 0;
     applyCameraStop({
@@ -684,6 +710,17 @@ export const TripMap = React.memo(({
       hasFitted.current = true;
       const points = [...routeCoords];
       if (driverCoord) points.push(driverCoord);
+      const spanM = getFreeRideRouteSpanMeters(points);
+      if (spanM < 280 && driverCoord) {
+        applyCameraStop({
+          center: [driverCoord.longitude, driverCoord.latitude],
+          bearing: 0,
+          pitch: 0,
+          zoom: resolveSettledOverviewZoom({ width: viewportWidth, height: viewportHeight }),
+          duration: 450,
+        });
+        return;
+      }
       const lngs = points.map((p) => p.longitude);
       const lats = points.map((p) => p.latitude);
       cameraRef.current.fitBounds(
@@ -699,7 +736,7 @@ export const TripMap = React.memo(({
       cancelled = true;
       if (frameId !== null) cancelAnimationFrame(frameId);
     };
-  }, [routeCoords, navigationMode, driverCoord, mapReady]);
+  }, [routeCoords, navigationMode, driverCoord, mapReady, applyCameraStop, viewportWidth, viewportHeight]);
 
   /* ── Cámara de navegación ──────────────────────────────────────────────── */
   useEffect(() => {
@@ -712,6 +749,9 @@ export const TripMap = React.memo(({
     if (!navAnchor) return;
 
     const bearingRoute = remainingRouteCoords.length >= 2 ? remainingRouteCoords : routeCoords;
+    const effectiveRemainingMeters = Number.isFinite(remainingDistanceMeters)
+      ? remainingDistanceMeters
+      : (bearingRoute.length >= 2 ? getFreeRideRouteSpanMeters(bearingRoute) : null);
 
     if (freeRideMode) {
       if (now - lastCameraTimeRef.current < 250) return;
@@ -752,7 +792,7 @@ export const TripMap = React.memo(({
 
     if (now - lastCameraTimeRef.current < 250) return;
     lastCameraTimeRef.current = now;
-    if (Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters < 250) {
+    if (Number.isFinite(effectiveRemainingMeters) && effectiveRemainingMeters < ARRIVAL_DISTANCE_METERS) {
       lastZoomTierRef.current = null;
     }
 
@@ -774,14 +814,14 @@ export const TripMap = React.memo(({
       const zoom = resolveNavigationCameraZoom({
         speedKmh,
         threeDEnabled: true,
-        remainingDistanceMeters,
+        remainingDistanceMeters: effectiveRemainingMeters,
         cornerFactor,
         viewportWidth,
         viewportHeight,
       });
       const pitch = resolveNavigationCameraPitch({
         threeDEnabled: true,
-        remainingDistanceMeters,
+        remainingDistanceMeters: effectiveRemainingMeters,
         cornerFactor,
         basePitch3d: NAV_PITCH_FOLLOW,
       });
@@ -807,14 +847,14 @@ export const TripMap = React.memo(({
       const zoom = resolveNavigationCameraZoom({
         speedKmh,
         threeDEnabled: false,
-        remainingDistanceMeters,
+        remainingDistanceMeters: effectiveRemainingMeters,
         cornerFactor,
         viewportWidth,
         viewportHeight,
       });
       const pitch = resolveNavigationCameraPitch({
         threeDEnabled: false,
-        remainingDistanceMeters,
+        remainingDistanceMeters: effectiveRemainingMeters,
         cornerFactor,
         basePitch2d: NAV_PITCH_NORTH_UP,
       });
@@ -887,6 +927,7 @@ export const TripMap = React.memo(({
       >
         <MapLibreGL.Camera
           ref={cameraRef}
+          maxZoom={NAV_ZOOM_CEILING}
           defaultSettings={{
             centerCoordinate: driverCoord
               ? [driverCoord.longitude, driverCoord.latitude]

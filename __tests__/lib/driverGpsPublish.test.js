@@ -127,6 +127,7 @@ describe('driverGpsPublish', () => {
     expect(client._update).toHaveBeenCalledWith({
       current_lat: -24.79,
       current_lng: -65.41,
+      updated_at: expect.any(String),
     });
     expect(client._eq).toHaveBeenCalledWith('id', 'd1');
     expect(client._upsert).toHaveBeenCalledWith(

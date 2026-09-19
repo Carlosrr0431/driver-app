@@ -8,6 +8,8 @@ import {
   resolveDriverCancelConfirmAction,
   shouldRequeueTripForPassenger,
   clampBottomSheetIndex,
+  recoverClosedBottomSheetIndex,
+  shouldRestoreClosedBottomSheet,
   didNavigationHudChange,
   hasGuidableDestination,
   isLiveDriverTrip,
@@ -218,14 +220,14 @@ describe('street hail setup sheet', () => {
 });
 
 describe('shouldLeaveHomeWhenTripCleared', () => {
-  it('vuelve al home si no hay resumen ni modal de cancelación', () => {
+  it('vuelve al home si no hay resumen de cobro, también si el viaje se canceló', () => {
     expect(shouldLeaveHomeWhenTripCleared({})).toBe(true);
     expect(shouldLeaveHomeWhenTripCleared({
       showingSummary: true,
     })).toBe(false);
     expect(shouldLeaveHomeWhenTripCleared({
       showingCancelledModal: true,
-    })).toBe(false);
+    })).toBe(true);
   });
 });
 
@@ -499,6 +501,26 @@ describe('clampBottomSheetIndex', () => {
     expect(clampBottomSheetIndex(-1, 1)).toBe(1);
     expect(clampBottomSheetIndex(undefined, 0)).toBe(0);
     expect(clampBottomSheetIndex(2, 0)).toBe(2);
+  });
+});
+
+describe('shouldRestoreClosedBottomSheet', () => {
+  it('restaura si Gorhom emite -1 sin overlay ni modal', () => {
+    expect(shouldRestoreClosedBottomSheet({})).toBe(true);
+  });
+
+  it('no restaura si ya está restaurando, hay cobro o el overlay de notas', () => {
+    expect(shouldRestoreClosedBottomSheet({ restoring: true })).toBe(false);
+    expect(shouldRestoreClosedBottomSheet({ showingFinishModal: true })).toBe(false);
+    expect(shouldRestoreClosedBottomSheet({ overlayOpen: true })).toBe(false);
+  });
+});
+
+describe('recoverClosedBottomSheetIndex', () => {
+  it('vuelve al snap anterior y nunca a -1', () => {
+    expect(recoverClosedBottomSheetIndex(1, 0)).toBe(1);
+    expect(recoverClosedBottomSheetIndex(-1, 2)).toBe(2);
+    expect(recoverClosedBottomSheetIndex(-1, -1)).toBe(0);
   });
 });
 

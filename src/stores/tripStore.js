@@ -67,6 +67,11 @@ export const useTripStore = create((set, get) => ({
     driverFreeRide: false,
   }),
   setPendingTrip: (trip) => set({ pendingTrip: trip, showNewTripModal: !!trip }),
+  updatePendingTrip: (updates) =>
+    set((state) => {
+      if (!state.pendingTrip || !updates) return state;
+      return { pendingTrip: { ...state.pendingTrip, ...updates } };
+    }),
   setShowNewTripModal: (show) => set({ showNewTripModal: show }),
   setTripTimer: (timer) => set({ tripTimer: timer }),
   setTripStartTime: (time) => set({ tripStartTime: time }),

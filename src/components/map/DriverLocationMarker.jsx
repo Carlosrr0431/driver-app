@@ -1,16 +1,24 @@
 import React from 'react';
 import { Image, View } from 'react-native';
 import MapLibreGL from '../../lib/maplibre';
+import { useSmoothMapCoords } from '../../hooks/useSmoothMapCoords';
 import { DRIVER_PUCK_SIZE_IDLE } from './driverPuckSizes';
 
 /** Marcador de posición actual del chofer para MapLibre Native. */
 const DriverLocationMarker = React.memo(({ location }) => {
-  if (!location?.lat || !location?.lng) return null;
+  const smooth = useSmoothMapCoords(
+    location?.lat,
+    location?.lng,
+    location?.speed,
+    location?.heading,
+  );
+  if (!Number.isFinite(Number(smooth?.lat)) || !Number.isFinite(Number(smooth?.lng))) return null;
+  if (!smooth.lat && !smooth.lng) return null;
 
   return (
     <MapLibreGL.MarkerView
       id="driver-location-marker"
-      coordinate={[Number(location.lng), Number(location.lat)]}
+      coordinate={[Number(smooth.lng), Number(smooth.lat)]}
       anchor={{ x: 0.5, y: 0.5 }}
     >
       <View style={{

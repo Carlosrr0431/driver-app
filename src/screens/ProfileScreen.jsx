@@ -20,6 +20,7 @@ import { decode } from 'base64-arraybuffer';
 import { colors } from '../theme/colors';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthStore } from '../stores/authStore';
+import { useTrips } from '../hooks/useTrips';
 import { supabase } from '../services/supabase';
 import { Avatar } from '../components/ui/Avatar';
 import { Badge } from '../components/ui/Badge';
@@ -30,6 +31,7 @@ import { useOwner } from '../hooks/useOwner';
 import { isAssignedDriver, isFleetOwner, usesPhoneLogin, formatPhoneForDisplay, MAX_ASSIGNED_DRIVERS } from '../utils/driverRoles';
 import { summarizeDriverRating } from '../../shared/driver-rating';
 import DriverRatingCard from '../components/DriverRatingCard';
+import CommissionDebtBanner from '../components/CommissionDebtBanner';
 
 const ProfileScreen = () => {
   const insets = useSafeAreaInsets();
@@ -37,6 +39,8 @@ const ProfileScreen = () => {
   const { driver, updateDriver } = useAuthStore();
   const { logout, updateProfile } = useAuth();
   const { becomeOwner, useLinkedDrivers } = useOwner();
+  const { useCommissionBalance } = useTrips();
+  const { data: commissionData } = useCommissionBalance();
   const [becomingOwner, setBecomingOwner] = useState(false);
 
   const isOwner = isFleetOwner(driver);
@@ -310,6 +314,10 @@ const ProfileScreen = () => {
 
         <View style={{ paddingHorizontal: 16 }}>
           <Animated.View entering={FadeInDown.delay(140).duration(400)} style={{ marginTop: 14 }}>
+            <CommissionDebtBanner
+              commissionData={commissionData}
+              onPayPress={() => navigation.navigate('CommissionPayment', { commissionData, autoStart: true })}
+            />
             <DriverRatingCard driver={driver} />
           </Animated.View>
 

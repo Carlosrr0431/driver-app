@@ -89,6 +89,63 @@ export function getDistanceMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+export function bearingDegrees(lat1, lng1, lat2, lng2) {
+  const φ1 = Number(lat1) * Math.PI / 180;
+  const φ2 = Number(lat2) * Math.PI / 180;
+  const Δλ = (Number(lng2) - Number(lng1)) * Math.PI / 180;
+  if (![φ1, φ2, Δλ].every(Number.isFinite)) return 0;
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+export function headingDeltaDegrees(fromDeg, toDeg) {
+  const delta = Math.abs(Number(fromDeg) - Number(toDeg)) % 360;
+  return delta > 180 ? 360 - delta : delta;
+}
+
+export const GPS_REVERSE_MAX_M = 28;
+export const GPS_TELEPORT_M = 80;
+export const GPS_REVERSE_HEADING_DEG = 110;
+export const MAX_GPS_EXTRAPOLATE_MS = 3500;
+
+export function shouldAcceptForwardGpsStep(last, next, options = {}) {
+  if (!last || !next) return true;
+  const dist = getDistanceMeters(last.lat, last.lng, next.lat, next.lng);
+  const teleportM = options.teleportM ?? GPS_TELEPORT_M;
+  if (dist >= teleportM) return true;
+  const speed = Number(last.speed);
+  const heading = Number(last.heading);
+  if (!Number.isFinite(speed) || speed < MOVING_SPEED_MPS || !Number.isFinite(heading)) return true;
+  if (dist < 1) return true;
+  const moveHeading = bearingDegrees(last.lat, last.lng, next.lat, next.lng);
+  const reverseMaxM = options.reverseMaxM ?? GPS_REVERSE_MAX_M;
+  return !(headingDeltaDegrees(heading, moveHeading) > GPS_REVERSE_HEADING_DEG && dist < reverseMaxM);
+}
+
+export function extrapolateGps(lat, lng, speedMps, headingDeg, elapsedMs) {
+  const startLat = Number(lat);
+  const startLng = Number(lng);
+  const speed = Number(speedMps);
+  const heading = Number(headingDeg);
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  if (!Number.isFinite(startLat) || !Number.isFinite(startLng)) return { lat: startLat, lng: startLng };
+  if (!Number.isFinite(speed) || speed < MOVING_SPEED_MPS || !Number.isFinite(heading) || elapsed <= 0) {
+    return { lat: startLat, lng: startLng };
+  }
+  const dist = speed * (Math.min(elapsed, MAX_GPS_EXTRAPOLATE_MS) / 1000);
+  const rad = heading * Math.PI / 180;
+  const dNorth = dist * Math.cos(rad);
+  const dEast = dist * Math.sin(rad);
+  const EARTH_M = 6371000;
+  const latRad = startLat * Math.PI / 180;
+  const denom = EARTH_M * Math.cos(latRad);
+  return {
+    lat: startLat + (dNorth / EARTH_M) * (180 / Math.PI),
+    lng: startLng + (denom === 0 ? 0 : (dEast / denom) * (180 / Math.PI)),
+  };
+}
+
 /** Last-known solo para el primer pintado. Si ya hay fix, al volver hay que leer GPS fresco. */
 export function shouldUseLastKnownBootstrap({ force = false, hasCurrentFix = false } = {}) {
   return Boolean(force) && !hasCurrentFix;
@@ -116,7 +173,8 @@ export function shouldAcceptLocationStep(last, next, options = {}) {
     movingMeters: options.movingMeters,
     stoppedMeters: options.stoppedMeters,
   });
-  return dist >= minDist;
+  if (dist < minDist) return false;
+  return shouldAcceptForwardGpsStep(last, next, options);
 }
 
 export function shouldRefreshLocationOnForeground(nextState, prevState) {

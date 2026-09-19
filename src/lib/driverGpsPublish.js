@@ -132,7 +132,11 @@ export async function publishDriverGps({
   if (coordsChanged || force) {
     const { error: driverError } = await client
       .from('drivers')
-      .update({ current_lat: lat, current_lng: lng })
+      .update({
+        current_lat: lat,
+        current_lng: lng,
+        updated_at: new Date(now).toISOString(),
+      })
       .eq('id', driverId);
     if (driverError) {
       console.warn('GPS flota drivers:', driverError.message);

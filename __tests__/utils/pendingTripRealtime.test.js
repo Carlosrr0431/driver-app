@@ -60,6 +60,21 @@ describe('resolveDriverTripRealtimeActions', () => {
 
     expect(actions.assignPending).toBe(true);
     expect(actions.clearPending).toBe(false);
+    expect(actions.mergePending).toBe(false);
+  });
+
+  it('fusiona notas de una oferta pending ya abierta', () => {
+    const actions = resolveDriverTripRealtimeActions({
+      trip: { id: TRIP_ID, status: 'pending', driver_id: DRIVER_ID, notes: 'Esperar' },
+      previousTrip: { id: TRIP_ID, status: 'pending', driver_id: DRIVER_ID, notes: 'Portón' },
+      driverId: DRIVER_ID,
+      pendingTripId: TRIP_ID,
+      activeTripId: null,
+    });
+
+    expect(actions.assignPending).toBe(false);
+    expect(actions.mergePending).toBe(true);
+    expect(actions.clearPending).toBe(false);
   });
 });
 
