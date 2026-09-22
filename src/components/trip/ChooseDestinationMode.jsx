@@ -49,19 +49,6 @@ export function ChooseDestinationMode({
 }) {
   return (
     <View style={styles.wrap}>
-      {isStreetHail ? (
-        <View style={styles.badge}>
-          <MaterialCommunityIcons name="car-arrow-right" size={16} color={colors.primary} />
-          <Text style={styles.badgeText}>Viaje en calle</Text>
-        </View>
-      ) : null}
-      <Text style={styles.title}>¿Cómo ingresás el destino?</Text>
-      <Text style={styles.lead}>
-        {isStreetHail
-          ? 'El pasajero ya está a bordo. Elegí destino o andá sin uno fijo.'
-          : 'Escribí la dirección o andá sin destino y cobrá por los km recorridos.'}
-      </Text>
-
       <ModeCard
         icon="map-search-outline"
         title="Ingresar destino por texto"

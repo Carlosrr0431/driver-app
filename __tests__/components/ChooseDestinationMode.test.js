@@ -65,7 +65,6 @@ describe('ChooseDestinationMode', () => {
     const text = collectText(renderer.toJSON());
     expect(text).toContain('Ir sin destino');
     expect(text).toContain('Cancelar viaje en calle');
-    expect(text).toContain('Viaje en calle');
   });
 
   it('Ir sin destino llama onChooseFreeRide sin romper el render', () => {
