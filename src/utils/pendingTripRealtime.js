@@ -53,7 +53,8 @@ export function resolveDriverTripRealtimeActions({
 }
 
 export function isAcceptedOfferStatus(status) {
-  return String(status || '').toLowerCase() === 'going_to_pickup';
+  const normalized = String(status || '').toLowerCase();
+  return normalized === 'going_to_pickup' || normalized === 'accepted';
 }
 
 export function isCancelledTripStatus(status) {

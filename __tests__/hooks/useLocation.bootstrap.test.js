@@ -32,7 +32,7 @@ describe('useLocation bootstrap del mapa', () => {
         heading: 0,
       },
     });
-    Location.getCurrentPositionAsync.mockImplementation(() => new Promise(() => {}));
+    Location.getCurrentPositionAsync.mockRejectedValue(new Error('no-gps'));
   });
 
   it('con un fix previo pide GPS fresco y no reusa last-known', async () => {

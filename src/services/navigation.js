@@ -46,7 +46,9 @@ function projectPointToSegment(point, start, end) {
   const aby = by - ay;
   const ab2 = abx * abx + aby * aby;
 
-  if (ab2 === 0) return start;
+  if (ab2 === 0) {
+    return { latitude: start.latitude, longitude: start.longitude, t: 0 };
+  }
 
   const apx = px - ax;
   const apy = py - ay;
@@ -54,6 +56,7 @@ function projectPointToSegment(point, start, end) {
   return {
     latitude: ay + aby * t,
     longitude: ax + abx * t,
+    t,
   };
 }
 
@@ -108,8 +111,8 @@ export function evaluateRerouteState({
   const exitThreshold = clampNumber(enterThreshold * 0.58, 20, 55);
   const hardThreshold = Math.max(enterThreshold + 18, enterThreshold * 1.4);
 
-  const persistMs = nearManeuver ? 900 : speedKmh >= 60 ? 1200 : speedKmh >= 30 ? 1700 : 2400;
-  const cooldownMs = nearManeuver ? 3500 : speedKmh >= 60 ? 4000 : 5000;
+  const persistMs = nearManeuver ? 700 : speedKmh >= 60 ? 1000 : speedKmh >= 30 ? 1300 : 1600;
+  const cooldownMs = nearManeuver ? 2800 : speedKmh >= 60 ? 3200 : 3800;
 
   let offRouteSinceTs = Number.isFinite(state.offRouteSinceTs) ? state.offRouteSinceTs : null;
   let offRouteSamples = Number.isFinite(state.offRouteSamples) ? state.offRouteSamples : 0;
@@ -166,20 +169,69 @@ export function evaluateRerouteState({
   };
 }
 
+const polylinePrefixCache = new WeakMap();
+const PROJECT_WINDOW_BACK_SEGMENTS = 24;
+const PROJECT_WINDOW_FORWARD_SEGMENTS = 96;
+
+function getPolylinePrefixMeters(routeCoords = []) {
+  const cached = polylinePrefixCache.get(routeCoords);
+  if (cached) return cached;
+
+  const prefix = new Array(routeCoords.length);
+  prefix[0] = 0;
+  for (let index = 0; index < routeCoords.length - 1; index += 1) {
+    prefix[index + 1] = prefix[index]
+      + getDistanceMeters(routeCoords[index], routeCoords[index + 1]);
+  }
+  polylinePrefixCache.set(routeCoords, prefix);
+  return prefix;
+}
+
 function getPolylineTotalLengthMeters(routeCoords = []) {
   if (routeCoords.length < 2) return 0;
-  let total = 0;
-  for (let index = 0; index < routeCoords.length - 1; index += 1) {
-    total += getDistanceMeters(routeCoords[index], routeCoords[index + 1]);
+  const prefix = getPolylinePrefixMeters(routeCoords);
+  return prefix[prefix.length - 1] || 0;
+}
+
+function projectPointOntoPolylineRange(point, routeCoords, startIndex, endIndex, prefix) {
+  const clampedStart = Math.max(0, startIndex);
+  const clampedEnd = Math.max(clampedStart, Math.min(routeCoords.length - 2, endIndex));
+  let best = {
+    segmentIndex: clampedStart,
+    distanceAlongMeters: prefix[clampedStart] || 0,
+    deviationMeters: Number.POSITIVE_INFINITY,
+    snappedPoint: routeCoords[clampedStart],
+  };
+
+  for (let index = clampedStart; index <= clampedEnd; index += 1) {
+    const start = routeCoords[index];
+    const end = routeCoords[index + 1];
+    const projected = projectPointToSegment(point, start, end);
+    const deviationMeters = getDistanceMeters(point, projected);
+    if (deviationMeters < best.deviationMeters) {
+      const segmentLength = (prefix[index + 1] || 0) - (prefix[index] || 0);
+      const alongSegment = (Number(projected.t) || 0) * segmentLength;
+      best = {
+        segmentIndex: index,
+        distanceAlongMeters: (prefix[index] || 0) + alongSegment,
+        deviationMeters,
+        snappedPoint: {
+          latitude: projected.latitude,
+          longitude: projected.longitude,
+        },
+      };
+    }
   }
-  return total;
+
+  return best;
 }
 
 /**
  * Proyecta un punto GPS sobre la polilínea de ruta.
- * Devuelve posición ajustada a la calle, distancia recorrida y desvío lateral.
+ * Con hintSegmentIndex busca una ventana local para no congelar el JS
+ * recorriendo toda la polilínea en cada tick de GPS.
  */
-export function projectPointOntoPolyline(point, routeCoords = []) {
+export function projectPointOntoPolyline(point, routeCoords = [], options = {}) {
   if (!point || routeCoords.length === 0) {
     return {
       snappedPoint: point || null,
@@ -199,34 +251,22 @@ export function projectPointOntoPolyline(point, routeCoords = []) {
     };
   }
 
-  let best = {
-    segmentIndex: 0,
-    distanceAlongMeters: 0,
-    deviationMeters: Number.POSITIVE_INFINITY,
-    snappedPoint: routeCoords[0],
-  };
-
-  let accumulated = 0;
-  for (let index = 0; index < routeCoords.length - 1; index += 1) {
-    const start = routeCoords[index];
-    const end = routeCoords[index + 1];
-    const projected = projectPointToSegment(point, start, end);
-    const deviationMeters = getDistanceMeters(point, projected);
-    const segmentLength = getDistanceMeters(start, end);
-    const alongSegment = getDistanceMeters(start, projected);
-
-    if (deviationMeters < best.deviationMeters) {
-      best = {
-        segmentIndex: index,
-        distanceAlongMeters: accumulated + alongSegment,
-        deviationMeters,
-        snappedPoint: projected,
-      };
-    }
-    accumulated += segmentLength;
+  const prefix = getPolylinePrefixMeters(routeCoords);
+  const lastSegment = routeCoords.length - 2;
+  const hintRaw = Number(options.hintSegmentIndex);
+  const hasHint = Number.isFinite(hintRaw) && routeCoords.length > 8;
+  if (!hasHint) {
+    return projectPointOntoPolylineRange(point, routeCoords, 0, lastSegment, prefix);
   }
 
-  return best;
+  const hint = Math.max(0, Math.min(lastSegment, Math.round(hintRaw)));
+  return projectPointOntoPolylineRange(
+    point,
+    routeCoords,
+    hint - PROJECT_WINDOW_BACK_SEGMENTS,
+    hint + PROJECT_WINDOW_FORWARD_SEGMENTS,
+    prefix,
+  );
 }
 
 /**
@@ -490,6 +530,7 @@ export function createInitialNavigationProgressState() {
   return {
     lastDistanceAlongMeters: 0,
     lastStepIndex: 0,
+    lastSegmentIndex: 0,
     smoothedEtaSeconds: null,
   };
 }
@@ -524,7 +565,9 @@ export function computeNavigationSnapshot({
     };
   }
 
-  const projection = projectPointOntoPolyline(currentPoint, routeCoords);
+  const projection = projectPointOntoPolyline(currentPoint, routeCoords, {
+    hintSegmentIndex: progressState?.lastSegmentIndex,
+  });
   const lastAlong = Number.isFinite(progressState?.lastDistanceAlongMeters)
     ? progressState.lastDistanceAlongMeters
     : 0;
@@ -582,6 +625,7 @@ export function computeNavigationSnapshot({
     progressState: {
       lastDistanceAlongMeters: distanceAlongMeters,
       lastStepIndex: currentStep?.index ?? lastStepIndex,
+      lastSegmentIndex: projection.segmentIndex,
       smoothedEtaSeconds,
     },
   };

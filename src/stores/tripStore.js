@@ -17,12 +17,15 @@ export const useTripStore = create((set, get) => ({
   pendingOpenChatTripId: null,
   /** Evita que un refetch/realtime resucite el viaje que acabamos de cerrar. */
   ignoredTripId: null,
+  /** Siguiente viaje ya aceptado, detrás del actual. */
+  reservedNextTrip: null,
 
   setActiveTrip: (trip) =>
     set((state) => {
       if (!trip) return state;
       const status = String(trip.status || '');
       if (status === 'completed' || status === 'cancelled' || status === 'queued') return state;
+      if (trip.next_after_trip_id) return state;
       if (state.ignoredTripId && trip.id === state.ignoredTripId) return state;
       if (state.activeTrip === trip) return state;
       return {
@@ -114,6 +117,15 @@ export const useTripStore = create((set, get) => ({
       driverFreeRide: false,
       ignoredTripId: state.activeTrip?.id ?? state.ignoredTripId,
     })),
+
+  setReservedNextTrip: (trip) =>
+    set((state) => {
+      if (!trip) return { reservedNextTrip: null };
+      if (state.reservedNextTrip?.id === trip.id && state.reservedNextTrip === trip) return state;
+      return { reservedNextTrip: trip };
+    }),
+
+  clearReservedNextTrip: () => set({ reservedNextTrip: null }),
 
   clearPendingTrip: () =>
     set({

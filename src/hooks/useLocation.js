@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { AppState, InteractionManager, Platform } from 'react-native';
+import * as Device from 'expo-device';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { supabase } from '../services/supabase';
@@ -24,8 +25,10 @@ import {
   shouldUseLastKnownBootstrap,
   buildFleetBackgroundLocationOptions,
   isAlwaysLocationGranted,
+  readGpsFixOrLastKnown,
 } from '../utils/locationWatch';
 import { isGpsSimulationActive } from '../lib/gpsSimulation';
+import { resolveEmulatorGpsSeed } from '../lib/emulatorGps';
 import {
   canStartFleetBackgroundUpdates,
   requestFleetLocationPermissions,
@@ -65,16 +68,9 @@ async function safeHasStartedLocationUpdates(taskName) {
 }
 
 export const useLocation = () => {
-  const {
-    currentLocation,
-    isTracking,
-    speed,
-    heading,
-    permissionStatus,
-    setCurrentLocation,
-    setIsTracking,
-    setPermissionStatus,
-  } = useLocationStore();
+  const setCurrentLocation = useLocationStore((s) => s.setCurrentLocation);
+  const setIsTracking = useLocationStore((s) => s.setIsTracking);
+  const setPermissionStatus = useLocationStore((s) => s.setPermissionStatus);
 
   const { driver } = useAuthStore();
   const trackingIntervalRef = useRef(null);
@@ -158,18 +154,30 @@ export const useLocation = () => {
     await pushLocationToSupabase(pos, { force });
   }, [driver, updateDriverLocation, pushLocationToSupabase]);
 
-  const readPosition = useCallback(async (force = false) => {
+  const readLastKnownPosition = useCallback(async (options = {}) => {
+    const { ignoreMaxAge = false } = options;
     try {
-      return await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.BestForNavigation,
+      return await Location.getLastKnownPositionAsync({
+        ...(ignoreMaxAge ? {} : { maxAge: LAST_KNOWN_MAX_AGE_MS }),
+        requiredAccuracy: LAST_KNOWN_REQUIRED_ACCURACY_M,
       });
-    } catch (error) {
-      if (!force) throw error;
-      return Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
+    } catch {
+      return null;
     }
   }, []);
+
+  const readPosition = useCallback(async (force = false) => {
+    return readGpsFixOrLastKnown({
+      timeoutMs: force ? 3500 : 8000,
+      readCurrent: () => Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.BestForNavigation,
+      }),
+      readLastKnown: async () => (
+        await readLastKnownPosition()
+        || readLastKnownPosition({ ignoreMaxAge: true })
+      ),
+    });
+  }, [readLastKnownPosition]);
 
   const applyCurrentPosition = useCallback((pos, { syncToSupabase = false } = {}) => {
     lastLocationRef.current = pos;
@@ -179,17 +187,6 @@ export const useLocation = () => {
     }
     return pos;
   }, [setCurrentLocation, syncLocationToBackend]);
-
-  const readLastKnownPosition = useCallback(async () => {
-    try {
-      return await Location.getLastKnownPositionAsync({
-        maxAge: LAST_KNOWN_MAX_AGE_MS,
-        requiredAccuracy: LAST_KNOWN_REQUIRED_ACCURACY_M,
-      });
-    } catch {
-      return null;
-    }
-  }, []);
 
   const refineForcePosition = useCallback((syncToSupabase) => {
     void readPosition(true)
@@ -205,6 +202,14 @@ export const useLocation = () => {
     const { syncToSupabase = false, force = false } = options;
     if (isGpsSimulationActive()) {
       return useLocationStore.getState().currentLocation;
+    }
+    const emulatorSeed = resolveEmulatorGpsSeed({
+      isEmulator: Device.isDevice === false,
+    });
+    if (emulatorSeed) {
+      applyCurrentPosition(emulatorSeed, { syncToSupabase });
+      refineForcePosition(syncToSupabase);
+      return emulatorSeed;
     }
     try {
       const granted = await ensureForegroundPermission();
@@ -556,20 +561,21 @@ export const useLocation = () => {
 
   const setOfflineLocation = useCallback(async () => {
     if (!driver?.id) return;
+    const loc = useLocationStore.getState().currentLocation;
     try {
       await supabase
         .from('driver_locations')
         .upsert({
           driver_id: driver.id,
-          lat: currentLocation?.lat || 0,
-          lng: currentLocation?.lng || 0,
+          lat: loc?.lat || 0,
+          lng: loc?.lng || 0,
           is_online: false,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'driver_id' });
     } catch (error) {
       console.warn('Error setting offline:', error.message);
     }
-  }, [driver, currentLocation]);
+  }, [driver]);
 
   const startWatching = useCallback(async (options = {}) => {
     const { mapOnly = false } = options;
@@ -680,11 +686,11 @@ export const useLocation = () => {
   }, [getCurrentPosition, maybeStartBackgroundUpdates, stopNavigationWatch]);
 
   return {
-    currentLocation,
-    isTracking,
-    speed,
-    heading,
-    permissionStatus,
+    currentLocation: useLocationStore.getState().currentLocation,
+    isTracking: useLocationStore.getState().isTracking,
+    speed: useLocationStore.getState().speed,
+    heading: useLocationStore.getState().heading,
+    permissionStatus: useLocationStore.getState().permissionStatus,
     requestPermissions,
     getCurrentPosition,
     startTracking,

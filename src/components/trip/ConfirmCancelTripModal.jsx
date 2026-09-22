@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Modal,
   View,
   Text,
   Pressable,
@@ -25,14 +24,10 @@ export function ConfirmCancelTripModal({
   const { s, fs, contentMaxWidth, isCompactHeight, screenPadding } = useResponsive();
   const iconSize = isCompactHeight ? s(48) : s(56);
 
+  if (!visible) return null;
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={confirming ? undefined : onDismiss}
-    >
+    <View pointerEvents="auto" style={[styles.root, { zIndex: 80, elevation: 80 }]}>
       <View style={[styles.backdrop, { paddingHorizontal: screenPadding }]}>
         <Pressable
           accessibilityRole="button"
@@ -134,11 +129,14 @@ export function ConfirmCancelTripModal({
           </View>
         </View>
       </View>
-    </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    ...StyleSheet.absoluteFillObject,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.52)',
@@ -151,6 +149,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: colors.borderLight,
+    zIndex: 1,
+    elevation: 12,
     boxShadow: '0 16px 40px rgba(15, 23, 42, 0.18)',
   },
   iconWrap: {

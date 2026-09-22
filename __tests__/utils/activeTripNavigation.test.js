@@ -19,6 +19,9 @@ import {
   notesContainFreeRide,
   resolveActiveTripBackAction,
   resolveActiveTripSheetIndex,
+  resolveActiveTripSnapPoints,
+  shouldAllowSheetContentPan,
+  shouldSnapActiveTripSheet,
   resolveDestinationSearchKeyboardBehavior,
   resolveDestinationSearchTopInset,
   resolveFreeRideActive,
@@ -35,6 +38,9 @@ import {
   shouldFetchGuidedNavigationRoute,
   shouldLeaveHomeWhenTripCleared,
   shouldShowActiveTripNavHud,
+  shouldSkipAdaptiveReroute,
+  canStartAdaptiveReroute,
+  isGuidedArrivalNearby,
   appendGpsTrackPoint,
   toGpsTrackPoint,
   STREET_HAIL_SETUP_STEP,
@@ -48,6 +54,7 @@ describe('isLiveDriverTrip', () => {
     expect(isLiveDriverTrip({ id: '1', status: 'in_progress' })).toBe(true);
     expect(isLiveDriverTrip({ id: '1', status: 'completed' })).toBe(false);
     expect(isLiveDriverTrip({ id: '1', status: 'cancelled' })).toBe(false);
+    expect(isLiveDriverTrip({ id: '1', status: 'accepted', next_after_trip_id: 'live-1' })).toBe(false);
     expect(isLiveDriverTrip(null)).toBe(false);
   });
 });
@@ -290,6 +297,34 @@ describe('resolveActiveTripSheetIndex', () => {
   });
 });
 
+describe('shouldAllowSheetContentPan', () => {
+  it('deja el contenido quieto para que los botones reciban el tap', () => {
+    expect(shouldAllowSheetContentPan({})).toBe(false);
+    expect(shouldAllowSheetContentPan({ showingFinishSlider: true })).toBe(false);
+    expect(shouldAllowSheetContentPan({
+      showingFinishModal: false,
+      showingCancelConfirm: false,
+    })).toBe(false);
+  });
+});
+
+describe('resolveActiveTripSnapPoints', () => {
+  it('agranda el sheet en pantallas chicas y landscape', () => {
+    expect(resolveActiveTripSnapPoints({})).toEqual(['20%', '48%', '78%']);
+    expect(resolveActiveTripSnapPoints({ compactHeight: true })[0]).toBe('26%');
+    expect(resolveActiveTripSnapPoints({ landscape: true })[0]).toBe('30%');
+  });
+});
+
+describe('shouldSnapActiveTripSheet', () => {
+  it('no reanima si el sheet ya está en el snap destino', () => {
+    expect(shouldSnapActiveTripSheet(1, 1, true)).toBe(false);
+    expect(shouldSnapActiveTripSheet(0, 1, true)).toBe(true);
+    expect(shouldSnapActiveTripSheet(1, 0, false)).toBe(false);
+    expect(shouldSnapActiveTripSheet(0, 1, false)).toBe(true);
+  });
+});
+
 describe('canDriverCancelEnRouteToPickup', () => {
   it('permite cancelar solo de camino al origen', () => {
     expect(canDriverCancelEnRouteToPickup({
@@ -513,6 +548,8 @@ describe('shouldRestoreClosedBottomSheet', () => {
     expect(shouldRestoreClosedBottomSheet({ restoring: true })).toBe(false);
     expect(shouldRestoreClosedBottomSheet({ showingFinishModal: true })).toBe(false);
     expect(shouldRestoreClosedBottomSheet({ overlayOpen: true })).toBe(false);
+    expect(shouldRestoreClosedBottomSheet({ showingCancelConfirm: true })).toBe(false);
+    expect(shouldRestoreClosedBottomSheet({ sliderDragging: true })).toBe(false);
   });
 });
 
@@ -805,6 +842,102 @@ describe('viaje sin destino (Ir sin destino)', () => {
     );
     expect(moved.track).toHaveLength(2);
     expect(moved.track[1]).toEqual({ latitude: -24.79100, longitude: -65.41000 });
+  });
+});
+
+describe('shouldSkipAdaptiveReroute', () => {
+  it('no bloquea el recálculo si el chofer ya se desvió aunque remaining esté chico', () => {
+    expect(shouldSkipAdaptiveReroute({
+      flowStep: 'in_progress',
+      remainingDistanceMeters: 80,
+      deviationMeters: 90,
+      distanceToNavTarget: 240,
+      finishProximityMeters: 100,
+    })).toBe(false);
+  });
+
+  it('bloquea el recálculo al llegar de verdad al destino', () => {
+    expect(shouldSkipAdaptiveReroute({
+      flowStep: 'in_progress',
+      remainingDistanceMeters: 70,
+      deviationMeters: 8,
+      distanceToNavTarget: 55,
+      finishProximityMeters: 100,
+    })).toBe(true);
+  });
+
+  it('bloquea en at_pickup y no en un desvío camino al pasajero', () => {
+    expect(shouldSkipAdaptiveReroute({
+      flowStep: 'at_pickup',
+      remainingDistanceMeters: 40,
+      deviationMeters: 12,
+    })).toBe(true);
+
+    expect(shouldSkipAdaptiveReroute({
+      flowStep: 'going_to_pickup',
+      remainingDistanceMeters: 50,
+      deviationMeters: 95,
+      distanceToPickup: 320,
+      finishProximityMeters: 100,
+    })).toBe(false);
+  });
+});
+
+describe('canStartAdaptiveReroute', () => {
+  it('espera el cooldown y no superpone un request en vuelo', () => {
+    expect(canStartAdaptiveReroute({
+      inFlight: true,
+      lastRerouteAt: 1000,
+      now: 2500,
+      cooldownMs: 3800,
+      staleLockMs: 6500,
+    })).toEqual({ allow: false, releaseStaleLock: false });
+
+    expect(canStartAdaptiveReroute({
+      inFlight: false,
+      lastRerouteAt: 1000,
+      now: 2500,
+      cooldownMs: 3800,
+    })).toEqual({ allow: false, releaseStaleLock: false });
+  });
+
+  it('libera un lock colgado y reintenta cuando ya pasó el cooldown', () => {
+    expect(canStartAdaptiveReroute({
+      inFlight: true,
+      lastRerouteAt: 1000,
+      now: 8000,
+      cooldownMs: 3800,
+      staleLockMs: 6500,
+    })).toEqual({ allow: true, releaseStaleLock: true });
+  });
+
+  it('permite el primer recálculo', () => {
+    expect(canStartAdaptiveReroute({
+      inFlight: false,
+      lastRerouteAt: 0,
+      now: 10_000,
+      cooldownMs: 3800,
+    })).toEqual({ allow: true, releaseStaleLock: false });
+  });
+});
+
+describe('isGuidedArrivalNearby', () => {
+  it('no toma remaining chico de la ruta vieja si el GPS está lejos', () => {
+    expect(isGuidedArrivalNearby({
+      remainingDistanceMeters: 70,
+      distanceToTarget: 260,
+      deviationMeters: 88,
+      finishProximityMeters: 100,
+    })).toBe(false);
+  });
+
+  it('confirma llegada por GPS cerca del destino', () => {
+    expect(isGuidedArrivalNearby({
+      remainingDistanceMeters: 400,
+      distanceToTarget: 45,
+      deviationMeters: 70,
+      finishProximityMeters: 100,
+    })).toBe(true);
   });
 });
 

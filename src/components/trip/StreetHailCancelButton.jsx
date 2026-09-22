@@ -1,5 +1,6 @@
 import React from 'react';
-import { Pressable, Text, StyleSheet, ActivityIndicator, View } from 'react-native';
+import { Text, StyleSheet, ActivityIndicator, View } from 'react-native';
+import { Pressable } from 'react-native-gesture-handler';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
 
@@ -16,6 +17,7 @@ export function StreetHailCancelButton({
     <Pressable
       onPress={onPress}
       disabled={busy}
+      delayPressIn={0}
       accessibilityRole="button"
       accessibilityLabel={label}
       style={({ pressed }) => [

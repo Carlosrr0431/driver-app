@@ -21,6 +21,7 @@ beforeEach(() => {
     driverFlowTripId: null,
     driverFreeRide: false,
     ignoredTripId: null,
+    reservedNextTrip: null,
   });
 });
 
@@ -87,6 +88,18 @@ describe('setActiveTrip', () => {
     useTripStore.getState().setActiveTrip({ ...MOCK_TRIP, status: 'going_to_pickup' });
     useTripStore.getState().setActiveTrip({ ...MOCK_TRIP, status: 'queued' });
     expect(useTripStore.getState().activeTrip.status).toBe('going_to_pickup');
+  });
+
+  it('no reemplaza el viaje actual con un siguiente reservado', () => {
+    const live = { ...MOCK_TRIP, id: 'live-1', status: 'in_progress' };
+    useTripStore.getState().setActiveTrip(live);
+    useTripStore.getState().setActiveTrip({
+      ...MOCK_TRIP,
+      id: 'next-1',
+      status: 'accepted',
+      next_after_trip_id: 'live-1',
+    });
+    expect(useTripStore.getState().activeTrip.id).toBe('live-1');
   });
 
   it('no revive el mismo viaje después de clearActiveTrip', () => {

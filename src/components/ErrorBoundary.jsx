@@ -28,17 +28,17 @@ export class ErrorBoundary extends React.Component {
         <View
           style={{
             flex: 1,
-            backgroundColor: '#0F0F1A',
+            backgroundColor: '#F4F6FB',
             justifyContent: 'center',
             alignItems: 'center',
             padding: 24,
           }}
         >
-          <Text style={{ color: '#FF4757', fontSize: 24, fontWeight: 'bold', marginBottom: 16 }}>
+          <Text style={{ color: '#EF4444', fontSize: 24, fontWeight: 'bold', marginBottom: 16 }}>
             Error en la app
           </Text>
           <ScrollView style={{ maxHeight: 200, marginBottom: 24 }}>
-            <Text style={{ color: '#A0AEC0', fontSize: 13, textAlign: 'center' }}>
+            <Text style={{ color: '#64748B', fontSize: 13, textAlign: 'center' }}>
               {this.state.error?.message || 'Error desconocido'}
             </Text>
           </ScrollView>

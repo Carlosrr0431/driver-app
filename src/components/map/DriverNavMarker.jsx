@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, StyleSheet, Image } from 'react-native';
+import { View, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { DRIVER_PUCK_SIZE_NAV } from './driverPuckSizes';
 
 const DRIVER_NAV_PUCK = require('../../../assets/driver-nav-puck.png');
@@ -10,7 +11,7 @@ const DriverNavMarker = React.memo(({ heading = 0 }) => {
 
   return (
     <View style={[styles.puckWrap, { transform: [{ rotate: `${rotation}deg` }] }]}>
-      <Image source={DRIVER_NAV_PUCK} style={styles.puckImage} resizeMode="contain" />
+      <Image source={DRIVER_NAV_PUCK} style={styles.puckImage} contentFit="contain" cachePolicy="memory" />
     </View>
   );
 });

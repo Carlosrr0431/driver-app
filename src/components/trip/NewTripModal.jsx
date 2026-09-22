@@ -62,7 +62,7 @@ const getInitialCountdown = (trip) => {
   return Math.max(0, TRIP_ACCEPT_TIMEOUT - elapsedSeconds);
 };
 
-export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
+export const NewTripModal = ({ visible, trip, onAccept, onReject, parallelOffer = false }) => {
   const { s, isLandscape, sheetMaxHeight, screenPadding } = useResponsive();
   const [countdown, setCountdown] = useState(() => getInitialCountdown(trip));
   const [showRejectSheet, setShowRejectSheet] = useState(false);
@@ -319,6 +319,24 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
             </View>
 
+            {parallelOffer ? (
+              <View style={{
+                backgroundColor: '#111827',
+                borderRadius: 18,
+                paddingVertical: 14,
+                paddingHorizontal: 16,
+                marginBottom: 16,
+                gap: 4,
+              }}>
+                <Text style={{ color: '#34D399', fontSize: 12, fontFamily: 'Inter_700Bold', letterSpacing: 0.6 }}>
+                  SIGUIENTE VIAJE
+                </Text>
+                <Text style={{ color: '#FFFFFF', fontSize: 16, fontFamily: 'Inter_600SemiBold', lineHeight: 22 }}>
+                  Lo hacés cuando termines el viaje actual. El de ahora no se corta.
+                </Text>
+              </View>
+            ) : null}
+
             {/* Progress bar — más alta y visible */}
             <View style={{ height: 5, backgroundColor: colors.borderLight, borderRadius: 3, marginBottom: 20, overflow: 'hidden' }}>
               <Animated.View
@@ -335,7 +353,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap' }}>
                   <Text style={{ color: colors.text, fontSize: 20, fontFamily: 'Inter_700Bold' }}>
-                    {isAccumulatedTrip ? 'Viaje acumulado' : 'Nuevo viaje'}
+                    {parallelOffer ? 'Siguiente viaje' : (isAccumulatedTrip ? 'Viaje acumulado' : 'Nuevo viaje')}
                   </Text>
                   {isAccumulatedTrip ? (
                     <View style={{
@@ -418,7 +436,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                   <Text style={{ color: colors.textMuted, fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.6 }}>
                     PASAJERO
                   </Text>
-                  <Text style={{ color: colors.text, fontSize: 16, fontFamily: 'Inter_600SemiBold', marginTop: 1 }}>
+                  <Text style={{ color: colors.text, fontSize: parallelOffer ? 22 : 16, fontFamily: 'Inter_700Bold', marginTop: 1 }}>
                     {trip.passenger_name || 'Pasajero'}
                   </Text>
                 </View>
@@ -472,6 +490,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                   pickupAddress={pickupAddress}
                   waypoints={tripWaypoints}
                   finalDestinationAddress={destinationDisplayAddress}
+                  large={parallelOffer}
                 />
                 {approachOnly && hasPreloadedDestination && !isAccumulatedTrip ? (
                   <Text style={{
@@ -553,7 +572,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                       <MaterialCommunityIcons name="check-circle" size={22} color="#fff" />
                       <Text style={{ color: '#fff', fontSize: 17, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 }}>
-                        Aceptar viaje
+                        Aceptar {parallelOffer ? 'siguiente' : 'viaje'}
                       </Text>
                     </View>
                   )}
@@ -564,6 +583,10 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  if (parallelOffer) {
+                    handleRejectWithReason('Ocupado en viaje actual');
+                    return;
+                  }
                   setShowRejectSheet(true);
                 }}
                 disabled={isAccepting}
@@ -577,7 +600,7 @@ export const NewTripModal = ({ visible, trip, onAccept, onReject }) => {
                 })}
               >
                 <Text style={{ color: colors.danger, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
-                  Rechazar viaje
+                  {parallelOffer ? 'Ahora no' : 'Rechazar viaje'}
                 </Text>
               </Pressable>
             </View>

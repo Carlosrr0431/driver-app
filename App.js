@@ -234,16 +234,20 @@ export default function App() {
   }, []);
 
   if (!appReady) {
-    return null;
+    return (
+      <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      </View>
+    );
   }
 
   return (
     <ErrorBoundary>
-      <GestureHandlerRootView style={{ flex: 1 }}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
         <QueryClientProvider client={queryClient}>
           <SafeAreaProvider>
             <ResponsiveProvider>
-              <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+              <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
               <AppContent />
               <Toast config={toastConfig} topOffset={60} />
             </ResponsiveProvider>

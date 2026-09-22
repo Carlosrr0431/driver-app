@@ -10,6 +10,8 @@ import {
   shouldPushDriverLocationHeartbeat,
   shouldRefreshLocationOnForeground,
   shouldUseLastKnownBootstrap,
+  shouldCommitMapPaint,
+  readGpsFixOrLastKnown,
 } from '../../src/utils/locationWatch';
 
 describe('shouldUseLastKnownBootstrap', () => {
@@ -178,5 +180,53 @@ describe('buildFleetBackgroundLocationOptions', () => {
     expect(service.notificationBody).not.toMatch(/ubicación/i);
     expect(service).not.toHaveProperty('notificationColor');
     expect(service.killServiceOnDestroy).toBe(false);
+  });
+});
+
+describe('shouldCommitMapPaint', () => {
+  it('omite pintados de menos de 35 cm para no re-renderizar el mapa', () => {
+    expect(shouldCommitMapPaint({
+      lastLat: -24.78000,
+      lastLng: -65.41000,
+      nextLat: -24.78000,
+      nextLng: -65.41000,
+    })).toBe(false);
+
+    expect(shouldCommitMapPaint({
+      lastLat: -24.78000,
+      lastLng: -65.41000,
+      nextLat: -24.78008,
+      nextLng: -65.41000,
+    })).toBe(true);
+  });
+
+  it('fuerza el último frame de la interpolación', () => {
+    expect(shouldCommitMapPaint({
+      lastLat: -24.78000,
+      lastLng: -65.41000,
+      nextLat: -24.78000,
+      nextLng: -65.41000,
+      force: true,
+    })).toBe(true);
+  });
+});
+
+describe('readGpsFixOrLastKnown', () => {
+  it('usa el GPS fresco si llega a tiempo', async () => {
+    const pos = await readGpsFixOrLastKnown({
+      timeoutMs: 200,
+      readCurrent: async () => ({ coords: { latitude: -24.79, longitude: -65.41 } }),
+      readLastKnown: async () => ({ coords: { latitude: -24.70, longitude: -65.30 } }),
+    });
+    expect(pos.coords.latitude).toBe(-24.79);
+  });
+
+  it('cae al último GPS si el fresco no llega', async () => {
+    const pos = await readGpsFixOrLastKnown({
+      timeoutMs: 40,
+      readCurrent: () => new Promise(() => {}),
+      readLastKnown: async () => ({ coords: { latitude: -24.795, longitude: -65.375 } }),
+    });
+    expect(pos.coords.latitude).toBe(-24.795);
   });
 });

@@ -15,6 +15,7 @@ export function TripRouteTimeline({
   activeIndex = null,
   completedThroughIndex = null,
   compact = false,
+  large = false,
 }) {
   const stops = [
     {
@@ -71,8 +72,13 @@ export function TripRouteTimeline({
                   ) : null}
                 </View>
                 <Text
-                  style={[styles.address, isActive && styles.addressActive, isCompleted && !isActive && styles.addressCompleted]}
-                  numberOfLines={2}
+                  style={[
+                    styles.address,
+                    large && styles.addressLarge,
+                    isActive && styles.addressActive,
+                    isCompleted && !isActive && styles.addressCompleted,
+                  ]}
+                  numberOfLines={3}
                 >
                   {stop.address}
                 </Text>
@@ -180,6 +186,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_500Medium',
     lineHeight: 19,
+  },
+  addressLarge: {
+    fontSize: 17,
+    lineHeight: 23,
+    fontFamily: 'Inter_600SemiBold',
   },
   addressActive: {
     fontFamily: 'Inter_600SemiBold',

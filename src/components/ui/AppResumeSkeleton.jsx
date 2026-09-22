@@ -21,10 +21,9 @@ function PulseBlock({ style, animatedStyle }) {
 }
 
 function ResumeMapBackdrop() {
-  const loc = useLocationStore((s) => s.currentLocation);
-  const lat = Number(loc?.lat);
-  const lng = Number(loc?.lng);
-  const center = Number.isFinite(lat) && Number.isFinite(lng)
+  const lat = useLocationStore((s) => s.currentLocation?.lat);
+  const lng = useLocationStore((s) => s.currentLocation?.lng);
+  const center = Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
     ? [lng, lat]
     : [DEFAULT_REGION.longitude, DEFAULT_REGION.latitude];
 
@@ -67,6 +66,8 @@ export function AppResumeSkeleton({ visible }) {
   }));
 
   if (!visible) return null;
+  // El overlay con mapa tapa botones en Android lento. El Home se rehidrata solo.
+  return null;
 
   const padX = Math.max(screenPadding, s(16));
   const chipH = s(36, { min: 32, max: 42 });

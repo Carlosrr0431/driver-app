@@ -26,6 +26,12 @@ import {
 } from '../services/streetHailTrip';
 import { prefetchDriverToPickupRoute } from '../services/navigationRoutePrefetch';
 import { isAcceptedOfferStatus, isCancelledTripStatus } from '../utils/pendingTripRealtime';
+import {
+  isReservedNextTrip,
+  shouldAcceptAsNextTrip,
+  buildAcceptAsNextTripUpdate,
+  buildActivateNextTripUpdate,
+} from '../../shared/next-trip';
 import { reverseGeocode } from '../services/nominatim';
 import {
   resolveCommissionOverdue,
@@ -38,6 +44,11 @@ import {
 } from '../../shared/driver-billing';
 
 const rejectInFlightTripIds = new Set();
+
+/** Reusar el mismo nombre de canal ya suscripto tira "cannot add postgres_changes after subscribe()". */
+function realtimeChannelName(prefix, entityId) {
+  return `${prefix}:${entityId}:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function createTimeoutController(timeoutMs = 12000) {
   const controller = new AbortController();
@@ -82,6 +93,8 @@ export const useTrips = () => {
     clearPendingTrip,
     updateActiveTrip,
     setDriverFlowStep,
+    setReservedNextTrip,
+    clearReservedNextTrip,
   } = useTripStore();
   const queryClient = useQueryClient();
 
@@ -100,15 +113,19 @@ export const useTrips = () => {
             TRIP_STATUS.IN_PROGRESS,
           ])
           .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .limit(5);
 
         if (error) throw error;
-        if (data && isLiveDriverTrip(data)) {
+        const rows = Array.isArray(data) ? data : [];
+        const live = rows.find((row) => isLiveDriverTrip(row));
+        const reserved = rows.find((row) => isReservedNextTrip(row)) || null;
+        setReservedNextTrip(reserved);
+
+        if (live) {
           const currentActiveTrip = useTripStore.getState().activeTrip;
-          const enriched = enrichApproachTrip(data, currentActiveTrip?.id === data.id ? currentActiveTrip : null);
+          const enriched = enrichApproachTrip(live, currentActiveTrip?.id === live.id ? currentActiveTrip : null);
           setActiveTrip(enriched);
-          return data;
+          return live;
         }
         return null;
       },
@@ -119,7 +136,7 @@ export const useTrips = () => {
       if (!driver?.id) return;
 
       const channel = supabase
-        .channel(`active-trip-realtime:${driver.id}`)
+        .channel(realtimeChannelName('active-trip-realtime', driver.id))
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'trips', filter: `driver_id=eq.${driver.id}` },
@@ -128,16 +145,23 @@ export const useTrips = () => {
             if (trip) {
               const currentActiveTrip = useTripStore.getState().activeTrip;
 
-              if (
+              if (isReservedNextTrip(trip)) {
+                setReservedNextTrip(trip);
+              } else if (
                 trip.status === TRIP_STATUS.ACCEPTED
                 || trip.status === TRIP_STATUS.GOING_TO_PICKUP
                 || trip.status === TRIP_STATUS.IN_PROGRESS
               ) {
-                const enriched = enrichApproachTrip(
-                  trip,
-                  currentActiveTrip?.id === trip.id ? currentActiveTrip : null
-                );
-                setActiveTrip(enriched);
+                if (isLiveDriverTrip(trip)) {
+                  const enriched = enrichApproachTrip(
+                    trip,
+                    currentActiveTrip?.id === trip.id ? currentActiveTrip : null
+                  );
+                  setActiveTrip(enriched);
+                  if (useTripStore.getState().reservedNextTrip?.id === trip.id) {
+                    clearReservedNextTrip();
+                  }
+                }
               }
 
               if (
@@ -242,7 +266,7 @@ export const useTrips = () => {
       if (!driver?.id) return;
 
       const channel = supabase
-        .channel(`today-stats-realtime:${driver.id}`)
+        .channel(realtimeChannelName('today-stats-realtime', driver.id))
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'trips', filter: `driver_id=eq.${driver.id}` },
@@ -307,7 +331,7 @@ export const useTrips = () => {
       if (!driver?.id) return;
 
       const channel = supabase
-        .channel(`commission-balance-realtime:${driver.id}`)
+        .channel(realtimeChannelName('commission-balance-realtime', driver.id))
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'drivers', filter: `id=eq.${driver.id}` },
@@ -344,16 +368,22 @@ export const useTrips = () => {
       }
 
       const pendingTripSnapshot = useTripStore.getState().pendingTrip;
+      const liveTrip = useTripStore.getState().activeTrip;
+      const acceptAsNext = shouldAcceptAsNextTrip({ liveTrip, offerTripId: tripId });
 
       // Accept first, verify commissions after — speed is critical with short timeouts.
       const timeout = createTimeoutController(10000);
       const { data, error } = await supabase
         .from('trips')
-        .update({
-          status: TRIP_STATUS.GOING_TO_PICKUP,
-          accepted_at: new Date().toISOString(),
-          dispatch_status: 'accepted',
-        })
+        .update(acceptAsNext
+          ? buildAcceptAsNextTripUpdate()
+          : {
+            status: TRIP_STATUS.GOING_TO_PICKUP,
+            accepted_at: new Date().toISOString(),
+            dispatch_status: 'accepted',
+            next_after_trip_id: null,
+            next_trip_offered_at: null,
+          })
         .eq('id', tripId)
         .eq('driver_id', driver.id)
         .eq('status', TRIP_STATUS.PENDING)
@@ -385,6 +415,18 @@ export const useTrips = () => {
             : 'El viaje ya no está disponible para aceptar.',
         });
         return { success: false, unavailable: true, cancelled };
+      }
+
+      if (acceptAsNext) {
+        setReservedNextTrip(data);
+        clearPendingTrip();
+        queryClient.invalidateQueries({ queryKey: ['activeTrip'] });
+        Toast.show({
+          type: 'success',
+          text1: 'Siguiente viaje listo',
+          text2: 'Lo arrancás automáticamente al terminar el actual',
+        });
+        return { success: true, data, queuedNext: true };
       }
 
       const enrichedActiveTrip = enrichApproachTrip(data, pendingTripSnapshot?.id === tripId ? pendingTripSnapshot : null);
@@ -452,7 +494,7 @@ export const useTrips = () => {
       });
       return { success: false, error, isTimeout };
     }
-  }, [driver?.id, clearPendingTrip, queryClient, setActiveTrip]);
+  }, [driver?.id, clearPendingTrip, queryClient, setActiveTrip, setReservedNextTrip]);
 
   const rejectTrip = useCallback(async (tripId, reason) => {
     const normalizedTripId = String(tripId || '').trim();
@@ -706,13 +748,42 @@ export const useTrips = () => {
       if (error) throw error;
 
       if (status === TRIP_STATUS.COMPLETED || status === TRIP_STATUS.CANCELLED) {
+        const reservedId = useTripStore.getState().reservedNextTrip?.id || null;
         clearActiveTrip();
         if (driver?.id) {
           queryClient.setQueryData(['activeTrip', driver.id], null);
         }
-        // Limpieza en segundo plano: no bloquear la UI del chofer al finalizar.
+
+        let nextTrip = null;
+        if (reservedId && driver?.id) {
+          try {
+            const { data: reservedRow } = await supabase
+              .from('trips')
+              .select('*')
+              .eq('id', reservedId)
+              .eq('driver_id', driver.id)
+              .maybeSingle();
+            if (reservedRow && isLiveDriverTrip(reservedRow)) {
+              nextTrip = reservedRow;
+            } else if (reservedRow && isReservedNextTrip(reservedRow)) {
+              const { data: activated } = await supabase
+                .from('trips')
+                .update(buildActivateNextTripUpdate())
+                .eq('id', reservedId)
+                .eq('driver_id', driver.id)
+                .eq('status', TRIP_STATUS.ACCEPTED)
+                .select()
+                .maybeSingle();
+              if (activated && isLiveDriverTrip(activated)) nextTrip = activated;
+            }
+          } catch (nextTripError) {
+            console.warn('Error activating next trip:', nextTripError);
+          }
+        }
+        clearReservedNextTrip();
+
         void (async () => {
-          if (driver?.id && (status === TRIP_STATUS.COMPLETED || status === TRIP_STATUS.CANCELLED)) {
+          if (driver?.id && !nextTrip) {
             try {
               await supabase.from('drivers').update({ is_available: true }).eq('id', driver.id);
             } catch (availabilityError) {
@@ -724,6 +795,8 @@ export const useTrips = () => {
           queryClient.invalidateQueries({ queryKey: ['commissionBalance'] });
           queryClient.invalidateQueries({ queryKey: ['activeTrip'] });
         })();
+
+        return { success: true, data, nextTrip };
       } else {
         updateActiveTrip(data);
         queryClient.invalidateQueries({ queryKey: ['activeTrip'] });

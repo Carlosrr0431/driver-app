@@ -79,8 +79,9 @@ describe('resolveDriverTripRealtimeActions', () => {
 });
 
 describe('estados de aceptación', () => {
-  it('solo going_to_pickup cuenta como oferta aceptada', () => {
+  it('going_to_pickup y accepted cuentan como oferta aceptada', () => {
     expect(isAcceptedOfferStatus('going_to_pickup')).toBe(true);
+    expect(isAcceptedOfferStatus('accepted')).toBe(true);
     expect(isAcceptedOfferStatus('pending')).toBe(false);
     expect(isAcceptedOfferStatus('cancelled')).toBe(false);
   });

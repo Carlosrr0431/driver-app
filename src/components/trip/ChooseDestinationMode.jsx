@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { Pressable } from 'react-native-gesture-handler';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
 import { StreetHailCancelButton } from './StreetHailCancelButton';
@@ -16,6 +17,7 @@ function ModeCard({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={title}
+      delayPressIn={0}
       style={({ pressed }) => [
         styles.card,
         { borderColor: `${accent}55` },

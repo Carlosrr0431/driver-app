@@ -4,6 +4,7 @@
  */
 
 import { isStreetHailTrip } from '../../shared/trip-contract';
+import { shouldTreatAsLiveDriverTrip } from '../../shared/next-trip';
 import { DRIVER_RELEASE_REASON } from './constants';
 
 export const ACTIVE_TRIP_BACK = {
@@ -13,11 +14,10 @@ export const ACTIVE_TRIP_BACK = {
 };
 
 const TERMINAL_STATUSES = new Set(['completed', 'cancelled']);
-const LIVE_TRIP_STATUSES = new Set(['accepted', 'going_to_pickup', 'in_progress']);
 
 /** Viaje que todavía hay que manejar en ActiveTrip (no resumen ni historial). */
 export function isLiveDriverTrip(trip) {
-  return Boolean(trip?.id) && LIVE_TRIP_STATUSES.has(String(trip.status || ''));
+  return shouldTreatAsLiveDriverTrip(trip);
 }
 
 /** Preferí el store; el cache de React Query puede quedar stale al finalizar. */
@@ -195,8 +195,16 @@ export function shouldRestoreClosedBottomSheet({
   restoring = false,
   showingFinishModal = false,
   overlayOpen = false,
+  showingCancelConfirm = false,
+  sliderDragging = false,
 } = {}) {
-  if (showingFinishModal || overlayOpen || restoring) return false;
+  if (
+    showingFinishModal
+    || overlayOpen
+    || restoring
+    || showingCancelConfirm
+    || sliderDragging
+  ) return false;
   return true;
 }
 
@@ -205,6 +213,32 @@ export function recoverClosedBottomSheetIndex(restoreIndex, lastIndex) {
     restoreIndex,
     clampBottomSheetIndex(lastIndex, 0),
   );
+}
+
+/**
+ * En Android el pan del contenido se come el tap de los botones.
+ * El sheet se mueve solo desde la manija.
+ */
+export function shouldAllowSheetContentPan() {
+  return false;
+}
+
+/** Snaps que dejan mapa + acciones visibles en pantallas chicas y landscape. */
+export function resolveActiveTripSnapPoints({
+  compactHeight = false,
+  landscape = false,
+} = {}) {
+  if (landscape) return ['30%', '64%', '92%'];
+  if (compactHeight) return ['26%', '58%', '88%'];
+  return ['20%', '48%', '78%'];
+}
+
+/** No reanimar el sheet si ya está en el snap destino: en Android barato eso tilda el tap. */
+export function shouldSnapActiveTripSheet(currentIndex, nextIndex, flowChanged = false) {
+  const current = clampBottomSheetIndex(currentIndex, 0);
+  const next = clampBottomSheetIndex(nextIndex, 0);
+  if (next === current) return false;
+  return Boolean(flowChanged) || next > current;
 }
 
 function toPositiveMeters(value) {
@@ -569,4 +603,100 @@ export function didNavigationHudChange(prev, next) {
     || prev.instruction !== next.instruction
     || prev.maneuver !== next.maneuver
     || prev.distanceToStepMeters !== next.distanceToStepMeters;
+}
+
+export const REROUTE_STALE_LOCK_MS = 6500;
+export const REROUTE_OFF_ROUTE_METERS = 40;
+
+/**
+ * No frenar el recálculo si el chofer ya se desvió: remaining a lo largo
+ * de la polilínea vieja puede quedar chico por el progreso monótono.
+ */
+export function shouldSkipAdaptiveReroute({
+  flowStep,
+  remainingDistanceMeters,
+  deviationMeters,
+  distanceToPickup,
+  distanceToNavTarget,
+  finishProximityMeters = 100,
+} = {}) {
+  if (flowStep === 'at_pickup') return true;
+
+  const deviation = Number(deviationMeters);
+  if (Number.isFinite(deviation) && deviation >= REROUTE_OFF_ROUTE_METERS) {
+    return false;
+  }
+
+  if (flowStep === 'going_to_pickup') {
+    const nearPickupByGps = Number.isFinite(distanceToPickup)
+      && distanceToPickup <= finishProximityMeters;
+    const nearPickupByRoute = Number.isFinite(remainingDistanceMeters)
+      && remainingDistanceMeters <= 60
+      && (
+        !Number.isFinite(distanceToPickup)
+        || distanceToPickup <= finishProximityMeters * 2.5
+      );
+    if (nearPickupByGps || nearPickupByRoute) return true;
+  }
+
+  const nearTargetByGps = Number.isFinite(distanceToNavTarget)
+    && distanceToNavTarget <= finishProximityMeters;
+  const nearTargetByRoute = Number.isFinite(remainingDistanceMeters)
+    && remainingDistanceMeters <= finishProximityMeters
+    && (
+      !Number.isFinite(distanceToNavTarget)
+      || distanceToNavTarget <= finishProximityMeters * 2.5
+    );
+  return nearTargetByGps || nearTargetByRoute;
+}
+
+/** Libera un lock colgado y evita superponer requests OSRM. */
+export function canStartAdaptiveReroute({
+  inFlight = false,
+  lastRerouteAt = 0,
+  now = Date.now(),
+  cooldownMs = 3800,
+  staleLockMs = REROUTE_STALE_LOCK_MS,
+} = {}) {
+  const elapsed = now - (Number(lastRerouteAt) || 0);
+  const cooldown = Math.max(1500, Number(cooldownMs) || 3800);
+
+  if (inFlight && elapsed < staleLockMs) {
+    return { allow: false, releaseStaleLock: false };
+  }
+  if (inFlight && elapsed >= staleLockMs) {
+    return {
+      allow: elapsed >= cooldown,
+      releaseStaleLock: true,
+    };
+  }
+  if (elapsed < cooldown) {
+    return { allow: false, releaseStaleLock: false };
+  }
+  return { allow: true, releaseStaleLock: false };
+}
+
+/**
+ * Llegada real: remaining de la ruta solo cuenta si el GPS también está cerca.
+ * Evita mostrar "finalizar" o abortar el reroute con una polilínea vieja.
+ */
+export function isGuidedArrivalNearby({
+  remainingDistanceMeters,
+  distanceToTarget,
+  deviationMeters,
+  finishProximityMeters = 100,
+  onRouteMaxDeviationMeters = 45,
+} = {}) {
+  const deviation = Number(deviationMeters);
+  const onRoute = !Number.isFinite(deviation) || deviation <= onRouteMaxDeviationMeters;
+  const nearByGps = Number.isFinite(distanceToTarget)
+    && distanceToTarget <= finishProximityMeters;
+  const nearByRoute = onRoute
+    && Number.isFinite(remainingDistanceMeters)
+    && remainingDistanceMeters <= finishProximityMeters
+    && (
+      !Number.isFinite(distanceToTarget)
+      || distanceToTarget <= finishProximityMeters * 2.5
+    );
+  return Boolean(nearByGps || nearByRoute);
 }

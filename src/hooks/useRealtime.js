@@ -9,6 +9,7 @@ import { sendLocalNotification } from '../services/notifications';
 import { resolveTripPickupCoords } from '../../shared/trip-contract';
 import { prefetchDriverToPickupRoute } from '../services/navigationRoutePrefetch';
 import { resolveDriverTripRealtimeActions } from '../utils/pendingTripRealtime';
+import { isLiveDriverTrip } from '../utils/activeTripNavigation';
 
 export const useRealtime = () => {
   const { driver } = useAuthStore();
@@ -40,8 +41,10 @@ export const useRealtime = () => {
       || trip.origin_address
       || trip.destination_address
       || 'Retiro';
+    const liveTrip = useTripStore.getState().activeTrip;
+    const isParallel = isLiveDriverTrip(liveTrip) && liveTrip.id !== trip.id;
     await sendLocalNotification(
-      '🚖 Nuevo viaje asignado',
+      isParallel ? 'Siguiente viaje' : 'Nuevo viaje asignado',
       `${trip.passenger_name} - ${pickupAddress}`,
       { type: 'new_trip', tripId: trip.id }
     );
@@ -51,11 +54,11 @@ export const useRealtime = () => {
 
   const subscribeToNewTrips = useCallback((onNewTrip) => {
     if (!driver?.id) {
-      console.log('subscribeToNewTrips: no driver.id, skipping');
+      if (__DEV__) console.log('subscribeToNewTrips: no driver.id, skipping');
       return;
     }
 
-    console.log('subscribeToNewTrips: subscribing for driver_id =', driver.id);
+    if (__DEV__) console.log('subscribeToNewTrips: subscribing for driver_id =', driver.id);
 
     if (tripChannelRef.current) {
       supabase.removeChannel(tripChannelRef.current);
@@ -145,7 +148,7 @@ export const useRealtime = () => {
         }
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
+        if (__DEV__ && status === 'SUBSCRIBED') {
           console.log('Suscrito a nuevos viajes');
         }
       });
@@ -189,7 +192,7 @@ export const useRealtime = () => {
         }
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
+        if (__DEV__ && status === 'SUBSCRIBED') {
           console.log('Suscrito a mensajes del despachador');
         }
       });

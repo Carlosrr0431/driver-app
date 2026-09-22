@@ -11,6 +11,10 @@ process.env.EXPO_PUBLIC_OSRM_URL = 'https://test-osrm.example';
 process.env.EXPO_PUBLIC_NOMINATIM_URL = 'https://test-nominatim.example';
 
 // ── Mocks de módulos nativos de Expo ─────────────────────────────────────────
+jest.mock('expo-device', () => ({
+  isDevice: true,
+}));
+
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
   requestBackgroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),

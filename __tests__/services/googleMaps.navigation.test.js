@@ -110,6 +110,19 @@ describe('evaluateRerouteState', () => {
     expect(second.shouldReroute).toBe(true);
     expect(second.rerouteReason).toBe('deviation_severe');
   });
+
+  it('reintenta mas rapido que el cooldown previo de 5s', () => {
+    const result = evaluateRerouteState({
+      deviationMeters: 0,
+      speedMps: 8,
+      accuracyMeters: 8,
+      now: 0,
+      state: {},
+    });
+
+    expect(result.thresholds.persistMs).toBeLessThanOrEqual(1600);
+    expect(result.thresholds.cooldownMs).toBeLessThanOrEqual(3800);
+  });
 });
 
 describe('projectPointOntoPolyline', () => {
@@ -128,6 +141,34 @@ describe('projectPointOntoPolyline', () => {
     expect(projection.deviationMeters).toBeLessThan(30);
     expect(projection.distanceAlongMeters).toBeGreaterThan(0);
     expect(projection.snappedPoint.latitude).toBeCloseTo(-24.7834, 3);
+  });
+
+  it('con hint usa la ventana local y coincide con el barrido completo sobre la ruta', () => {
+    const longRoute = Array.from({ length: 40 }, (_, index) => ({
+      latitude: -24.7800 - index * 0.0008,
+      longitude: -65.4122,
+    }));
+    const point = { latitude: -24.7800 - 18 * 0.0008, longitude: -65.41225 };
+    const full = projectPointOntoPolyline(point, longRoute);
+    const windowed = projectPointOntoPolyline(point, longRoute, { hintSegmentIndex: 18 });
+
+    expect(windowed.segmentIndex).toBe(full.segmentIndex);
+    expect(windowed.deviationMeters).toBeLessThan(20);
+    expect(Math.abs(windowed.distanceAlongMeters - full.distanceAlongMeters)).toBeLessThan(8);
+  });
+
+  it('detecta desvio lateral alto aunque el hint este sobre la ruta original', () => {
+    const longRoute = Array.from({ length: 30 }, (_, index) => ({
+      latitude: -24.7800 - index * 0.0008,
+      longitude: -65.4122,
+    }));
+    const offRoute = {
+      latitude: -24.7800 - 10 * 0.0008,
+      longitude: -65.4134,
+    };
+    const projection = projectPointOntoPolyline(offRoute, longRoute, { hintSegmentIndex: 10 });
+
+    expect(projection.deviationMeters).toBeGreaterThan(40);
   });
 });
 
@@ -182,6 +223,7 @@ describe('computeNavigationSnapshot', () => {
     expect(second.currentStep).toBeTruthy();
     expect(second.remainingDistanceMeters).toBeGreaterThan(0);
     expect(Number.isFinite(second.remainingDurationSeconds)).toBe(true);
+    expect(Number.isFinite(second.progressState.lastSegmentIndex)).toBe(true);
   });
 
   it('avanza de rotonda a la maniobra siguiente al salir de la rotonda', () => {

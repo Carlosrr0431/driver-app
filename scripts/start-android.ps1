@@ -13,7 +13,7 @@
 param(
   [switch]$Install,
   [switch]$SkipEmulator,
-  [string]$AvdName = 'Pixel_8',
+  [string]$AvdName = 'Pixel_10_Fast',
   [switch]$Clear,
   [switch]$SameWindow
 )
@@ -144,20 +144,43 @@ function Set-EmulatorGpsSalta {
   $serial = Get-AndroidSerial
   if (-not $serial) { return }
 
-  $lat = '-24.7955683'
-  $lng = '-65.3754467'
+  $lat = '-24.794977'
+  $lng = '-65.3756143'
 
   & $adb -s $serial shell settings put global window_animation_scale 0 | Out-Null
   & $adb -s $serial shell settings put global transition_animation_scale 0 | Out-Null
   & $adb -s $serial shell settings put global animator_duration_scale 0 | Out-Null
   & $adb -s $serial shell cmd location set-location-enabled true 2>$null | Out-Null
-  & $adb -s $serial shell appops set com.android.shell android:mock_location allow 2>$null | Out-Null
-  & $adb -s $serial shell appops set $PackageName android:mock_location allow 2>$null | Out-Null
+  cmd /c "`"$adb`" -s $serial shell appops set com.android.shell android:mock_location allow >nul 2>&1" | Out-Null
+  if (Test-DriverAppInstalled) {
+    cmd /c "`"$adb`" -s $serial shell appops set $PackageName android:mock_location allow >nul 2>&1" | Out-Null
+  }
   & $adb -s $serial shell cmd location providers add-test-provider gps --requiresSatellite --supportsAltitude --supportsSpeed --supportsBearing --powerRequirement 1 --accuracy 1 2>$null | Out-Null
   & $adb -s $serial shell cmd location providers set-test-provider-enabled gps true 2>$null | Out-Null
   & $adb -s $serial shell cmd location providers set-test-provider-location gps --location "${lat},${lng}" --accuracy 5 2>$null | Out-Null
   & $adb -s $serial emu geo fix $lng $lat 1200 2>$null | Out-Null
   Write-Step "GPS emulador: $lat, $lng (Salta)"
+  Start-EmulatorGpsPulse -Serial $serial -Lat $lat -Lng $lng
+}
+
+function Start-EmulatorGpsPulse {
+  param([string]$Serial, [string]$Lat, [string]$Lng)
+  $adb = Get-Adb
+  Start-Process -WindowStyle Hidden -FilePath 'powershell.exe' -ArgumentList @(
+    '-NoProfile',
+    '-Command',
+    @"
+`$adb = '$adb'
+`$serial = '$Serial'
+`$lat = '$Lat'
+`$lng = '$Lng'
+for (`$i = 0; `$i -lt 1800; `$i++) {
+  & `$adb -s `$serial emu geo fix `$lng `$lat 1200 2>`$null | Out-Null
+  & `$adb -s `$serial shell cmd location providers set-test-provider-location gps --location "`${lat},`${lng}" --accuracy 5 2>`$null | Out-Null
+  Start-Sleep -Seconds 2
+}
+"@
+  ) | Out-Null
 }
 
 function Test-DriverAppInstalled {
@@ -285,6 +308,7 @@ if ($needsInstall) {
 } else {
   Write-Host "[driver-app] APK ya instalado (usa -Install para recompilar)." -ForegroundColor Cyan
 }
+Set-EmulatorGpsSalta
 
 Wait-MetroReady
 Wait-MetroBundleReady

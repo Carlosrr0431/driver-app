@@ -1,16 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, Linking, Dimensions, Pressable, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, BackHandler, Keyboard, useWindowDimensions } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useDerivedValue,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import { View, Text, Linking, Pressable, TouchableOpacity, StatusBar, StyleSheet, ScrollView, ActivityIndicator, Modal, BackHandler, Keyboard } from 'react-native';
 import BottomSheet, { BottomSheetScrollView, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -42,6 +31,9 @@ import {
   clampBottomSheetIndex,
   recoverClosedBottomSheetIndex,
   shouldRestoreClosedBottomSheet,
+  shouldAllowSheetContentPan,
+  resolveActiveTripSnapPoints,
+  shouldSnapActiveTripSheet,
   didNavigationHudChange,
   isLiveDriverTrip,
   isStreetHailSetupFlow,
@@ -57,6 +49,9 @@ import {
   shouldFetchGuidedNavigationRoute,
   shouldLeaveHomeWhenTripCleared,
   shouldShowActiveTripNavHud,
+  shouldSkipAdaptiveReroute,
+  canStartAdaptiveReroute,
+  isGuidedArrivalNearby,
   toGpsTrackPoint,
   appendGpsTrackPoint,
 } from '../utils/activeTripNavigation';
@@ -101,12 +96,16 @@ import { WhatsAppSourceBadge, WhatsAppTripThread } from '../components/trip/What
 import { ChooseDestinationMode } from '../components/trip/ChooseDestinationMode';
 import { StreetHailCancelButton } from '../components/trip/StreetHailCancelButton';
 import { ConfirmCancelTripModal } from '../components/trip/ConfirmCancelTripModal';
+import { SliderButton } from '../components/trip/SliderButton';
+import { FinishTripOverlay } from '../components/trip/FinishTripOverlay';
+import { SheetActionButton } from '../components/trip/SheetActionButton';
+import { useResponsive } from '../hooks/useResponsive';
 import { useTripChat } from '../hooks/useTripChat';
 import { useAppResumeHydrator } from '../hooks/useAppResumeHydration';
 import { useWhatsAppTripThread } from '../hooks/useWhatsAppTripThread';
 import { isTripChatAvailable } from '../constants/tripChat';
+import { buzzSuccess, beginExclusiveAction } from '../utils/tripActionFeedback';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const EMPTY_ROUTE_COORDS = [];
 const NOTIFY_PASSENGER_URL = `${TRACKING_BASE_URL}/api/driver/notify-passenger`;
 
@@ -695,214 +694,12 @@ function snapOriginToRoute(lat, lng, routeCoords) {
   return { lat, lng };
 }
 
-// ─── SliderButton ─────────────────────────────────────────────────────────────
-// Gesto horizontal en todo el track (RNGH + Reanimated) para evitar conflictos
-// Slider con RNGH + Reanimated para animaciones fluidas en el hilo de UI.
-const SLIDER_THUMB = 52;
-const SLIDER_PAD   = 4;
-const SLIDER_SPRING_RESET = { damping: 22, stiffness: 320, mass: 0.7 };
-
-const sliderS = StyleSheet.create({
-  track: {
-    height: 60, borderRadius: 30, borderWidth: 1.5, marginBottom: 12,
-    justifyContent: 'center', overflow: 'hidden',
-  },
-  fill: {
-    position: 'absolute', top: 0, bottom: 0, left: 0,
-    borderRadius: 30,
-  },
-  labelRow: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-  },
-  labelText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
-  thumb: {
-    width: SLIDER_THUMB, height: SLIDER_THUMB, borderRadius: SLIDER_THUMB / 2,
-    alignItems: 'center', justifyContent: 'center',
-    position: 'absolute', left: SLIDER_PAD,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.22,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-});
-
-const SLIDER_CONFIRM_RATIO = 0.72;
-const SLIDER_MIN_TRACK = SLIDER_THUMB + SLIDER_PAD * 2 + 24;
-
-function SliderButton({
-  onConfirm,
-  label = 'Deslizá para confirmar',
-  color,
-  disabled = false,
-  resetRef,
-}) {
-  const onConfirmRef = useRef(onConfirm);
-  const didTriggerRef = useRef(false);
-  const translateX = useSharedValue(0);
-  const trackWidth = useSharedValue(0);
-  const startX = useSharedValue(0);
-  const dragging = useSharedValue(0);
-  const confirmed = useSharedValue(false);
-  const disabledSV = useSharedValue(disabled);
-
-  useEffect(() => { onConfirmRef.current = onConfirm; }, [onConfirm]);
-  useEffect(() => { disabledSV.value = disabled; }, [disabled, disabledSV]);
-
-  const maxTravel = useDerivedValue(() =>
-    Math.max(1, trackWidth.value - SLIDER_THUMB - SLIDER_PAD * 2),
-  );
-
-  const resetSlider = useCallback(() => {
-    didTriggerRef.current = false;
-    confirmed.value = false;
-    dragging.value = 0;
-    translateX.value = withSpring(0, SLIDER_SPRING_RESET);
-  }, [confirmed, dragging, translateX]);
-
-  const triggerConfirm = useCallback(() => {
-    if (didTriggerRef.current) return;
-    didTriggerRef.current = true;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const opened = onConfirmRef.current?.();
-    if (opened === false) {
-      resetSlider();
-    }
-  }, [resetSlider]);
-
-  React.useImperativeHandle(resetRef, () => ({
-    reset: resetSlider,
-  }), [resetSlider]);
-
-  const panGesture = useMemo(() => Gesture.Pan()
-    .maxPointers(1)
-    .activeOffsetX([-14, 14])
-    .failOffsetY([-140, 140])
-    .onBegin(() => {
-      if (disabledSV.value || confirmed.value) return;
-      if (trackWidth.value < SLIDER_MIN_TRACK) return;
-      dragging.value = 1;
-      startX.value = translateX.value;
-    })
-    .onUpdate((e) => {
-      if (disabledSV.value || confirmed.value) return;
-      if (trackWidth.value < SLIDER_MIN_TRACK) return;
-      const max = maxTravel.value;
-      if (max <= 0) return;
-      translateX.value = Math.max(0, Math.min(startX.value + e.translationX, max));
-      const progress = translateX.value / max;
-      if (progress >= SLIDER_CONFIRM_RATIO) {
-        confirmed.value = true;
-        translateX.value = max;
-        runOnJS(triggerConfirm)();
-      }
-    })
-    .onEnd((e) => {
-      dragging.value = 0;
-      if (disabledSV.value || confirmed.value) return;
-      if (trackWidth.value < SLIDER_MIN_TRACK) {
-        translateX.value = withSpring(0, SLIDER_SPRING_RESET);
-        return;
-      }
-
-      const max = maxTravel.value;
-      const progress = max > 0 ? translateX.value / max : 0;
-      const flickConfirm = e.velocityX > 700 && progress >= 0.45;
-
-      if (progress >= SLIDER_CONFIRM_RATIO || flickConfirm) {
-        confirmed.value = true;
-        translateX.value = withTiming(max, { duration: 100 });
-        runOnJS(triggerConfirm)();
-      } else {
-        translateX.value = withSpring(0, SLIDER_SPRING_RESET);
-      }
-    })
-    .onFinalize((_e, success) => {
-      dragging.value = 0;
-      if (confirmed.value) return;
-      if (!success || disabledSV.value || trackWidth.value < SLIDER_MIN_TRACK) {
-        translateX.value = withSpring(0, SLIDER_SPRING_RESET);
-        return;
-      }
-      const max = maxTravel.value;
-      const progress = max > 0 ? translateX.value / max : 0;
-      if (progress >= SLIDER_CONFIRM_RATIO) {
-        confirmed.value = true;
-        translateX.value = withTiming(max, { duration: 100 });
-        runOnJS(triggerConfirm)();
-        return;
-      }
-      translateX.value = withSpring(0, SLIDER_SPRING_RESET);
-    }),
-  [disabledSV, confirmed, dragging, maxTravel, startX, translateX, triggerConfirm, trackWidth]);
-
-  const btnColor = color || colors.danger;
-
-  const trackStyle = useAnimatedStyle(() => ({
-    opacity: disabledSV.value ? 0.45 : 1,
-  }));
-
-  const fillStyle = useAnimatedStyle(() => ({
-    width: Math.max(trackWidth.value, 1),
-    backgroundColor: btnColor,
-    opacity: 0.32,
-    transform: [{
-      translateX: interpolate(
-        translateX.value,
-        [0, maxTravel.value],
-        [-Math.max(trackWidth.value, 1), 0],
-        Extrapolation.CLAMP,
-      ),
-    }],
-  }));
-
-  const labelStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(
-      translateX.value,
-      [0, maxTravel.value * 0.45],
-      [1, 0],
-      Extrapolation.CLAMP,
-    ),
-  }));
-
-  const thumbStyle = useAnimatedStyle(() => ({
-    backgroundColor: btnColor,
-    transform: [
-      { translateX: translateX.value },
-      { scale: interpolate(dragging.value, [0, 1], [1, 1.06], Extrapolation.CLAMP) },
-    ],
-  }));
-
-  return (
-    <GestureDetector gesture={panGesture}>
-      <Animated.View
-        onLayout={(e) => { trackWidth.value = e.nativeEvent.layout.width; }}
-        style={[
-          sliderS.track,
-          { backgroundColor: `${btnColor}18`, borderColor: `${btnColor}45` },
-          trackStyle,
-        ]}
-      >
-        <Animated.View pointerEvents="none" style={[sliderS.fill, fillStyle]} />
-        <Animated.View style={[sliderS.labelRow, labelStyle]} pointerEvents="none">
-          <MaterialCommunityIcons name="chevron-double-right" size={16} color={btnColor} />
-          <Text style={[sliderS.labelText, { color: btnColor }]}>{label}</Text>
-          <MaterialCommunityIcons name="chevron-double-right" size={16} color={`${btnColor}55`} />
-        </Animated.View>
-        <Animated.View style={[sliderS.thumb, thumbStyle]} pointerEvents="none">
-          <MaterialCommunityIcons name="flag-checkered" size={22} color="#fff" />
-        </Animated.View>
-      </Animated.View>
-    </GestureDetector>
-  );
-}
 
 const ActiveTripScreen = () => {
   const DEFAULT_TARIFF_PER_KM = 600;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { height: viewportHeight } = useWindowDimensions();
+  const { height: viewportHeight, isCompactHeight, isLandscape, screenPadding } = useResponsive();
   const flowLockRef = useRef(null);
   const bottomSheetRef = useRef(null);
   const sheetScrollRef = useRef(null);
@@ -923,12 +720,19 @@ const ActiveTripScreen = () => {
   const routeCoordsRef = useRef([]);
   const autocompleteTimerRef = useRef(null);
   const navProgressRef = useRef(createInitialNavigationProgressState());
+  const lastDeviationMetersRef = useRef(null);
   const finishTripInFlightRef = useRef(false);
   const leaveTripAllowedRef = useRef(false);
   const leavingHomeRef = useRef(false);
   const showSummaryRef = useRef(false);
   const showCancelledModalRef = useRef(false);
   const showFinishModalRef = useRef(false);
+  const showCancelConfirmRef = useRef(false);
+  const sliderDraggingRef = useRef(false);
+  const finishArmedRef = useRef(false);
+  const actionLockRef = useRef(false);
+  const uiGestureLockRef = useRef(false);
+  const frozenNavRef = useRef({ currentLocation: null, heading: 0, speed: 0 });
   const lastSheetIndexRef = useRef(0);
   const lastSheetSnapKeyRef = useRef('');
   const remainingDistanceMetersRef = useRef(null);
@@ -953,6 +757,7 @@ const ActiveTripScreen = () => {
     driverFlowTripId,
     driverFreeRide,
     setDriverFlowStep,
+    reservedNextTrip,
   } = useTripStore();
   const session = useAuthStore((s) => s.session);
   const driverId = useAuthStore((s) => s.driver?.id);
@@ -1018,9 +823,15 @@ const ActiveTripScreen = () => {
     [activeTrip?.notes],
   );
 
-  const currentLocation = useLocationStore((s) => s.currentLocation);
-  const heading = useLocationStore((s) => s.heading);
-  const speed = useLocationStore((s) => s.speed);
+  const currentLocation = useLocationStore((s) => (
+    uiGestureLockRef.current ? frozenNavRef.current.currentLocation : s.currentLocation
+  ));
+  const heading = useLocationStore((s) => (
+    uiGestureLockRef.current ? frozenNavRef.current.heading : s.heading
+  ));
+  const speed = useLocationStore((s) => (
+    uiGestureLockRef.current ? frozenNavRef.current.speed : s.speed
+  ));
 
   const [routePolyline, setRoutePolyline] = useState(null);
   const [routePolylineCoords, setRoutePolylineCoords] = useState([]);
@@ -1028,6 +839,7 @@ const ActiveTripScreen = () => {
   const [routeSteps, setRouteSteps] = useState([]);
   const [showSummary, setShowSummary] = useState(false);
   const [completedTrip, setCompletedTrip] = useState(null);
+  const [upcomingNextTrip, setUpcomingNextTrip] = useState(null);
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [finishingTrip, setFinishingTrip] = useState(false);
   const [showCancelledModal, setShowCancelledModal] = useState(false);
@@ -1084,6 +896,7 @@ const ActiveTripScreen = () => {
   showSummaryRef.current = showSummary;
   showCancelledModalRef.current = showCancelledModal;
   showFinishModalRef.current = showFinishModal;
+  showCancelConfirmRef.current = showCancelConfirm;
 
   const exitDestinationSearch = useCallback(() => {
     Keyboard.dismiss();
@@ -1104,7 +917,13 @@ const ActiveTripScreen = () => {
   const destinationSearchKeyboardBehavior = resolveDestinationSearchKeyboardBehavior(
     isSearchingDestination,
   );
-  const snapPoints = useMemo(() => ['20%', '48%', '78%'], []);
+  const snapPoints = useMemo(
+    () => resolveActiveTripSnapPoints({
+      compactHeight: isCompactHeight,
+      landscape: isLandscape,
+    }),
+    [isCompactHeight, isLandscape],
+  );
   const restoreSheetIndexRef = useRef(0);
   const snapSheetTo = useCallback((index) => {
     const next = clampBottomSheetIndex(index, 0);
@@ -1172,6 +991,8 @@ const ActiveTripScreen = () => {
       restoring: restoringSheetRef.current,
       showingFinishModal: showFinishModalRef.current,
       overlayOpen: notesOverlayOpenRef.current,
+      showingCancelConfirm: showCancelConfirmRef.current,
+      sliderDragging: sliderDraggingRef.current,
     })) return;
     restoringSheetRef.current = true;
     const restoreTo = recoverClosedBottomSheetIndex(
@@ -1193,8 +1014,8 @@ const ActiveTripScreen = () => {
   }, []);
   // Sheet colapsado ≈ 20%: botones un poco por encima para que no choquen.
   const mapControlsBottomOffset = useMemo(
-    () => Math.max(160, Math.round(SCREEN_HEIGHT * 0.22) + 16),
-    [],
+    () => Math.max(160, Math.round(viewportHeight * 0.22) + 16),
+    [viewportHeight],
   );
 
   // Derive initial flow step from DB status (solo al cambiar de viaje o status en BD)
@@ -1294,6 +1115,23 @@ const ActiveTripScreen = () => {
     });
   }, [clearActiveTrip, driverId, navigation, queryClient]);
 
+  const startNextFromSummary = useCallback(() => {
+    const nextTrip = upcomingNextTrip;
+    if (!nextTrip?.id) {
+      leaveToHome();
+      return;
+    }
+    leaveTripAllowedRef.current = true;
+    showSummaryRef.current = false;
+    setShowSummary(false);
+    setCompletedTrip(null);
+    setUpcomingNextTrip(null);
+    useTripStore.getState().setActiveTrip(nextTrip);
+    setDriverFlowStep(FLOW_STEP.GOING_TO_PICKUP, nextTrip.id);
+    queryClient.setQueryData(['activeTrip', driverId], nextTrip);
+    leaveTripAllowedRef.current = false;
+  }, [upcomingNextTrip, leaveToHome, setDriverFlowStep, queryClient, driverId]);
+
   useEffect(() => {
     if (activeTrip?.id) {
       leavingHomeRef.current = false;
@@ -1305,6 +1143,7 @@ const ActiveTripScreen = () => {
   useEffect(() => {
     if (activeTrip?.status !== TRIP_STATUS.CANCELLED) return;
     if (leaveTripAllowedRef.current || leavingHomeRef.current) return;
+    if (useTripStore.getState().reservedNextTrip?.id) return;
     if (String(activeTrip.cancel_reason || '') !== DRIVER_RELEASE_REASON) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
@@ -1338,7 +1177,13 @@ const ActiveTripScreen = () => {
         if (!finishingTrip) {
           setShowFinishModal(false);
           sliderRef.current?.reset();
+          uiGestureLockRef.current = false;
+          sliderDraggingRef.current = false;
         }
+        return true;
+      }
+      if (showCancelConfirm) {
+        if (!cancellingStreetHail) setShowCancelConfirm(false);
         return true;
       }
 
@@ -1390,6 +1235,8 @@ const ActiveTripScreen = () => {
     destinationSet,
     showFinishModal,
     finishingTrip,
+    showCancelConfirm,
+    cancellingStreetHail,
     exitDestinationSearch,
   ]);
 
@@ -1419,6 +1266,7 @@ const ActiveTripScreen = () => {
     rerouteInFlightRef.current = false;
     rerouteEvalStateRef.current = createInitialRerouteEvalState();
     navProgressRef.current = createInitialNavigationProgressState();
+    lastDeviationMetersRef.current = null;
     setIsRerouting(false);
     lastNavHudRef.current = null;
     setNextStepInfo(null);
@@ -1557,7 +1405,7 @@ const ActiveTripScreen = () => {
   const fetchNavigationRoute = useCallback(async (forceRefresh = false) => {
     const trip = useTripStore.getState().activeTrip;
     const loc = useLocationStore.getState().currentLocation;
-    if (!trip || !loc) return;
+    if (!trip || !loc) return false;
     if (!shouldFetchGuidedNavigationRoute({
       isFreeRide: isFreeRideActive,
       flaggedFreeRide: useTripStore.getState().driverFreeRide,
@@ -1566,7 +1414,7 @@ const ActiveTripScreen = () => {
       trip,
       tripFinalDestination,
       hasPlannedMultiStopRoute,
-    })) return;
+    })) return false;
 
     try {
       const { point: pickupPoint } = resolvePickupPoint(trip, loc);
@@ -1585,8 +1433,8 @@ const ActiveTripScreen = () => {
           lng: parseFloat(pickupPoint?.lng),
         };
 
-      if (!Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return;
-      if (!Number.isFinite(destination.lat) || !Number.isFinite(destination.lng)) return;
+      if (!Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return false;
+      if (!Number.isFinite(destination.lat) || !Number.isFinite(destination.lng)) return false;
 
       const routeKey = [
         trip.id,
@@ -1596,12 +1444,15 @@ const ActiveTripScreen = () => {
         Number(destination.lat).toFixed(6),
         Number(destination.lng).toFixed(6),
       ].join('|');
+      const inFlightKey = forceRefresh
+        ? `${routeKey}|${Number(origin.lat).toFixed(5)}|${Number(origin.lng).toFixed(5)}`
+        : routeKey;
 
       if (!forceRefresh && routeFetched.current && lastRouteKeyRef.current === routeKey) {
-        return;
+        return false;
       }
       if (!forceRefresh && routeInFlightKeyRef.current === routeKey) {
-        return;
+        return false;
       }
 
       let requestId = routeRequestIdRef.current;
@@ -1647,12 +1498,12 @@ const ActiveTripScreen = () => {
         const cached = peekCachedDirections(origin, destination);
         if (cached) {
           requestId = ++routeRequestIdRef.current;
-          if (applyResult(cached, true)) return;
+          if (applyResult(cached, true)) return true;
         }
       }
 
       requestId = ++routeRequestIdRef.current;
-      routeInFlightKeyRef.current = routeKey;
+      routeInFlightKeyRef.current = inFlightKey;
 
       if (!forceRefresh && !isDirectionsInFlight(origin, destination)) {
         getDirectionsOverview(origin, destination)
@@ -1662,14 +1513,15 @@ const ActiveTripScreen = () => {
 
       try {
         const result = await getDirections(origin, destination, { bypassCache: forceRefresh });
-        applyResult(result, true);
+        return applyResult(result, true);
       } finally {
-        if (routeInFlightKeyRef.current === routeKey) {
+        if (routeInFlightKeyRef.current === inFlightKey) {
           routeInFlightKeyRef.current = null;
         }
       }
     } catch (error) {
       console.log('Error fetching route:', error);
+      return false;
     }
   }, [
     activeTrip?.id,
@@ -1686,25 +1538,38 @@ const ActiveTripScreen = () => {
     hasPlannedMultiStopRoute,
   ]);
 
-  const triggerAdaptiveReroute = useCallback(async (reason, cooldownMs = 5000) => {
+  const triggerAdaptiveReroute = useCallback(async (reason, cooldownMs = 3800) => {
     const now = Date.now();
     const minCooldownMs = Number.isFinite(cooldownMs)
       ? Math.max(1500, Number(cooldownMs))
-      : 5000;
+      : 3800;
 
-    if (rerouteInFlightRef.current) return;
-    if (now - lastRerouteAtRef.current < minCooldownMs) return;
+    const decision = canStartAdaptiveReroute({
+      inFlight: rerouteInFlightRef.current,
+      lastRerouteAt: lastRerouteAtRef.current,
+      now,
+      cooldownMs: minCooldownMs,
+    });
+    if (decision.releaseStaleLock) {
+      rerouteInFlightRef.current = false;
+      setIsRerouting(false);
+    }
+    if (!decision.allow) return;
 
     rerouteInFlightRef.current = true;
-    setIsRerouting(true);
     lastRerouteAtRef.current = now;
+    const routePromise = fetchNavigationRoute(true);
+    setIsRerouting(true);
 
     try {
       announceReroute();
-      await fetchNavigationRoute(true);
-      resetAnnouncements();
-      rerouteEvalStateRef.current = createInitialRerouteEvalState();
-      navProgressRef.current = createInitialNavigationProgressState();
+      const applied = await routePromise;
+      if (applied) {
+        resetAnnouncements();
+        rerouteEvalStateRef.current = createInitialRerouteEvalState();
+        navProgressRef.current = createInitialNavigationProgressState();
+        lastDeviationMetersRef.current = null;
+      }
     } catch (error) {
       console.warn('Error recalculando ruta:', reason || error);
     } finally {
@@ -1762,7 +1627,7 @@ const ActiveTripScreen = () => {
     if (currentLocation && flowStep === FLOW_STEP.IN_PROGRESS) {
       addTripDistance(currentLocation);
     }
-  }, [currentLocation]);
+  }, [currentLocation?.lat, currentLocation?.lng, flowStep]);
 
   useEffect(() => {
     freeRideTrackRef.current = [];
@@ -1934,6 +1799,38 @@ const ActiveTripScreen = () => {
   // adding it to the useCallback dependency array.
   useEffect(() => { routeCoordsRef.current = routeCoords; }, [routeCoords]);
 
+  const distanceToPickup = useMemo(() => {
+    if (!currentLocation || !activeTrip) return null;
+    const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
+    const pickupLat = pickupPoint?.lat;
+    const pickupLng = pickupPoint?.lng;
+    if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) return null;
+    return haversineMeters(
+      currentLocation.lat, currentLocation.lng,
+      pickupLat, pickupLng
+    );
+  }, [currentLocation, activeTrip?.origin_lat, activeTrip?.origin_lng, activeTrip?.destination_lat, activeTrip?.destination_lng, activeTrip?.notes]);
+
+  const distanceToFinalDestination = useMemo(() => {
+    if (!currentLocation || !tripFinalDestination) return null;
+    return haversineMeters(
+      currentLocation.lat,
+      currentLocation.lng,
+      tripFinalDestination.lat,
+      tripFinalDestination.lng,
+    );
+  }, [currentLocation, tripFinalDestination]);
+
+  const distanceToActiveNavTarget = useMemo(() => {
+    if (!currentLocation || !activeNavTarget) return null;
+    return haversineMeters(
+      currentLocation.lat,
+      currentLocation.lng,
+      activeNavTarget.lat,
+      activeNavTarget.lng,
+    );
+  }, [currentLocation, activeNavTarget]);
+
   const effectiveTariffPerKm = useMemo(() => {
     const kmRate = Number(tariffInfo.perKm);
     return Number.isFinite(kmRate) && kmRate > 0 ? kmRate : DEFAULT_TARIFF_PER_KM;
@@ -2080,6 +1977,7 @@ const ActiveTripScreen = () => {
 
     navProgressRef.current = snapshot.progressState;
     remainingDistanceMetersRef.current = snapshot.remainingDistanceMeters;
+    lastDeviationMetersRef.current = snapshot.deviationMeters;
 
     const nextHud = {
       remainingDistanceMeters: snapshot.remainingDistanceMeters,
@@ -2113,36 +2011,23 @@ const ActiveTripScreen = () => {
 
   useEffect(() => {
     if (isFreeRideActive || !currentLocation || routeCoords.length < 2) return;
-    if (
-      Number.isFinite(remainingDistanceMeters)
-      && remainingDistanceMeters <= FINISH_TRIP_MAX_DISTANCE_METERS
-    ) {
+    if (shouldSkipAdaptiveReroute({
+      flowStep,
+      remainingDistanceMeters: remainingDistanceMetersRef.current,
+      deviationMeters: lastDeviationMetersRef.current,
+      distanceToPickup,
+      distanceToNavTarget: distanceToActiveNavTarget,
+      finishProximityMeters: FINISH_TRIP_MAX_DISTANCE_METERS,
+    })) {
       return;
     }
-    if (flowStep === FLOW_STEP.AT_PICKUP) return;
-    if (
-      flowStep === FLOW_STEP.GOING_TO_PICKUP
-      && (
-        (Number.isFinite(remainingDistanceMeters) && remainingDistanceMeters <= 60)
-        || (Number.isFinite(distanceToPickup) && distanceToPickup <= FINISH_TRIP_MAX_DISTANCE_METERS)
-      )
-    ) {
-      return;
-    }
-
-    const currentPoint = {
-      latitude: currentLocation.lat,
-      longitude: currentLocation.lng,
-    };
-    const projection = projectPointOntoPolyline(currentPoint, routeCoords);
-    const deviationMeters = projection.deviationMeters;
 
     const speedMps = Number.isFinite(currentLocation.speed)
       ? Number(currentLocation.speed)
       : (Number.isFinite(speed) ? Number(speed) : 0);
 
     const evaluation = evaluateRerouteState({
-      deviationMeters,
+      deviationMeters: lastDeviationMetersRef.current,
       speedMps,
       accuracyMeters: currentLocation.accuracy,
       distanceToNextStepMeters: nextStepInfo?.distanceToStepMeters,
@@ -2158,49 +2043,19 @@ const ActiveTripScreen = () => {
       );
     }
   }, [
-    currentLocation,
+    currentLocation?.lat,
+    currentLocation?.lng,
+    currentLocation?.speed,
+    currentLocation?.accuracy,
     routeCoords,
     speed,
     flowStep,
     distanceToPickup,
+    distanceToActiveNavTarget,
     nextStepInfo?.distanceToStepMeters,
-    remainingDistanceMeters,
     triggerAdaptiveReroute,
     isFreeRideActive,
   ]);
-
-  // Distance to pickup
-  const distanceToPickup = useMemo(() => {
-    if (!currentLocation || !activeTrip) return null;
-    const { point: pickupPoint } = resolvePickupPoint(activeTrip, currentLocation);
-    const pickupLat = pickupPoint?.lat;
-    const pickupLng = pickupPoint?.lng;
-    if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) return null;
-    return haversineMeters(
-      currentLocation.lat, currentLocation.lng,
-      pickupLat, pickupLng
-    );
-  }, [currentLocation, activeTrip?.origin_lat, activeTrip?.origin_lng, activeTrip?.destination_lat, activeTrip?.destination_lng, activeTrip?.notes]);
-
-  const distanceToFinalDestination = useMemo(() => {
-    if (!currentLocation || !tripFinalDestination) return null;
-    return haversineMeters(
-      currentLocation.lat,
-      currentLocation.lng,
-      tripFinalDestination.lat,
-      tripFinalDestination.lng,
-    );
-  }, [currentLocation, tripFinalDestination]);
-
-  const distanceToActiveNavTarget = useMemo(() => {
-    if (!currentLocation || !activeNavTarget) return null;
-    return haversineMeters(
-      currentLocation.lat,
-      currentLocation.lng,
-      activeNavTarget.lat,
-      activeNavTarget.lng,
-    );
-  }, [currentLocation, activeNavTarget]);
 
   const hasActiveTripDestination = useMemo(() => {
     if (isFreeRideActive) return true;
@@ -2215,12 +2070,6 @@ const ActiveTripScreen = () => {
     isFreeRideActive,
   ]);
 
-  const isNearFinalDestinationByRoute = Number.isFinite(remainingDistanceMeters)
-    && remainingDistanceMeters <= FINISH_TRIP_MAX_DISTANCE_METERS;
-
-  const isNearFinalDestinationByCoords = Number.isFinite(distanceToFinalDestination)
-    && distanceToFinalDestination <= FINISH_TRIP_MAX_DISTANCE_METERS;
-
   const isNearActiveNavTarget = Number.isFinite(distanceToActiveNavTarget)
     && distanceToActiveNavTarget <= FINISH_TRIP_MAX_DISTANCE_METERS;
 
@@ -2231,19 +2080,28 @@ const ActiveTripScreen = () => {
   const isNearFinalDestination = isFreeRideActive
     ? false
     : isNavigatingToFinalDestination
-      && (isNearFinalDestinationByRoute || isNearFinalDestinationByCoords);
+      && isGuidedArrivalNearby({
+        remainingDistanceMeters,
+        distanceToTarget: distanceToFinalDestination,
+        deviationMeters: lastDeviationMetersRef.current,
+        finishProximityMeters: FINISH_TRIP_MAX_DISTANCE_METERS,
+      });
 
-  const isNearDestination = isFreeRideActive
-    ? false
-    : (isNearFinalDestination || isNearActiveNavTarget);
+  const isGpsNearArrivalTarget = isGuidedArrivalNearby({
+    remainingDistanceMeters: null,
+    distanceToTarget: isNavigatingToFinalDestination
+      ? distanceToFinalDestination
+      : distanceToActiveNavTarget,
+    finishProximityMeters: FINISH_TRIP_MAX_DISTANCE_METERS,
+  });
 
   useEffect(() => {
-    if (!isNearDestination) return;
+    if (!isGpsNearArrivalTarget) return;
     if (rerouteInFlightRef.current || isRerouting) {
       rerouteInFlightRef.current = false;
       setIsRerouting(false);
     }
-  }, [isNearDestination, isRerouting]);
+  }, [isGpsNearArrivalTarget, isRerouting]);
 
   const canArriveAtWaypoint = flowStep === FLOW_STEP.IN_PROGRESS
     && activeTrip?.status === TRIP_STATUS.IN_PROGRESS
@@ -2261,6 +2119,15 @@ const ActiveTripScreen = () => {
     && hasActiveTripDestination
     && isNavigatingToFinalDestination
     && (isFreeRideActive || isNearFinalDestination);
+
+  const allowSheetContentPan = shouldAllowSheetContentPan({
+    showingFinishModal: showFinishModal,
+    showingCancelConfirm: showCancelConfirm,
+  });
+
+  const finishLegsLabel = accumulatedLegs.length > 0
+    ? `${accumulatedLegs.length} tramo${accumulatedLegs.length !== 1 ? 's' : ''} acumulado${accumulatedLegs.length !== 1 ? 's' : ''} incluido${accumulatedLegs.length !== 1 ? 's' : ''}`
+    : null;
 
   const canCancelEnRouteToPickup = canDriverCancelEnRouteToPickup({
     flowStep,
@@ -2286,7 +2153,7 @@ const ActiveTripScreen = () => {
     || (flowStep === FLOW_STEP.GOING_TO_PICKUP && (canConfirmPickupNearby || canConfirmPickupArriving));
 
   useEffect(() => {
-    if (showFinishModal) return;
+    if (showFinishModal || showCancelConfirm) return;
     const nextIndex = resolveActiveTripSheetIndex({
       flowStep,
       destinationSet,
@@ -2297,10 +2164,10 @@ const ActiveTripScreen = () => {
     const flowKey = `${activeTrip?.id || ''}|${flowStep}|${destinationSet ? 1 : 0}|${canCancelEnRouteToPickup ? 1 : 0}|${canCancelActiveStreetHail ? 1 : 0}`;
     const flowChanged = flowKey !== lastSheetSnapKeyRef.current;
     lastSheetSnapKeyRef.current = flowKey;
-    if (flowChanged || nextIndex > lastSheetIndexRef.current) {
+    if (shouldSnapActiveTripSheet(lastSheetIndexRef.current, nextIndex, flowChanged)) {
       snapSheetTo(nextIndex);
     }
-  }, [flowStep, destinationSet, activeTrip?.id, needsArrivalAction, canCancelEnRouteToPickup, canCancelActiveStreetHail, showFinishModal, snapSheetTo]);
+  }, [flowStep, destinationSet, activeTrip?.id, needsArrivalAction, canCancelEnRouteToPickup, canCancelActiveStreetHail, showFinishModal, showCancelConfirm, snapSheetTo]);
 
   useEffect(() => {
     const isNavigating = flowStep === FLOW_STEP.GOING_TO_PICKUP || flowStep === FLOW_STEP.IN_PROGRESS;
@@ -2331,8 +2198,9 @@ const ActiveTripScreen = () => {
 
   // Step 1 -> Step 2: Confirm arrived at pickup
   const handleConfirmArrival = useCallback(() => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (!beginExclusiveAction(actionLockRef)) return;
     setFlowStep(FLOW_STEP.AT_PICKUP);
+    buzzSuccess();
     if (!activeTrip?.id || activeTrip.driver_arrived_at || isStreetHailTrip(activeTrip)) return;
     const arrivedAt = new Date().toISOString();
     useTripStore.getState().updateActiveTrip({ driver_arrived_at: arrivedAt });
@@ -2368,15 +2236,13 @@ const ActiveTripScreen = () => {
 
   // Step 2 -> Step 3 (or skip to Step 4 if destination already set by dashboard or preloaded from notes)
   const handlePassengerAboard = useCallback(() => {
+    if (!beginExclusiveAction(actionLockRef)) return;
     const shouldChooseDestination = needsDriverDestinationChoice(activeTrip || {});
 
     if (shouldChooseDestination) {
       flowLockRef.current = FLOW_STEP.CHOOSE_DEST_MODE;
       setDriverFlowStep(FLOW_STEP.CHOOSE_DEST_MODE, activeTrip?.id);
-      requestAnimationFrame(() => {
-        snapSheetTo(1);
-      });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      buzzSuccess();
 
       if (activeTrip?.id) {
         const pickupAt = new Date().toISOString();
@@ -2397,83 +2263,86 @@ const ActiveTripScreen = () => {
       return;
     }
 
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-
     const isWhatsappApproachOnly = isApproachOnlyTrip(activeTrip) && !isPassengerAppTrip(activeTrip);
     const presetFinalDestination = resolveTripFinalDestCoords(activeTrip || {});
+    const tripId = activeTrip?.id;
+    const pickupLocation = currentLocation;
 
-    if (activeTrip?.id) {
-      const pickupUpdates = { pickup_at: new Date().toISOString() };
-      const { isApproachOnly: isApproachOnlyPickup } = resolvePickupPoint(activeTrip, currentLocation);
+    flowLockRef.current = null;
+    setDestinationSet(true);
+    setDriverFlowStep(FLOW_STEP.IN_PROGRESS, tripId, { freeRide: false });
+    buzzSuccess();
 
-      if (isApproachOnlyPickup && isWhatsappApproachOnly) {
-        const pickup = resolveTripPickupCoords(activeTrip);
-        if (
-          isCoordLikeAddress(activeTrip.origin_address)
-          && pickup?.lat != null
-          && pickup?.lng != null
-        ) {
-          pickupUpdates.origin_address = pickup.address;
-          pickupUpdates.origin_lat = pickup.lat;
-          pickupUpdates.origin_lng = pickup.lng;
+    setTimeout(() => {
+      if (tripId) {
+        const pickupUpdates = { pickup_at: new Date().toISOString() };
+        const { isApproachOnly: isApproachOnlyPickup } = resolvePickupPoint(activeTrip, pickupLocation);
+
+        if (isApproachOnlyPickup && isWhatsappApproachOnly) {
+          const pickup = resolveTripPickupCoords(activeTrip);
+          if (
+            isCoordLikeAddress(activeTrip.origin_address)
+            && pickup?.lat != null
+            && pickup?.lng != null
+          ) {
+            pickupUpdates.origin_address = pickup.address;
+            pickupUpdates.origin_lat = pickup.lat;
+            pickupUpdates.origin_lng = pickup.lng;
+          }
         }
-      }
 
-      useTripStore.getState().updateActiveTrip(pickupUpdates);
-      supabase
-        .from('trips')
-        .update(pickupUpdates)
-        .eq('id', activeTrip.id)
-        .select()
-        .single()
-        .then(({ data: updatedTrip, error }) => {
-          if (!error && updatedTrip) {
-            useTripStore.getState().updateActiveTrip(updatedTrip);
-          }
-        })
-        .catch((err) => {
-          console.warn('Error syncing pickup info:', err);
-        });
-    }
-
-    (async () => {
-      if (presetFinalDestination && activeTrip?.id) {
-        try {
-          const { data: updatedTrip, error } = await supabase
-            .from('trips')
-            .update({
-              destination_address: presetFinalDestination.address,
-              destination_lat: presetFinalDestination.lat,
-              destination_lng: presetFinalDestination.lng,
-            })
-            .eq('id', activeTrip.id)
-            .select()
-            .single();
-
-          if (!error && updatedTrip) {
-            useTripStore.getState().updateActiveTrip(updatedTrip);
-          }
-
-          Toast.show({
-            type: 'success',
-            text1: 'Destino cargado automáticamente',
-            text2: presetFinalDestination.address,
-            visibilityTime: 4000,
+        useTripStore.getState().updateActiveTrip(pickupUpdates);
+        supabase
+          .from('trips')
+          .update(pickupUpdates)
+          .eq('id', tripId)
+          .select()
+          .single()
+          .then(({ data: updatedTrip, error }) => {
+            if (!error && updatedTrip) {
+              useTripStore.getState().updateActiveTrip(updatedTrip);
+            }
+          })
+          .catch((err) => {
+            console.warn('Error syncing pickup info:', err);
           });
-        } catch (err) {
-          console.warn('Error aplicando destino precargado:', err);
-        }
       }
 
-      flowLockRef.current = null;
-      setDestinationSet(true);
-      setDriverFlowStep(FLOW_STEP.IN_PROGRESS, activeTrip?.id, { freeRide: false });
-      snapSheetTo(0);
-      if (activeTrip?.id) {
-        updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS);
-      }
-    })();
-  }, [activeTrip, currentLocation, setDriverFlowStep, updateTripStatus, snapSheetTo]);
+      void (async () => {
+        if (presetFinalDestination && tripId) {
+          try {
+            const { data: updatedTrip, error } = await supabase
+              .from('trips')
+              .update({
+                destination_address: presetFinalDestination.address,
+                destination_lat: presetFinalDestination.lat,
+                destination_lng: presetFinalDestination.lng,
+              })
+              .eq('id', tripId)
+              .select()
+              .single();
+
+            if (!error && updatedTrip) {
+              useTripStore.getState().updateActiveTrip(updatedTrip);
+            }
+
+            Toast.show({
+              type: 'success',
+              text1: 'Destino cargado automáticamente',
+              text2: presetFinalDestination.address,
+              visibilityTime: 4000,
+            });
+          } catch (err) {
+            console.warn('Error aplicando destino precargado:', err);
+          }
+        }
+
+        if (tripId) {
+          updateTripStatus(tripId, TRIP_STATUS.IN_PROGRESS);
+        }
+      })();
+    }, 0);
+  }, [activeTrip, currentLocation, setDriverFlowStep, updateTripStatus]);
 
   // Autocomplete en tiempo real: se dispara cada vez que el usuario escribe,
   // con un debounce de 350 ms para no saturar la API.
@@ -2510,9 +2379,9 @@ const ActiveTripScreen = () => {
   }, [textDestInput, textDestProcessing, destinationOptions, selectDestination]);
 
   // Free ride: start without a preset destination, calculate fare by GPS km
-  const handleChooseFreeRide = useCallback(async () => {
+  const handleChooseFreeRide = useCallback(() => {
     if (!activeTrip) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (!beginExclusiveAction(actionLockRef)) return;
     flowLockRef.current = null;
     const freeRideUpdates = buildFreeRideTripUpdates(activeTrip);
     routeRequestIdRef.current += 1;
@@ -2532,9 +2401,9 @@ const ActiveTripScreen = () => {
     setIsNorth3DEnabled(false);
     setFlowStep(FLOW_STEP.IN_PROGRESS, { freeRide: true });
     useTripStore.getState().updateActiveTrip(freeRideUpdates);
-    snapSheetTo(0);
-    await updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS, freeRideUpdates);
-  }, [activeTrip, updateTripStatus, setFlowStep, snapSheetTo]);
+    buzzSuccess();
+    void updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS, freeRideUpdates);
+  }, [activeTrip, updateTripStatus, setFlowStep]);
 
   const performDriverCancel = useCallback(async () => {
     if (!activeTrip?.id || cancellingStreetHail) return;
@@ -2666,26 +2535,57 @@ const ActiveTripScreen = () => {
   }, [activeTrip]);
 
   // Step 3 -> Step 4: Start trip
-  const handleStartTrip = useCallback(async () => {
+  const handleStartTrip = useCallback(() => {
     if (!activeTrip) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (!beginExclusiveAction(actionLockRef)) return;
     flowLockRef.current = null;
-    await updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS);
     setFlowStep(FLOW_STEP.IN_PROGRESS, { freeRide: false });
-    snapSheetTo(0);
-  }, [activeTrip, updateTripStatus, setFlowStep, snapSheetTo]);
+    buzzSuccess();
+    void updateTripStatus(activeTrip.id, TRIP_STATUS.IN_PROGRESS);
+  }, [activeTrip, updateTripStatus, setFlowStep]);
 
   // Step 4 -> Complete
+  const handleSliderLock = useCallback((locked) => {
+    sliderDraggingRef.current = Boolean(locked);
+    if (locked) {
+      const nav = useLocationStore.getState();
+      frozenNavRef.current = {
+        currentLocation: nav.currentLocation,
+        heading: nav.heading,
+        speed: nav.speed,
+      };
+      uiGestureLockRef.current = true;
+      finishArmedRef.current = true;
+      return;
+    }
+    if (showFinishModalRef.current) return;
+    uiGestureLockRef.current = false;
+    finishArmedRef.current = false;
+  }, []);
+
+  const dismissFinishOverlay = useCallback(() => {
+    if (finishingTrip) return;
+    setShowFinishModal(false);
+    uiGestureLockRef.current = false;
+    sliderDraggingRef.current = false;
+    finishArmedRef.current = false;
+    sliderRef.current?.reset();
+    const restoreTo = clampBottomSheetIndex(restoreSheetIndexRef.current, 1);
+    requestAnimationFrame(() => snapSheetTo(restoreTo));
+  }, [finishingTrip, snapSheetTo]);
+
   const handleEndTrip = useCallback(() => {
-    if (!activeTrip || finishingTrip || !canFinishTripNearby) return false;
+    if (!activeTrip || finishingTrip) return false;
+    if (!finishArmedRef.current && !canFinishTripNearby) return false;
     setShowFinishModal(true);
     return true;
   }, [activeTrip, finishingTrip, canFinishTripNearby]);
 
   const handleConfirmWaypointArrival = useCallback(() => {
     if (!hasPlannedMultiStopRoute || allPlannedWaypointsVisited) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (!beginExclusiveAction(actionLockRef)) return;
     setVisitedWaypointCount((count) => count + 1);
+    buzzSuccess();
     routeFetched.current = false;
     lastRouteKeyRef.current = '';
     setRoutePolyline(null);
@@ -2727,7 +2627,8 @@ const ActiveTripScreen = () => {
 
   // Agregar otro destino: guarda el tramo actual y vuelve al selector de destino
   const handleAddAnotherDestination = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (!beginExclusiveAction(actionLockRef)) return;
+    buzzSuccess();
     const legDistance = Number(checkoutDistanceKm);
     // Solo registrar tramo anterior si hubo recorrido real (> 50m) para evitar tramos fantasma
     if (Number.isFinite(legDistance) && legDistance > 0.05) {
@@ -2832,9 +2733,13 @@ const ActiveTripScreen = () => {
       if (result.success) {
         setAccumulatedLegs([]);
         setShowFinishModal(false);
+        uiGestureLockRef.current = false;
+        sliderDraggingRef.current = false;
+        finishArmedRef.current = false;
         stopTracking();
         if (timerRef.current) clearInterval(timerRef.current);
         setCompletedTrip(result.data);
+        setUpcomingNextTrip(result.nextTrip || null);
         setShowSummary(true);
 
         const settledPrice = Number(result.data?.price);
@@ -3035,12 +2940,26 @@ const ActiveTripScreen = () => {
           </View>
 
           <TouchableOpacity
-            onPress={leaveToHome}
+            onPress={upcomingNextTrip ? startNextFromSummary : leaveToHome}
             style={styles.summaryBtn}
           >
-            <MaterialCommunityIcons name="home" size={20} color="#fff" />
-            <Text style={styles.summaryBtnText}>Volver al inicio</Text>
+            <MaterialCommunityIcons
+              name={upcomingNextTrip ? 'navigation-variant' : 'home'}
+              size={20}
+              color="#fff"
+            />
+            <Text style={styles.summaryBtnText}>
+              {upcomingNextTrip ? 'Ir al siguiente viaje' : 'Volver al inicio'}
+            </Text>
           </TouchableOpacity>
+          {upcomingNextTrip ? (
+            <TouchableOpacity
+              onPress={leaveToHome}
+              style={[styles.summaryBtn, { backgroundColor: colors.surface, marginTop: 10 }]}
+            >
+              <Text style={[styles.summaryBtnText, { color: colors.text }]}>Más tarde</Text>
+            </TouchableOpacity>
+          ) : null}
         </ScrollView>
       </View>
     );
@@ -3280,68 +3199,6 @@ const ActiveTripScreen = () => {
         </View>
       </Modal>
 
-      <Modal
-        visible={showFinishModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => { if (!finishingTrip) { setShowFinishModal(false); sliderRef.current?.reset(); } }}
-      >
-        <View style={styles.finishModalBackdrop}>
-          <View style={styles.finishModalCard}>
-            <View style={styles.finishModalHeader}>
-              <View style={styles.finishModalIconWrap}>
-                <MaterialCommunityIcons name="cash-check" size={18} color={colors.success} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.finishModalTitle}>Confirmar cobro y finalizar</Text>
-                <Text style={styles.finishModalSubtitle}>Verificá el pago antes de cerrar el viaje</Text>
-              </View>
-            </View>
-
-            {accumulatedLegs.length > 0 && (
-              <View style={styles.finishModalLegsRow}>
-                <MaterialCommunityIcons name="layers-triple-outline" size={14} color={colors.info} />
-                <Text style={styles.finishModalLegsText}>
-                  {accumulatedLegs.length} tramo{accumulatedLegs.length !== 1 ? 's' : ''} acumulado{accumulatedLegs.length !== 1 ? 's' : ''} incluido{accumulatedLegs.length !== 1 ? 's' : ''}
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.finishModalInfoRow}>
-              <Text style={styles.finishModalInfoLabel}>Distancia total</Text>
-              <Text style={styles.finishModalInfoValue}>{formatDistance(grandTotalDistanceKm)}</Text>
-            </View>
-
-            <View style={styles.finishModalTotalWrap}>
-              <Text style={styles.finishModalTotalLabel}>Costo total del viaje</Text>
-              <Text style={styles.finishModalTotalValue}>{formatPrice(grandTotalPrice)}</Text>
-            </View>
-
-            <View style={styles.finishModalActions}>
-              <TouchableOpacity
-                style={[styles.finishModalBtn, styles.finishModalBtnGhost, finishingTrip && styles.finishModalBtnDisabled]}
-                onPress={() => { if (!finishingTrip) { setShowFinishModal(false); sliderRef.current?.reset(); } }}
-                activeOpacity={0.8}
-                disabled={finishingTrip}
-              >
-                <Text style={styles.finishModalBtnGhostText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.finishModalBtn, styles.finishModalBtnPrimary, finishingTrip && styles.finishModalBtnDisabled]}
-                onPress={handleConfirmFinishTrip}
-                activeOpacity={0.85}
-                disabled={finishingTrip}
-              >
-                {finishingTrip ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.finishModalBtnPrimaryText}>Confirmar pago</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* Map a pantalla completa; el sheet flota encima (patrón cb50fb7d + enableDynamicSizing=false). */}
       <TripMap
@@ -3383,6 +3240,31 @@ const ActiveTripScreen = () => {
         onClose={closeTripNotes}
         mapReturn
       />
+
+      {reservedNextTrip ? (
+        <View style={{
+          position: 'absolute',
+          top: showNavHud ? insets.top + 92 : insets.top + 8,
+          left: 16,
+          right: 16,
+          zIndex: 24,
+          backgroundColor: '#111827',
+          borderRadius: 18,
+          paddingVertical: 12,
+          paddingHorizontal: 14,
+          gap: 2,
+        }}>
+          <Text style={{ color: '#34D399', fontSize: 11, fontFamily: 'Inter_700Bold', letterSpacing: 0.7 }}>
+            SIGUIENTE VIAJE
+          </Text>
+          <Text style={{ color: '#FFFFFF', fontSize: 17, fontFamily: 'Inter_700Bold' }} numberOfLines={1}>
+            {reservedNextTrip.passenger_name || 'Pasajero'}
+          </Text>
+          <Text style={{ color: '#E5E7EB', fontSize: 14, fontFamily: 'Inter_500Medium' }} numberOfLines={2}>
+            {reservedNextTrip.origin_address || reservedNextTrip.destination_address || 'Retiro pendiente'}
+          </Text>
+        </View>
+      ) : null}
 
       {showNavHud ? (
       <View style={[
@@ -3462,12 +3344,16 @@ const ActiveTripScreen = () => {
         enableDynamicSizing={false}
         enablePanDownToClose={false}
         enableOverDrag={false}
-        enableContentPanningGesture
-        enableHandlePanningGesture
+        animateOnMount={false}
+        enableContentPanningGesture={allowSheetContentPan}
+        enableHandlePanningGesture={!showFinishModal && !showCancelConfirm}
         backgroundStyle={styles.sheetBg}
         handleStyle={styles.handleArea}
         handleIndicatorStyle={styles.handle}
-        containerStyle={styles.sheetContainer}
+        containerStyle={[
+          styles.sheetContainer,
+          (showFinishModal || showCancelConfirm) ? styles.sheetContainerBehindOverlay : null,
+        ]}
         onChange={handleSheetChange}
         topInset={destinationSearchTopInset}
         keyboardBehavior={destinationSearchKeyboardBehavior}
@@ -3477,7 +3363,13 @@ const ActiveTripScreen = () => {
       >
         <BottomSheetScrollView
           ref={sheetScrollRef}
-          contentContainerStyle={isSearchingDestination ? styles.sheetContentSearching : styles.sheetContent}
+          contentContainerStyle={[
+            isSearchingDestination ? styles.sheetContentSearching : styles.sheetContent,
+            {
+              paddingHorizontal: screenPadding,
+              paddingBottom: isCompactHeight ? 72 : 100,
+            },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="none"
@@ -3489,14 +3381,12 @@ const ActiveTripScreen = () => {
           {flowStep === FLOW_STEP.GOING_TO_PICKUP && (
             <>
               {(canConfirmPickupNearby || canConfirmPickupArriving) ? (
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: colors.primary }]}
+                <SheetActionButton
+                  color={colors.primary}
+                  icon="map-marker-check"
+                  label="Llegué al punto de encuentro"
                   onPress={handleConfirmArrival}
-                  activeOpacity={0.85}
-                >
-                  <MaterialCommunityIcons name="map-marker-check" size={22} color="#fff" />
-                  <Text style={styles.actionBtnText}>Llegué al punto de encuentro</Text>
-                </TouchableOpacity>
+                />
               ) : (
                 <TripProgressSummary
                   traveledKm={tripRouteProgress.traveledKm}
@@ -3538,14 +3428,12 @@ const ActiveTripScreen = () => {
           {/* STEP 2: At pickup - Confirm passenger aboard */}
           {flowStep === FLOW_STEP.AT_PICKUP && (
             <>
-              <TouchableOpacity
-                style={[styles.actionBtn, { backgroundColor: colors.warning }]}
+              <SheetActionButton
+                color={colors.warning}
+                icon="account-check"
+                label="Pasajero a bordo"
                 onPress={handlePassengerAboard}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="account-check" size={22} color="#fff" />
-                <Text style={styles.actionBtnText}>Pasajero a bordo</Text>
-              </TouchableOpacity>
+              />
 
               <View style={styles.stepInfoCard}>
                 <MaterialCommunityIcons name="account-check" size={28} color={colors.warning} />
@@ -3673,14 +3561,12 @@ const ActiveTripScreen = () => {
                 </>
               ) : (
                 <>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: colors.success }]}
+                  <SheetActionButton
+                    color={colors.success}
+                    icon="car"
+                    label="Empezar viaje"
                     onPress={handleStartTrip}
-                    activeOpacity={0.85}
-                  >
-                    <MaterialCommunityIcons name="car" size={22} color="#fff" />
-                    <Text style={styles.actionBtnText}>Empezar viaje</Text>
-                  </TouchableOpacity>
+                  />
 
                   <View style={styles.addressCard}>
                     <View style={styles.addressRow}>
@@ -3738,20 +3624,17 @@ const ActiveTripScreen = () => {
           {flowStep === FLOW_STEP.IN_PROGRESS && (
             <>
               {canArriveAtWaypoint ? (
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: colors.warning }]}
+                <SheetActionButton
+                  color={colors.warning}
+                  icon="map-marker-check"
+                  label={`Llegué a parada ${visitedWaypointCount + 1}`}
                   onPress={handleConfirmWaypointArrival}
-                  activeOpacity={0.85}
-                >
-                  <MaterialCommunityIcons name="map-marker-check" size={22} color="#fff" />
-                  <Text style={styles.actionBtnText}>
-                    Llegué a parada {visitedWaypointCount + 1}
-                  </Text>
-                </TouchableOpacity>
+                />
               ) : canFinishTripNearby ? (
                 <SliderButton
                   resetRef={sliderRef}
                   onConfirm={handleEndTrip}
+                  onLock={handleSliderLock}
                   label="Deslizá para finalizar viaje"
                   color={colors.success}
                   disabled={finishingTrip}
@@ -3939,6 +3822,16 @@ const ActiveTripScreen = () => {
 
         </BottomSheetScrollView>
       </BottomSheet>
+
+      <FinishTripOverlay
+        visible={showFinishModal}
+        finishing={finishingTrip}
+        distanceLabel={formatDistance(grandTotalDistanceKm)}
+        priceLabel={formatPrice(grandTotalPrice)}
+        legsLabel={finishLegsLabel}
+        onConfirm={handleConfirmFinishTrip}
+        onDismiss={dismissFinishOverlay}
+      />
 
       <ConfirmCancelTripModal
         visible={showCancelConfirm}
@@ -4192,6 +4085,10 @@ const styles = StyleSheet.create({
   sheetContainer: {
     zIndex: 21,
     elevation: 24,
+  },
+  sheetContainerBehindOverlay: {
+    zIndex: 10,
+    elevation: 8,
   },
   sheetBg: {
     backgroundColor: colors.surface,

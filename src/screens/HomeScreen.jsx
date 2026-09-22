@@ -48,6 +48,33 @@ import Toast from 'react-native-toast-message';
 import * as Haptics from 'expo-haptics';
 import CommissionDebtBanner from '../components/CommissionDebtBanner';
 import { shouldShowCommissionDebtUi } from '../../shared/driver-billing';
+import { isNextTripOffer } from '../../shared/next-trip';
+import { isLiveDriverTrip } from '../utils/activeTripNavigation';
+
+const TRIP_ROW_ENTER = [
+  FadeInUp.delay(150).duration(320),
+  FadeInUp.delay(205).duration(320),
+  FadeInUp.delay(260).duration(320),
+  FadeInUp.delay(315).duration(320),
+];
+
+const TRIP_STATUS_UI = {
+  completed:       { color: colors.success,  icon: 'check-circle',  bg: colors.successBg },
+  cancelled:       { color: colors.danger,   icon: 'close-circle',  bg: colors.dangerBg },
+  in_progress:     { color: colors.primary,  icon: 'navigation',    bg: colors.surfaceLight },
+  pending:         { color: colors.warning,  icon: 'clock-outline', bg: colors.warningBg },
+  accepted:        { color: colors.info,     icon: 'car-arrow-right', bg: colors.infoBg },
+  going_to_pickup: { color: colors.primary,  icon: 'car-arrow-right', bg: colors.surfaceLight },
+};
+
+const HomeDriverPuck = React.memo(() => {
+  const lat = useLocationStore((s) => s.currentLocation?.lat);
+  const lng = useLocationStore((s) => s.currentLocation?.lng);
+  const speed = useLocationStore((s) => s.currentLocation?.speed);
+  const heading = useLocationStore((s) => s.heading);
+  if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return null;
+  return <DriverLocationMarker lat={lat} lng={lng} speed={speed} heading={heading} />;
+});
 
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
@@ -66,6 +93,9 @@ const HomeScreen = () => {
   } = useRealtime();
   const queryClient = useQueryClient();
   const { getCurrentPosition, startWatching, stopWatching } = useLocation();
+  const openTripDetail = useCallback((tripId) => {
+    navigation.navigate('TripDetail', { tripId });
+  }, [navigation]);
   const mapRef = useRef(null);
   const mapReadyRef = useRef(false);
   const pendingCenterRef = useRef(null);
@@ -331,8 +361,8 @@ const HomeScreen = () => {
       await supabase.from('driver_locations').upsert({
         driver_id: driver.id,
         is_online: newStatus,
-        lat: currentLocation?.lat ?? null,
-        lng: currentLocation?.lng ?? null,
+        lat: useLocationStore.getState().currentLocation?.lat ?? null,
+        lng: useLocationStore.getState().currentLocation?.lng ?? null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'driver_id' });
 
@@ -384,7 +414,7 @@ const HomeScreen = () => {
       return;
     }
 
-    let loc = currentLocation;
+    let loc = useLocationStore.getState().currentLocation;
     if (!Number.isFinite(Number(loc?.lat)) || !Number.isFinite(Number(loc?.lng))) {
       loc = await getCurrentPosition({ force: true });
     }
@@ -410,7 +440,6 @@ const HomeScreen = () => {
     commissionData?.isBlocked,
     isOnline,
     pendingTrip?.id,
-    currentLocation,
     getCurrentPosition,
   ]);
 
@@ -440,7 +469,7 @@ const HomeScreen = () => {
   };
 
   const recenter = () => {
-    const loc = currentLocation || followCenterRef.current;
+    const loc = useLocationStore.getState().currentLocation || followCenterRef.current;
     if (!loc) return;
     applyHomeCameraTarget(loc, { force: true, duration: 500 });
   };
@@ -488,9 +517,7 @@ const HomeScreen = () => {
             zoom: HOME_CAMERA_ZOOM,
           } : {})}
         />
-        {currentLocation && (
-          <DriverLocationMarker location={currentLocation} />
-        )}
+        {currentLocation ? <HomeDriverPuck /> : null}
       </MapLibreGL.MapView>
 
       {/* Gradiente superior */}
@@ -613,6 +640,9 @@ const HomeScreen = () => {
         index={0}
         snapPoints={snapPoints}
         enableDynamicSizing={false}
+        animateOnMount={false}
+        enableContentPanningGesture={false}
+        enableHandlePanningGesture
         backgroundStyle={{
           backgroundColor: '#FFFFFF',
           borderTopLeftRadius: 28,
@@ -870,8 +900,8 @@ const HomeScreen = () => {
               <SkeletonTrips />
             ) : allTrips.length > 0 ? (
               allTrips.slice(0, 4).map((trip, idx) => (
-                <Animated.View key={trip.id} entering={FadeInUp.delay(150 + idx * 55).duration(320)}>
-                  <TripRow trip={trip} onPress={() => navigation.navigate('TripDetail', { tripId: trip.id })} />
+                <Animated.View key={trip.id} entering={TRIP_ROW_ENTER[idx] || TRIP_ROW_ENTER[0]}>
+                  <TripRow trip={trip} onOpen={openTripDetail} />
                 </Animated.View>
               ))
             ) : (
@@ -911,9 +941,13 @@ const HomeScreen = () => {
       <NewTripModal
         visible={showNewTripModal}
         trip={pendingTrip}
+        parallelOffer={Boolean(
+          isNextTripOffer(pendingTrip)
+          || (isLiveDriverTrip(activeTrip) && pendingTrip?.id && pendingTrip.id !== activeTrip.id)
+        )}
         onAccept={async (id) => {
           const result = await acceptTrip(id);
-          if (result?.success) {
+          if (result?.success && !result.queuedNext) {
             navigation.navigate('ActiveTrip');
           }
           return result;
@@ -969,22 +1003,14 @@ const MiniStat = ({ icon, label, value, color, bg }) => (
 /**
  * Fila de viaje reciente — diseño limpio con indicador de color de estado.
  */
-const TripRow = ({ trip, onPress }) => {
-  const statusConfig = {
-    completed:       { color: colors.success,  icon: 'check-circle',  bg: colors.successBg },
-    cancelled:       { color: colors.danger,   icon: 'close-circle',  bg: colors.dangerBg },
-    in_progress:     { color: colors.primary,  icon: 'navigation',    bg: colors.surfaceLight },
-    pending:         { color: colors.warning,  icon: 'clock-outline', bg: colors.warningBg },
-    accepted:        { color: colors.info,     icon: 'car-arrow-right', bg: colors.infoBg },
-    going_to_pickup: { color: colors.primary,  icon: 'car-arrow-right', bg: colors.surfaceLight },
-  };
-  const cfg = statusConfig[trip.status] || { color: colors.textMuted, icon: 'car', bg: colors.surfaceLight };
+const TripRow = React.memo(({ trip, onOpen }) => {
+  const cfg = TRIP_STATUS_UI[trip.status] || { color: colors.textMuted, icon: 'car', bg: colors.surfaceLight };
   const time = trip.created_at
     ? new Date(trip.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
     : '';
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => ({
+    <Pressable onPress={() => onOpen(trip.id)} style={({ pressed }) => ({
       flexDirection: 'row', alignItems: 'center',
       backgroundColor: colors.surface,
       borderRadius: 16, padding: 13, marginBottom: 8,
@@ -1018,7 +1044,7 @@ const TripRow = ({ trip, onPress }) => {
       </View>
     </Pressable>
   );
-};
+});
 
 /**
  * Skeleton de carga para la lista de viajes.

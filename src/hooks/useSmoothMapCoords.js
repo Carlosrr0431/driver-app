@@ -4,10 +4,11 @@ import {
   getDistanceMeters,
   MAX_GPS_EXTRAPOLATE_MS,
   MOVING_SPEED_MPS,
+  SMOOTH_MAP_FRAME_MS,
   shouldAcceptForwardGpsStep,
+  shouldCommitMapPaint,
 } from '../utils/locationWatch';
 
-const FRAME_MS = 16;
 const DEFAULT_DURATION_MS = 1000;
 const MIN_DURATION_MS = 400;
 const MAX_DURATION_MS = 2200;
@@ -94,10 +95,21 @@ export function useSmoothMapCoords(lat, lng, speedMps = 0, headingDeg = 0) {
         }
       }
 
-      if (currentTime - lastPaintRef.current >= FRAME_MS || !keepGoing) {
-        lastPaintRef.current = currentTime;
-        displayRef.current = { lat: curLat, lng: curLng };
-        setDisplay({ lat: curLat, lng: curLng });
+      if (currentTime - lastPaintRef.current >= SMOOTH_MAP_FRAME_MS || !keepGoing) {
+        const lastPaint = displayRef.current;
+        if (
+          !keepGoing
+          || shouldCommitMapPaint({
+            lastLat: lastPaint?.lat,
+            lastLng: lastPaint?.lng,
+            nextLat: curLat,
+            nextLng: curLng,
+          })
+        ) {
+          lastPaintRef.current = currentTime;
+          displayRef.current = { lat: curLat, lng: curLng };
+          setDisplay({ lat: curLat, lng: curLng });
+        }
       }
 
       if (keepGoing) {

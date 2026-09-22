@@ -41,4 +41,15 @@ describe('JSX: refs no se renderizan como hijos', () => {
     expect(src).toMatch(/<BottomSheet\s*\n\s*ref=\{bottomSheetRef\}/);
     expect(src).not.toMatch(/<BottomSheet>\s*\n\s*ref=\{bottomSheetRef\}/);
   });
+
+  it('ActiveTrip no usa showingFinishModal como variable suelta', () => {
+    const src = fs.readFileSync(
+      path.join(SRC_ROOT, 'screens/ActiveTripScreen.jsx'),
+      'utf8',
+    );
+    expect(src).not.toMatch(/^\s*showingFinishModal,\s*$/m);
+    expect(src).not.toMatch(/^\s*showingCancelConfirm,\s*$/m);
+    expect(src).toMatch(/showingFinishModal:\s*showFinishModal/);
+    expect(src).toMatch(/showingCancelConfirm:\s*showCancelConfirm/);
+  });
 });

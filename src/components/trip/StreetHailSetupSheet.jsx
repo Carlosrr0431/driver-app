@@ -164,7 +164,7 @@ export function StreetHailSetupSheet({
       maxDynamicContentSize={maxDynamicContentSize}
       enablePanDownToClose={false}
       enableOverDrag
-      enableContentPanningGesture
+      enableContentPanningGesture={false}
       enableHandlePanningGesture
       keyboardBehavior={keyboardBehavior}
       keyboardBlurBehavior="restore"

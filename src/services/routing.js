@@ -68,8 +68,25 @@ function mapOsrmStep(step, index, previousLocation) {
   };
 }
 
+export const OSRM_FETCH_TIMEOUT_MS = 4500;
+
+export async function fetchWithTimeout(url, options = {}, timeoutMs = OSRM_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error('Tiempo de espera de ruta agotado');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function fetchOsrmJson(coordinates, params) {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${OSRM_BASE_URL}/route/v1/driving/${coordinates}?${params.toString()}`,
     { headers: { Accept: 'application/json' } },
   );

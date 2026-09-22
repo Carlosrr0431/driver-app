@@ -105,18 +105,20 @@ function snapToPolyline(point, coords) {
   return nearest && nearestDist < 40 ? nearest : point;
 }
 
-function buildActiveRoutePolyline(driverCoord, routeCoords) {
+function buildActiveRoutePolyline(driverCoord, routeCoords, projection = null) {
   if (!routeCoords || routeCoords.length < 2) return [];
   if (!driverCoord) return routeCoords;
 
-  const projection = projectPointOntoPolyline(
-    { latitude: driverCoord.latitude, longitude: driverCoord.longitude },
-    routeCoords,
-  );
-  const snapped = projection.snappedPoint;
+  const resolved = projection?.snappedPoint
+    ? projection
+    : projectPointOntoPolyline(
+      { latitude: driverCoord.latitude, longitude: driverCoord.longitude },
+      routeCoords,
+    );
+  const snapped = resolved.snappedPoint;
   if (!snapped) return routeCoords;
 
-  const idx = Math.max(0, Math.min(projection.segmentIndex, routeCoords.length - 2));
+  const idx = Math.max(0, Math.min(resolved.segmentIndex, routeCoords.length - 2));
   const forward = routeCoords.slice(idx + 1);
   const coords = [snapped, ...forward];
   return coords.filter((point, index) => {
@@ -465,29 +467,29 @@ export const TripMap = React.memo(({
     return { latitude: smoothGps.lat, longitude: smoothGps.lng };
   }, [smoothGps.lat, smoothGps.lng]);
 
-  /* ── Proyección sobre la ruta ──────────────────────────────────────────── */
-  const getRemainingRouteCoords = useCallback(() => {
-    if (routeCoords.length === 0) return [];
-    if (!driverCoord) return routeCoords;
-
-    const projection = projectPointOntoPolyline(
-      { latitude: driverCoord.latitude, longitude: driverCoord.longitude },
-      routeCoords,
-    );
-    const projectedIdx = projection.segmentIndex || 0;
-    lastNearestIdxRef.current = Math.max(lastNearestIdxRef.current, projectedIdx);
-
-    return buildActiveRoutePolyline(driverCoord, routeCoords.slice(lastNearestIdxRef.current));
-  }, [driverCoord, routeCoords]);
-
-  const remainingRouteCoords = useMemo(() => getRemainingRouteCoords(), [getRemainingRouteCoords]);
-
+  /* ── Proyección única sobre la ruta (no repetir haversine por frame) ───── */
   const routeProjection = useMemo(() => {
     if (!driverCoord || routeCoords.length < 2) {
-      return { deviationMeters: Infinity, snappedPoint: null };
+      return { deviationMeters: Infinity, snappedPoint: null, segmentIndex: 0 };
     }
-    return projectPointOntoPolyline(driverCoord, routeCoords);
+    return projectPointOntoPolyline(driverCoord, routeCoords, {
+      hintSegmentIndex: lastNearestIdxRef.current,
+    });
   }, [driverCoord, routeCoords]);
+
+  const remainingRouteCoords = useMemo(() => {
+    if (routeCoords.length === 0) return [];
+    if (!driverCoord) return routeCoords;
+    const projectedIdx = Number.isFinite(routeProjection.segmentIndex)
+      ? routeProjection.segmentIndex
+      : 0;
+    const idx = Math.max(lastNearestIdxRef.current, projectedIdx);
+    lastNearestIdxRef.current = idx;
+    if (idx === projectedIdx) {
+      return buildActiveRoutePolyline(driverCoord, routeCoords, routeProjection);
+    }
+    return buildActiveRoutePolyline(driverCoord, routeCoords.slice(idx));
+  }, [driverCoord, routeCoords, routeProjection]);
 
   const isOnRoute = useMemo(() => (
     Number.isFinite(routeProjection.deviationMeters)
@@ -496,17 +498,14 @@ export const TripMap = React.memo(({
 
   const snappedDriverCoord = useMemo(() => {
     if (!driverCoord) return null;
+    if (navigationMode) {
+      return routeProjection.snappedPoint ?? driverCoord;
+    }
+    if (!isOnRoute) return driverCoord;
     const forwardPolyline = remainingRouteCoords.length >= 2 ? remainingRouteCoords : routeCoords;
     if (forwardPolyline.length < 2) return driverCoord;
-
-    // En navegación el puck siempre va sobre la ruta (edificios, drift GPS, etc.).
-    if (navigationMode) {
-      return projectPointOntoPolyline(driverCoord, forwardPolyline).snappedPoint ?? driverCoord;
-    }
-
-    if (!isOnRoute) return driverCoord;
     return snapToPolyline(driverCoord, forwardPolyline) ?? driverCoord;
-  }, [driverCoord, navigationMode, remainingRouteCoords, routeCoords, isOnRoute]);
+  }, [driverCoord, navigationMode, remainingRouteCoords, routeCoords, isOnRoute, routeProjection.snappedPoint]);
 
   const driverMarkerCoord = useMemo(() => {
     if (!driverCoord) return null;
@@ -562,7 +561,9 @@ export const TripMap = React.memo(({
     lastNearestIdxRef.current = 0;
     freeRideCameraBootstrappedRef.current = false;
     if (driverCoord && routeCoords.length >= 2) {
-      const projection = projectPointOntoPolyline(driverCoord, routeCoords);
+      const projection = projectPointOntoPolyline(driverCoord, routeCoords, {
+        hintSegmentIndex: lastNearestIdxRef.current,
+      });
       lastNearestIdxRef.current = projection.segmentIndex || 0;
     }
   }, [routeRevision, routeCoords, driverCoord]);

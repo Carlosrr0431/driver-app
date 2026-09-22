@@ -4,6 +4,10 @@ export const FOREGROUND_WATCH_DISTANCE_INTERVAL_M = 1;
 export const NAV_WATCH_TIME_INTERVAL_MS = 500;
 export const NAV_WATCH_DISTANCE_INTERVAL_M = 1;
 
+/** Pintar el pin interpolado: 20 fps alcanza y evita reconciliar el mapa a 60 fps. */
+export const SMOOTH_MAP_FRAME_MS = 50;
+export const SMOOTH_MAP_MIN_PAINT_METERS = 0.35;
+
 /**
  * Heartbeat de flota (speed/heading → driver_locations).
  * No usar GPS_CONFIG.TRACKING_INTERVAL acá: ese 5 s alimenta
@@ -123,6 +127,19 @@ export function shouldAcceptForwardGpsStep(last, next, options = {}) {
   return !(headingDeltaDegrees(heading, moveHeading) > GPS_REVERSE_HEADING_DEG && dist < reverseMaxM);
 }
 
+export function shouldCommitMapPaint({
+  lastLat,
+  lastLng,
+  nextLat,
+  nextLng,
+  minMeters = SMOOTH_MAP_MIN_PAINT_METERS,
+  force = false,
+} = {}) {
+  if (force) return true;
+  if (![lastLat, lastLng, nextLat, nextLng].every(Number.isFinite)) return true;
+  return getDistanceMeters(lastLat, lastLng, nextLat, nextLng) >= minMeters;
+}
+
 export function extrapolateGps(lat, lng, speedMps, headingDeg, elapsedMs) {
   const startLat = Number(lat);
   const startLng = Number(lng);
@@ -179,4 +196,37 @@ export function shouldAcceptLocationStep(last, next, options = {}) {
 
 export function shouldRefreshLocationOnForeground(nextState, prevState) {
   return nextState === 'active' && Boolean(prevState) && prevState !== 'active';
+}
+
+/** En emulador el GPS fresco a veces no llega; no hay que colgar el Home. */
+export const GPS_CURRENT_TIMEOUT_MS = 4000;
+
+export function withTimeout(promise, ms, message = 'timeout') {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+export async function readGpsFixOrLastKnown({
+  readCurrent,
+  readLastKnown,
+  timeoutMs = GPS_CURRENT_TIMEOUT_MS,
+} = {}) {
+  try {
+    const current = await withTimeout(readCurrent(), timeoutMs, 'gps-timeout');
+    if (current) return current;
+  } catch (_) {}
+  const cached = await readLastKnown();
+  if (cached) return cached;
+  throw new Error('gps-unavailable');
 }

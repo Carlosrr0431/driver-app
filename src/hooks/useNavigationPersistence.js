@@ -33,6 +33,10 @@ function ensureNavigationRestore() {
   return runtime.restorePromise;
 }
 
+export function shouldShowNavigationLoadingOverlay({ isLoading, showNavigation }) {
+  return Boolean(isLoading && !showNavigation);
+}
+
 export function useNavigationPersistence({ isAuthed, isLoading }) {
   const [isRestoring, setIsRestoring] = useState(!runtime.restoreSettled);
   const [initialState, setInitialState] = useState(runtime.restoredState);
@@ -76,7 +80,10 @@ export function useNavigationPersistence({ isAuthed, isLoading }) {
 
   const bootstrapReady = !isRestoring && !isLoading;
   const showNavigation = runtime.hasMounted || (hasNavigationMounted && bootstrapReady);
-  const showLoadingOverlay = isLoading || (!showNavigation && (isRestoring || !hasNavigationMounted));
+  const showLoadingOverlay = shouldShowNavigationLoadingOverlay({
+    isLoading,
+    showNavigation,
+  });
   const navigationInitialState = isAuthed
     ? (getLatestNavigationState() ?? initialState ?? runtime.restoredState)
     : undefined;

@@ -17,6 +17,7 @@ import {
   OfflineManager,
 } from '@maplibre/maplibre-react-native';
 import { mapLegacyMarkerAnchor, mapLegacyMarkerOffset } from './mapLegacyMarkerAnchor';
+import { resolveAndroidMapView } from './mapAndroidView';
 
 /* ── Mapeo de props legacy del MapView ───────────────────────────────────── */
 function mapLegacyMapProps(props) {
@@ -44,7 +45,16 @@ function mapLegacyMapProps(props) {
 
 /* ── MapView ─────────────────────────────────────────────────────────────── */
 const MapView = forwardRef(function MapView(props, ref) {
-  return <Map ref={ref} {...mapLegacyMapProps(props)} />;
+  const mapped = mapLegacyMapProps(props);
+  const { androidView, style, ...rest } = mapped;
+  return (
+    <Map
+      ref={ref}
+      {...rest}
+      style={[{ backgroundColor: '#F4F4F0' }, style]}
+      androidView={resolveAndroidMapView(androidView)}
+    />
+  );
 });
 MapView.displayName = 'MLCompatMapView';
 
@@ -288,3 +298,4 @@ const MapLibreGL = {
 export default MapLibreGL;
 
 export { mapLegacyMarkerAnchor, mapLegacyMarkerOffset } from './mapLegacyMarkerAnchor';
+export { resolveAndroidMapView } from './mapAndroidView';
