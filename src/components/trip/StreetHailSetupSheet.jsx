@@ -53,6 +53,7 @@ export function StreetHailSetupSheet({
   const { height: viewportHeight } = useWindowDimensions();
   const { isLandscape, isCompactHeight } = useResponsive();
   const sheetRef = useRef(null);
+  const searchScrollRef = useRef(null);
   const [step, setStep] = useState(STEP.CHOOSE);
   const [query, setQuery] = useState('');
   const [options, setOptions] = useState([]);
@@ -112,6 +113,14 @@ export function StreetHailSetupSheet({
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [query, step]);
+
+  useEffect(() => {
+    if (step !== STEP.SEARCH || options.length === 0) return undefined;
+    const id = setTimeout(() => {
+      searchScrollRef.current?.scrollToEnd?.({ animated: true });
+    }, 80);
+    return () => clearTimeout(id);
+  }, [options, step]);
 
   useEffect(() => {
     const nextIndex = resolveStreetHailSetupSheetIndex(step);
@@ -175,12 +184,13 @@ export function StreetHailSetupSheet({
       handleStyle={{ paddingVertical: 14 }}
       keyboardBehavior={keyboardBehavior}
       keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustResize"
-      enableBlurKeyboardOnGesture={isSearchStep}
+      android_keyboardInputMode={isSearchStep ? 'adjustPan' : 'adjustResize'}
+      enableBlurKeyboardOnGesture={false}
       backgroundStyle={styles.sheetBg}
       handleIndicatorStyle={styles.handle}
     >
       <BottomSheetScrollView
+        ref={searchScrollRef}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={isSearchStep ? 'none' : 'on-drag'}
         showsVerticalScrollIndicator={false}
@@ -198,52 +208,7 @@ export function StreetHailSetupSheet({
 
         {step === STEP.SEARCH ? (
           <View>
-            {/* Acciones arriba del input — siempre visibles aunque aparezca el teclado */}
-            <View style={styles.searchActions}>
-              <Pressable
-                onPress={() => {
-                  setQuery('');
-                  setOptions([]);
-                  setStep(STEP.CHOOSE);
-                }}
-                disabled={busy}
-                style={({ pressed }) => [styles.backBtn, styles.searchActionBtn, pressed ? { opacity: 0.75 } : null]}
-              >
-                <MaterialCommunityIcons name="arrow-left" size={16} color={colors.textMuted} />
-                <Text style={styles.backText}>Volver</Text>
-              </Pressable>
-              <Pressable
-                onPress={onCancel}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityLabel="Cancelar viaje en calle"
-                style={({ pressed }) => [styles.backBtn, styles.searchActionBtn, pressed ? { opacity: 0.75 } : null]}
-              >
-                <MaterialCommunityIcons name="close" size={16} color={colors.textMuted} />
-                <Text style={styles.backText}>Cancelar viaje</Text>
-              </Pressable>
-            </View>
-            <View style={styles.inputRow}>
-              <MaterialCommunityIcons
-                name={searching ? 'loading' : 'magnify'}
-                size={20}
-                color={colors.textMuted}
-              />
-              <BottomSheetTextInput
-                style={styles.input}
-                value={query}
-                onChangeText={setQuery}
-                placeholder="Buscar dirección..."
-                placeholderTextColor={colors.textMuted}
-                autoFocus={inputReady}
-                autoCorrect={false}
-                autoCapitalize="words"
-                returnKeyType="search"
-                editable={!busy}
-              />
-              {searching ? <ActivityIndicator size="small" color={colors.primary} /> : null}
-            </View>
-
+            {/* Resultados primero: quedan arriba del input, visibles sobre el teclado */}
             {options.length > 0 ? (
               <View style={styles.list}>
                 {options.map((opt, idx) => (
@@ -277,6 +242,51 @@ export function StreetHailSetupSheet({
               <Text style={styles.empty}>Sin resultados para “{query.trim()}”</Text>
             ) : null}
 
+            <View style={styles.inputRow}>
+              <MaterialCommunityIcons
+                name={searching ? 'loading' : 'magnify'}
+                size={20}
+                color={colors.textMuted}
+              />
+              <BottomSheetTextInput
+                style={styles.input}
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Buscar dirección..."
+                placeholderTextColor={colors.textMuted}
+                autoFocus={inputReady}
+                autoCorrect={false}
+                autoCapitalize="words"
+                returnKeyType="search"
+                editable={!busy}
+              />
+              {searching ? <ActivityIndicator size="small" color={colors.primary} /> : null}
+            </View>
+
+            <View style={styles.searchActions}>
+              <Pressable
+                onPress={() => {
+                  setQuery('');
+                  setOptions([]);
+                  setStep(STEP.CHOOSE);
+                }}
+                disabled={busy}
+                style={({ pressed }) => [styles.backBtn, styles.searchActionBtn, pressed ? { opacity: 0.75 } : null]}
+              >
+                <MaterialCommunityIcons name="arrow-left" size={16} color={colors.textMuted} />
+                <Text style={styles.backText}>Volver</Text>
+              </Pressable>
+              <Pressable
+                onPress={onCancel}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Cancelar viaje en calle"
+                style={({ pressed }) => [styles.backBtn, styles.searchActionBtn, pressed ? { opacity: 0.75 } : null]}
+              >
+                <MaterialCommunityIcons name="close" size={16} color={colors.textMuted} />
+                <Text style={styles.backText}>Cancelar viaje</Text>
+              </Pressable>
+            </View>
           </View>
         ) : null}
 

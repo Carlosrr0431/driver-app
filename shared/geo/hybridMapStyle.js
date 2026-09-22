@@ -158,6 +158,8 @@ function buildHybridMapStyle(options = {}) {
         tileSize: 256,
         attribution: GOOGLE_MAPS_ATTRIBUTION,
         maxzoom: maxZoom,
+        minzoom: 0,
+        volatile: true,
       },
       openmaptiles: {
         type: 'vector',
