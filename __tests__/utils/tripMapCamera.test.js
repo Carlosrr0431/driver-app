@@ -44,9 +44,9 @@ describe('resolveNavigationCameraZoom', () => {
       viewportHeight: 800,
     });
 
-    expect(arriving).toBeLessThanOrEqual(ARRIVAL_ZOOM_3D);
-    expect(arriving).toBeGreaterThanOrEqual(13.5);
-    expect(arriving).toBeLessThan(cruising);
+    // Al llegar el zoom debe ser alto (mayor que navegación normal) para ver el punto con precisión
+    expect(arriving).toBeGreaterThan(cruising);
+    expect(arriving).toBeGreaterThanOrEqual(16.0);
   });
 
   it('en 2D tampoco fuerza zoom 17+ al llegar', () => {
@@ -57,7 +57,8 @@ describe('resolveNavigationCameraZoom', () => {
       viewportWidth: 360,
       viewportHeight: 800,
     });
-    expect(arriving).toBeLessThanOrEqual(ARRIVAL_ZOOM_2D);
+    // Cerca del destino el zoom debe ser alto para precisión
+    expect(arriving).toBeGreaterThanOrEqual(16.0);
   });
 
   it('en un celular chico aleja un poco más', () => {

@@ -1,6 +1,6 @@
 import { MAP_MAX_ZOOM } from './mapProvider';
 
-/** A menos de esta distancia al retiro/destino, la cámara se aleja. */
+/** A menos de esta distancia al retiro/destino, la cámara se acerca progresivamente. */
 export const ARRIVAL_DISTANCE_METERS = 250;
 
 /**
@@ -8,13 +8,31 @@ export const ARRIVAL_DISTANCE_METERS = 250;
  * (quedan solo la ruta y las flechas de sentido).
  */
 export const NAV_ZOOM_FLOOR = 13.8;
-export const NAV_ZOOM_CEILING = Math.min(16.0, MAP_MAX_ZOOM - 2);
+export const NAV_ZOOM_CEILING = Math.min(16.8, MAP_MAX_ZOOM - 1);
 
 export const ARRIVAL_ZOOM_3D = 14.4;
 export const ARRIVAL_ZOOM_2D = 14.2;
 export const SETTLED_OVERVIEW_ZOOM = 14.2;
 export const ARRIVAL_PITCH_3D = 28;
 export const ARRIVAL_PITCH_2D = 8;
+
+/**
+ * Zoom de llegada progresivo: cuanto más cerca del punto, más acercado.
+ *  250 m → zoom normal de navegación (sin cambio)
+ *  100 m → 16.0
+ *   50 m → 16.4
+ *   20 m → 16.8
+ */
+export function resolveArrivalZoom(remainingDistanceMeters, speedKmh = 0) {
+  const remaining = Number(remainingDistanceMeters);
+  if (!Number.isFinite(remaining) || remaining >= ARRIVAL_DISTANCE_METERS) return null;
+  if (remaining <= 20) return 16.8;
+  if (remaining <= 50) return 16.4;
+  if (remaining <= 100) return 16.0;
+  // 100-250 m: interpolación suave hacia el zoom de velocidad actual
+  const t = (remaining - 100) / (ARRIVAL_DISTANCE_METERS - 100); // 0=cerca 1=lejos
+  return 16.0 - t * (16.0 - Math.min(15.8, 14.8 + (60 - Math.min(speedKmh, 60)) * 0.02));
+}
 
 const ZOOM_TIERS = [
   { minKmh: 65, zoom: 14.8 },
@@ -73,15 +91,14 @@ export function resolveNavigationCameraZoom({
   viewportWidth = 360,
   viewportHeight = 800,
 } = {}) {
-  let zoom = getZoomForSpeed(speedKmh, threeDEnabled);
-  const arriving = isArrivalCameraDistance(remainingDistanceMeters);
-  if (arriving) {
-    const bias = getViewportArrivalZoomBias({
-      width: viewportWidth,
-      height: viewportHeight,
-    });
-    const arrivalCap = (threeDEnabled ? ARRIVAL_ZOOM_3D : ARRIVAL_ZOOM_2D) + bias;
-    zoom = Math.min(zoom, arrivalCap);
+  // Zoom de llegada progresivo: se acerca cuanto más cerca del destino
+  const arrivalZoom = resolveArrivalZoom(remainingDistanceMeters, speedKmh);
+  let zoom = arrivalZoom ?? getZoomForSpeed(speedKmh, threeDEnabled);
+
+  // En pantallas chicas el sheet tapa más mapa: ajustar bias
+  if (arrivalZoom !== null) {
+    const bias = getViewportArrivalZoomBias({ width: viewportWidth, height: viewportHeight });
+    zoom = zoom + bias;
   }
 
   const factor = Number(cornerFactor);
