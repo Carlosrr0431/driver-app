@@ -365,7 +365,9 @@ export function resolveStreetHailSetupSnaps({
   compact = false,
 } = {}) {
   if (searching) return ['100%'];
-  return compact ? ['88%'] : ['70%'];
+  // Los dos botones de elección de destino necesitan ~56% del alto de pantalla.
+  // En compact/landscape se usa prácticamente toda la pantalla.
+  return compact ? ['92%'] : ['56%'];
 }
 
 export function resolveStreetHailSetupUsesDynamicSizing(_searching) {

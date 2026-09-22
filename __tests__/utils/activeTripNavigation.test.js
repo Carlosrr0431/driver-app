@@ -160,8 +160,8 @@ describe('shouldShowActiveTripNavHud', () => {
 
 describe('street hail setup sheet', () => {
   it('usa snaps fijos: choose/confirm no dependen de dynamic sizing', () => {
-    expect(resolveStreetHailSetupSnaps({})).toEqual(['70%']);
-    expect(resolveStreetHailSetupSnaps({ compact: true })).toEqual(['88%']);
+    expect(resolveStreetHailSetupSnaps({})).toEqual(['56%']);
+    expect(resolveStreetHailSetupSnaps({ compact: true })).toEqual(['92%']);
     expect(resolveStreetHailSetupUsesDynamicSizing(false)).toBe(false);
     expect(resolveStreetHailSetupUsesDynamicSizing(true)).toBe(false);
   });
