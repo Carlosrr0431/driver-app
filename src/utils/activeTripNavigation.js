@@ -426,7 +426,9 @@ export function resolveStreetHailSearchTopInset({
 }
 
 export function resolveStreetHailSetupKeyboardBehavior(searching) {
-  return searching ? 'fillParent' : 'extend';
+  // 'interactive' sube el sheet completo por encima del teclado.
+  // Los POIs quedan visibles entre el input y el borde superior del teclado.
+  return searching ? 'interactive' : 'extend';
 }
 
 export const FREE_RIDE_NOTES_MARKER = '[FREE_RIDE]';
