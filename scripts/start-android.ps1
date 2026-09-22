@@ -141,7 +141,8 @@ function Set-AdbReverse {
 }
 
 function Set-EmulatorGpsSalta {
-  # El GPS nativo del emulador suele quedar en null; mock location en Salta Capital.
+  # Usa solo emu geo fix para que el simulador del dashboard pueda actualizar el GPS libremente.
+  # El test-provider estático bloqueaba las actualizaciones de posición desde el panel.
   $adb = Get-Adb
   $serial = Get-AndroidSerial
   if (-not $serial) { return }
@@ -149,19 +150,18 @@ function Set-EmulatorGpsSalta {
   $lat = '-24.794977'
   $lng = '-65.3756143'
 
+  # Deshabilita animaciones para mejorar rendimiento en emulador
   & $adb -s $serial shell settings put global window_animation_scale 0 | Out-Null
   & $adb -s $serial shell settings put global transition_animation_scale 0 | Out-Null
   & $adb -s $serial shell settings put global animator_duration_scale 0 | Out-Null
   & $adb -s $serial shell cmd location set-location-enabled true 2>$null | Out-Null
-  cmd /c "`"$adb`" -s $serial shell appops set com.android.shell android:mock_location allow >nul 2>&1" | Out-Null
-  if (Test-DriverAppInstalled) {
-    cmd /c "`"$adb`" -s $serial shell appops set $PackageName android:mock_location allow >nul 2>&1" | Out-Null
-  }
-  & $adb -s $serial shell cmd location providers add-test-provider gps --requiresSatellite --supportsAltitude --supportsSpeed --supportsBearing --powerRequirement 1 --accuracy 1 2>$null | Out-Null
-  & $adb -s $serial shell cmd location providers set-test-provider-enabled gps true 2>$null | Out-Null
-  & $adb -s $serial shell cmd location providers set-test-provider-location gps --location "${lat},${lng}" --accuracy 5 2>$null | Out-Null
+
+  # Elimina el test-provider si quedó de una sesión anterior
+  & $adb -s $serial shell cmd location providers remove-test-provider gps 2>$null | Out-Null
+
+  # Fija GPS inicial vía sensor directo (emu geo fix) — el dashboard puede sobreescribirlo
   & $adb -s $serial emu geo fix $lng $lat 1200 2>$null | Out-Null
-  Write-Step "GPS emulador: $lat, $lng (Salta)"
+  Write-Step "GPS emulador: $lat, $lng (Salta) — actualizable desde el dashboard"
 }
 
 function Start-EmulatorGpsPulse {
