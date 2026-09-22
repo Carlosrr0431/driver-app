@@ -175,7 +175,7 @@ describe('street hail setup sheet', () => {
   it('al buscar llena el espacio sobre el teclado', () => {
     expect(resolveStreetHailSetupSnaps({ searching: true })).toEqual(['100%']);
     expect(resolveStreetHailSetupSnaps({ searching: true, compact: true })).toEqual(['100%']);
-    expect(resolveStreetHailSetupKeyboardBehavior(true)).toBe('fillParent');
+    expect(resolveStreetHailSetupKeyboardBehavior(true)).toBe('interactive');
     expect(resolveStreetHailSetupKeyboardBehavior(false)).toBe('extend');
   });
 
