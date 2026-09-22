@@ -765,7 +765,7 @@ const HomeScreen = () => {
           {/* Comisiones pendientes: solo plan commission_current. Semanal acumula
               en BD para el dashboard, pero no muestra saldo al chofer. */}
           {showWeeklyManualLock ? (
-            <Animated.View entering={FadeInUp.delay(60).duration(350)}>
+            <Animated.View entering={FadeInUp.duration(200)}>
               <View style={{
                 backgroundColor: '#EEEEF8',
                 borderRadius: 14, padding: 14, marginBottom: 12,
@@ -783,7 +783,7 @@ const HomeScreen = () => {
             </Animated.View>
           ) : null}
           {showCommissionDebt ? (
-            <Animated.View entering={FadeInUp.delay(60).duration(350)}>
+            <Animated.View entering={FadeInUp.duration(200)}>
               <CommissionDebtBanner
                 commissionData={commissionData}
                 onPayPress={() => navigation.navigate('CommissionPayment', { commissionData, autoStart: true })}
@@ -792,7 +792,7 @@ const HomeScreen = () => {
           ) : null}
 
           {/* ── Card de ganancias del día ── */}
-          <Animated.View entering={FadeInUp.delay(60).duration(350)} style={{ marginBottom: 10 }}>
+          <Animated.View entering={FadeInUp.duration(180)} style={{ marginBottom: 10 }}>
             <LinearGradient
               colors={[colors.primary, colors.primaryDark]}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
@@ -823,7 +823,7 @@ const HomeScreen = () => {
           </Animated.View>
 
           {/* ── Stats secundarias ── */}
-          <Animated.View entering={FadeInUp.delay(80).duration(380)}>
+          <Animated.View entering={FadeInUp.duration(200)}>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 4 }}>
               <MiniStat
                 icon="car-side"
@@ -894,7 +894,7 @@ const HomeScreen = () => {
           )}
 
           {/* Actividad reciente */}
-          <Animated.View entering={FadeInUp.delay(140).duration(380)} style={{ marginTop: 18 }}>
+          <Animated.View entering={FadeInUp.duration(200)} style={{ marginTop: 18 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <Text style={{ color: '#111827', fontSize: 15, fontFamily: 'Inter_700Bold' }}>
                 Actividad reciente
@@ -915,7 +915,7 @@ const HomeScreen = () => {
                 </Animated.View>
               ))
             ) : (
-              <Animated.View entering={FadeInUp.delay(160).duration(320)}>
+              <Animated.View entering={FadeInUp.duration(200)}>
                 <View style={{
                   backgroundColor: colors.surface,
                   borderRadius: 20, paddingVertical: 32, paddingHorizontal: 20,
