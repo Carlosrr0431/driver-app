@@ -21,10 +21,12 @@ function GpsSimulationBridge() {
 
 function AppResumeBridge() {
   const queryClient = useQueryClient();
-  const visible = useAppResumeHydration({
+  // Rehidrata las queries al volver de background, sin mostrar ningún overlay.
+  // El skeleton tapaba la pantalla y causaba flashes blancos en celulares lentos.
+  useAppResumeHydration({
     hydrate: () => queryClient.invalidateQueries({ refetchType: 'all' }),
   });
-  return <AppResumeSkeleton visible={visible} />;
+  return null;
 }
 
 const AppNavigator = () => {
