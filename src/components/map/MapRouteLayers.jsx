@@ -1,17 +1,23 @@
 /**
  * Polilíneas de ruta OSRM con MapLibre Native (ShapeSource + LineLayer).
- * En navegación: tramos de mano única más gruesos que doble mano.
+ * Estilo moderno Uber/DiDi: línea principal azul vivo, sombra exterior oscura,
+ * borde blanco interior para profundidad. En mano única: más gruesa.
  */
 import React, { useMemo } from 'react';
 import MapLibreGL from '../../lib/maplibre';
 import { normalizeCoords } from '../../utils/mapCoords';
 import { buildRemainingRouteSegments } from '../../utils/routeOneway';
 
-const DEFAULT_ROUTE_BLUE = '#4285F4';
+/** Azul Uber/DiDi — más vivo que el Google Maps original */
+const DEFAULT_ROUTE_BLUE = '#1C6EF2';
+/** Sombra exterior oscura para profundidad (capa más baja) */
+const ROUTE_SHADOW = '#0A2E7A';
+/** Borde blanco fino entre sombra y línea principal */
 const DEFAULT_ROUTE_CASING = '#FFFFFF';
 
-const NAV_WIDTH_ONEWAY = { casing: 22, line: 16 };
-const NAV_WIDTH_TWOWAY = { casing: 14, line: 10 };
+// Capas: sombra → casing blanco → línea principal
+const NAV_WIDTH_ONEWAY = { shadow: 30, casing: 24, line: 17 };
+const NAV_WIDTH_TWOWAY = { shadow: 20, casing: 15, line: 10 };
 
 function coordsToLineString(coords) {
   return normalizeCoords(coords).map((point) => [point.longitude, point.latitude]);
@@ -45,8 +51,10 @@ export function MapRouteLayers({
   lineWidth,
 }) {
   const sourceId = `${layerIdPrefix}-source`;
+  const shadowLayerId = `${layerIdPrefix}-shadow`;
   const casingLayerId = `${layerIdPrefix}-casing`;
   const lineLayerId = `${layerIdPrefix}-line`;
+
   const segmentCollection = useMemo(() => {
     if (!navigationMode || coords.length < 2) return null;
     const segments = buildRemainingRouteSegments(routeSteps, coords);
@@ -58,30 +66,33 @@ export function MapRouteLayers({
     if (coordinates.length < 2) return null;
     return {
       type: 'Feature',
-      geometry: {
-        type: 'LineString',
-        coordinates,
-      },
+      geometry: { type: 'LineString', coordinates },
     };
   }, [coords]);
 
-  const navCasingWidth = casingWidth ?? [
-    'case',
-    ['==', ['get', 'oneway'], 1],
-    NAV_WIDTH_ONEWAY.casing,
-    NAV_WIDTH_TWOWAY.casing,
-  ];
+  // Anchos adaptativos por tipo de vía (mano única más gruesa)
+  const navShadowWidth = ['case', ['==', ['get', 'oneway'], 1], NAV_WIDTH_ONEWAY.shadow, NAV_WIDTH_TWOWAY.shadow];
+  const navCasingWidth = casingWidth ?? ['case', ['==', ['get', 'oneway'], 1], NAV_WIDTH_ONEWAY.casing, NAV_WIDTH_TWOWAY.casing];
+  const navLineWidth   = lineWidth   ?? ['case', ['==', ['get', 'oneway'], 1], NAV_WIDTH_ONEWAY.line,   NAV_WIDTH_TWOWAY.line];
 
-  const navLineWidth = lineWidth ?? [
-    'case',
-    ['==', ['get', 'oneway'], 1],
-    NAV_WIDTH_ONEWAY.line,
-    NAV_WIDTH_TWOWAY.line,
-  ];
-
+  /* ── Modo navegación activa: segmentos con sentido único ────────────────── */
   if (navigationMode && segmentCollection) {
     return (
       <MapLibreGL.ShapeSource id={sourceId} shape={segmentCollection}>
+        {/* 1. Sombra exterior (profundidad) */}
+        <MapLibreGL.LineLayer
+          id={shadowLayerId}
+          style={{
+            lineColor: ROUTE_SHADOW,
+            lineWidth: navShadowWidth,
+            lineCap: 'round',
+            lineJoin: 'round',
+            lineOpacity: 0.28,
+            lineBlur: 4,
+          }}
+          belowLayerID={casingLayerId}
+        />
+        {/* 2. Borde blanco (separación del mapa) */}
         <MapLibreGL.LineLayer
           id={casingLayerId}
           style={{
@@ -89,10 +100,11 @@ export function MapRouteLayers({
             lineWidth: navCasingWidth,
             lineCap: 'round',
             lineJoin: 'round',
-            lineOpacity: 0.95,
+            lineOpacity: 1,
           }}
           belowLayerID={lineLayerId}
         />
+        {/* 3. Línea principal */}
         <MapLibreGL.LineLayer
           id={lineLayerId}
           style={{
@@ -100,20 +112,38 @@ export function MapRouteLayers({
             lineWidth: navLineWidth,
             lineCap: 'round',
             lineJoin: 'round',
-            lineOpacity: 0.94,
+            lineOpacity: 1,
           }}
         />
       </MapLibreGL.ShapeSource>
     );
   }
 
+  /* ── Sin navegación activa: línea simple (preview / free ride) ──────────── */
   if (!singleLineGeoJSON) return null;
 
+  const isFreeRide = layerIdPrefix !== 'osrm-route';
+  const resolvedShadowWidth = isFreeRide ? 0 : 18;
   const resolvedCasingWidth = casingWidth ?? (navigationMode ? NAV_WIDTH_TWOWAY.casing : 9);
-  const resolvedLineWidth = lineWidth ?? (navigationMode ? NAV_WIDTH_TWOWAY.line : 5);
+  const resolvedLineWidth   = lineWidth   ?? (navigationMode ? NAV_WIDTH_TWOWAY.line   : 5);
 
   return (
     <MapLibreGL.ShapeSource id={sourceId} shape={singleLineGeoJSON}>
+      {/* Sombra solo en ruta normal (no en recorrido GPS libre) */}
+      {!isFreeRide ? (
+        <MapLibreGL.LineLayer
+          id={shadowLayerId}
+          style={{
+            lineColor: ROUTE_SHADOW,
+            lineWidth: resolvedShadowWidth,
+            lineCap: 'round',
+            lineJoin: 'round',
+            lineOpacity: 0.22,
+            lineBlur: 4,
+          }}
+          belowLayerID={casingLayerId}
+        />
+      ) : null}
       <MapLibreGL.LineLayer
         id={casingLayerId}
         style={{
@@ -121,7 +151,7 @@ export function MapRouteLayers({
           lineWidth: resolvedCasingWidth,
           lineCap: 'round',
           lineJoin: 'round',
-          lineOpacity: 0.95,
+          lineOpacity: isFreeRide ? 0.85 : 1,
         }}
         belowLayerID={lineLayerId}
       />
@@ -132,7 +162,7 @@ export function MapRouteLayers({
           lineWidth: resolvedLineWidth,
           lineCap: 'round',
           lineJoin: 'round',
-          lineOpacity: 0.92,
+          lineOpacity: isFreeRide ? 0.75 : 0.97,
         }}
       />
     </MapLibreGL.ShapeSource>
