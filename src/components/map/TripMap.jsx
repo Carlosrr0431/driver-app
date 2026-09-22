@@ -513,12 +513,18 @@ export const TripMap = React.memo(({
   }, [driverCoord, snappedDriverCoord]);
 
   const displayRouteCoords = useMemo(() => {
-    if (isRerouting || remainingRouteCoords.length < 2 || !driverCoord) return [];
-    if (navigationMode) return remainingRouteCoords;
+    if (isRerouting) return [];
+    if (!driverCoord) return routeCoords.length >= 2 ? routeCoords : [];
+    // En navegación activa, si el tramo restante es muy corto (chofer llegando),
+    // mostrar la ruta completa para que la polilínea nunca desaparezca.
+    if (navigationMode) {
+      return remainingRouteCoords.length >= 2 ? remainingRouteCoords : routeCoords;
+    }
+    if (remainingRouteCoords.length < 2) return [];
     const connectorThreshold = isOnRoute ? 10 : 4;
     const routeAnchor = isOnRoute ? (snappedDriverCoord ?? driverCoord) : driverCoord;
     return prependDriverConnector(routeAnchor, remainingRouteCoords, connectorThreshold);
-  }, [isRerouting, remainingRouteCoords, driverCoord, snappedDriverCoord, isOnRoute, navigationMode]);
+  }, [isRerouting, remainingRouteCoords, routeCoords, driverCoord, snappedDriverCoord, isOnRoute, navigationMode]);
 
   const traveledRouteDisplayCoords = useMemo(() => {
     if (!freeRideMode || !Array.isArray(traveledRouteCoords) || traveledRouteCoords.length === 0) {
