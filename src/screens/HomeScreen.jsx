@@ -37,7 +37,11 @@ import { prefetchDriverToPickupRoute } from '../services/navigationRoutePrefetch
 import { VoiceChatModal } from '../components/VoiceChatModal';
 import { formatPrice, formatDistance } from '../utils/formatters';
 import { DEFAULT_REGION } from '../utils/constants';
-import { resolveLiveTripForNavigation } from '../utils/activeTripNavigation';
+import {
+  resolveLiveTripForNavigation,
+  SHEET_PAN_ACTIVE_OFFSET_Y,
+  SHEET_PAN_FAIL_OFFSET_X,
+} from '../utils/activeTripNavigation';
 import {
   HOME_CAMERA_ZOOM,
   nextHomeFollowCenter,
@@ -111,8 +115,9 @@ const HomeScreen = () => {
   const [startingStreetHail, setStartingStreetHail] = useState(false);
   const [streetHailSetup, setStreetHailSetup] = useState(null);
   const snapPoints = useMemo(() => {
-    if (isLandscape || isCompactHeight) return ['36%', '88%'];
-    return activeTrip ? ['28%', '72%'] : ['36%', '72%'];
+    if (isLandscape) return ['36%', '88%'];
+    if (isCompactHeight) return ['34%', '88%'];
+    return activeTrip ? ['28%', '82%'] : ['38%', '88%'];
   }, [isLandscape, isCompactHeight, activeTrip]);
 
   const { data: stats, refetch: refetchStats } = useTodayStats();
@@ -123,7 +128,9 @@ const HomeScreen = () => {
   const showWeeklyManualLock = Boolean(
     commissionData?.isWeekly && commissionData?.blockReason === 'manual',
   );
-  const { data: todayTrips, isLoading: tripsLoading, refetch: refetchTrips } = useTripHistory('today');
+  const { data: todayTrips, isLoading: tripsLoading, isFetching: tripsFetching, refetch: refetchTrips } = useTripHistory('today');
+  // Con placeholderData, isLoading es false si hay cache. Solo mostramos skeleton la primera vez.
+  const showTripsSkeleton = tripsLoading && !todayTrips;
 
   const isOnline = driver?.is_available || false;
 
@@ -641,8 +648,11 @@ const HomeScreen = () => {
         snapPoints={snapPoints}
         enableDynamicSizing={false}
         animateOnMount={false}
-        enableContentPanningGesture={false}
+        enableContentPanningGesture
         enableHandlePanningGesture
+        activeOffsetY={SHEET_PAN_ACTIVE_OFFSET_Y}
+        failOffsetX={SHEET_PAN_FAIL_OFFSET_X}
+        handleStyle={{ paddingVertical: 14 }}
         backgroundStyle={{
           backgroundColor: '#FFFFFF',
           borderTopLeftRadius: 28,
@@ -896,7 +906,7 @@ const HomeScreen = () => {
               )}
             </View>
 
-            {tripsLoading ? (
+            {showTripsSkeleton ? (
               <SkeletonTrips />
             ) : allTrips.length > 0 ? (
               allTrips.slice(0, 4).map((trip, idx) => (

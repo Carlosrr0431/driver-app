@@ -4,9 +4,9 @@ export const FOREGROUND_WATCH_DISTANCE_INTERVAL_M = 1;
 export const NAV_WATCH_TIME_INTERVAL_MS = 500;
 export const NAV_WATCH_DISTANCE_INTERVAL_M = 1;
 
-/** Pintar el pin interpolado: 20 fps alcanza y evita reconciliar el mapa a 60 fps. */
-export const SMOOTH_MAP_FRAME_MS = 50;
-export const SMOOTH_MAP_MIN_PAINT_METERS = 0.35;
+/** Pintar el pin ~5 veces por segundo. Más seguido traba toques en Android lento. */
+export const SMOOTH_MAP_FRAME_MS = 200;
+export const SMOOTH_MAP_MIN_PAINT_METERS = 2;
 
 /**
  * Heartbeat de flota (speed/heading → driver_locations).

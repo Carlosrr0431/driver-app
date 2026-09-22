@@ -215,12 +215,24 @@ export function recoverClosedBottomSheetIndex(restoreIndex, lastIndex) {
   );
 }
 
+/** Un toque corto no activa el arrastre; un desliz vertical sí sube el sheet. */
+export const SHEET_PAN_ACTIVE_OFFSET_Y = [-16, 16];
+export const SHEET_PAN_FAIL_OFFSET_X = [-24, 24];
+
 /**
- * En Android el pan del contenido se come el tap de los botones.
- * El sheet se mueve solo desde la manija.
+ * El contenido se puede deslizar para abrir o cerrar el sheet.
+ * Se apaga solo si un overlay o el slider pelean el gesto.
  */
-export function shouldAllowSheetContentPan() {
-  return false;
+export function shouldAllowSheetContentPan({
+  showingFinishSlider = false,
+  showingFinishModal = false,
+  showingCancelConfirm = false,
+  sliderDragging = false,
+} = {}) {
+  return !showingFinishSlider
+    && !showingFinishModal
+    && !showingCancelConfirm
+    && !sliderDragging;
 }
 
 /** Snaps que dejan mapa + acciones visibles en pantallas chicas y landscape. */

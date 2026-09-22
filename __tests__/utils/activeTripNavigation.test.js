@@ -298,13 +298,12 @@ describe('resolveActiveTripSheetIndex', () => {
 });
 
 describe('shouldAllowSheetContentPan', () => {
-  it('deja el contenido quieto para que los botones reciban el tap', () => {
-    expect(shouldAllowSheetContentPan({})).toBe(false);
+  it('deja deslizar el contenido y solo bloquea overlay o slider en curso', () => {
+    expect(shouldAllowSheetContentPan({})).toBe(true);
     expect(shouldAllowSheetContentPan({ showingFinishSlider: true })).toBe(false);
-    expect(shouldAllowSheetContentPan({
-      showingFinishModal: false,
-      showingCancelConfirm: false,
-    })).toBe(false);
+    expect(shouldAllowSheetContentPan({ showingFinishModal: true })).toBe(false);
+    expect(shouldAllowSheetContentPan({ showingCancelConfirm: true })).toBe(false);
+    expect(shouldAllowSheetContentPan({ sliderDragging: true })).toBe(false);
   });
 });
 

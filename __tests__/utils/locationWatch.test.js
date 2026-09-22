@@ -184,7 +184,7 @@ describe('buildFleetBackgroundLocationOptions', () => {
 });
 
 describe('shouldCommitMapPaint', () => {
-  it('omite pintados de menos de 35 cm para no re-renderizar el mapa', () => {
+  it('omite pintados chicos para no re-renderizar el mapa', () => {
     expect(shouldCommitMapPaint({
       lastLat: -24.78000,
       lastLng: -65.41000,

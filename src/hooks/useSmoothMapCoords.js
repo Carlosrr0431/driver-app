@@ -50,14 +50,14 @@ export function useSmoothMapCoords(lat, lng, speedMps = 0, headingDeg = 0) {
     }
 
     if (distM > 500) {
-      cancelAnimationFrame(animRef.current);
+      clearTimeout(animRef.current);
       displayRef.current = target;
       setDisplay(target);
       lastTargetTimeRef.current = performance.now();
       return undefined;
     }
 
-    cancelAnimationFrame(animRef.current);
+    clearTimeout(animRef.current);
     lastPaintRef.current = 0;
 
     const now = performance.now();
@@ -113,12 +113,12 @@ export function useSmoothMapCoords(lat, lng, speedMps = 0, headingDeg = 0) {
       }
 
       if (keepGoing) {
-        animRef.current = requestAnimationFrame(tick);
+        animRef.current = setTimeout(() => tick(performance.now()), SMOOTH_MAP_FRAME_MS);
       }
     };
 
-    animRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animRef.current);
+    animRef.current = setTimeout(() => tick(performance.now()), SMOOTH_MAP_FRAME_MS);
+    return () => clearTimeout(animRef.current);
   }, [lat, lng, speedMps, headingDeg]);
 
   return display;

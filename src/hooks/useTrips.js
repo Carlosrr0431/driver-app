@@ -188,6 +188,9 @@ export const useTrips = () => {
   const useTripHistory = (filter = 'today') => {
     return useInfiniteQuery({
       queryKey: ['tripHistory', driver?.id, filter],
+      staleTime: 3 * 60 * 1000,        // muestra cache 3 min antes de refetch silencioso
+      gcTime: 10 * 60 * 1000,          // mantiene en memoria 10 min
+      placeholderData: (prev) => prev, // nunca vuelve a "loading" si hay datos anteriores
       queryFn: async ({ pageParam = 0 }) => {
         if (!driver?.id) return { data: [], nextPage: null };
 
@@ -230,6 +233,9 @@ export const useTrips = () => {
   const useTodayStats = () => {
     const query = useQuery({
       queryKey: ['todayStats', driver?.id],
+      staleTime: 3 * 60 * 1000,
+      gcTime: 10 * 60 * 1000,
+      placeholderData: (prev) => prev,
       queryFn: async () => {
         if (!driver?.id) return null;
 

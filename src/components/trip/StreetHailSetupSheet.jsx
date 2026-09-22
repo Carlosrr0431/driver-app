@@ -24,6 +24,10 @@ import { ChooseDestinationMode } from './ChooseDestinationMode';
 import { StreetHailCancelButton } from './StreetHailCancelButton';
 import { useResponsive } from '../../hooks/useResponsive';
 import {
+  SHEET_PAN_ACTIVE_OFFSET_Y,
+  SHEET_PAN_FAIL_OFFSET_X,
+} from '../../utils/activeTripNavigation';
+import {
   resolveStreetHailSearchTopInset,
   resolveStreetHailSetupBottomInset,
   resolveStreetHailSetupKeyboardBehavior,
@@ -164,8 +168,11 @@ export function StreetHailSetupSheet({
       maxDynamicContentSize={maxDynamicContentSize}
       enablePanDownToClose={false}
       enableOverDrag
-      enableContentPanningGesture={false}
+      enableContentPanningGesture
       enableHandlePanningGesture
+      activeOffsetY={SHEET_PAN_ACTIVE_OFFSET_Y}
+      failOffsetX={SHEET_PAN_FAIL_OFFSET_X}
+      handleStyle={{ paddingVertical: 14 }}
       keyboardBehavior={keyboardBehavior}
       keyboardBlurBehavior="restore"
       android_keyboardInputMode="adjustResize"

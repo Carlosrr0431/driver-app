@@ -8,13 +8,16 @@ const OPENFREEMAP_PLANET = 'https://tiles.openfreemap.org/planet';
 const OPENFREEMAP_SPRITE = 'https://tiles.openfreemap.org/sprites/ofm_f384/ofm';
 const OPENFREEMAP_GLYPHS = 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf';
 
-const OSM_RASTER_SUBDOMAINS = ['a', 'b', 'c'];
-const OSM_RASTER_ATTRIBUTION = '© OpenStreetMap contributors';
+const GOOGLE_MAPS_ATTRIBUTION = '© Google Maps';
 
-function osmRasterTiles() {
-  return OSM_RASTER_SUBDOMAINS.map(
-    (sub) => `https://${sub}.tile.openstreetmap.org/{z}/{x}/{y}.png`,
-  );
+/** Tiles de Google Maps — mismos servidores que usa Google Maps en el navegador. */
+function googleMapsTiles() {
+  return [
+    'https://mt0.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    'https://mt2.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    'https://mt3.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+  ];
 }
 
 /**
@@ -151,9 +154,9 @@ function buildHybridMapStyle(options = {}) {
     sources: {
       'osm-raster': {
         type: 'raster',
-        tiles: osmRasterTiles(),
+        tiles: googleMapsTiles(),
         tileSize: 256,
-        attribution: OSM_RASTER_ATTRIBUTION,
+        attribution: GOOGLE_MAPS_ATTRIBUTION,
         maxzoom: maxZoom,
       },
       openmaptiles: {

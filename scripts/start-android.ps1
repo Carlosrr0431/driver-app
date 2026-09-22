@@ -79,7 +79,9 @@ function Start-AndroidEmulator([string]$Name) {
     '-avd', $Name,
     '-no-boot-anim',
     '-gpu', 'host',
-    '-no-audio'
+    '-no-audio',
+    '-memory', '1536',
+    '-cores', '2'
   ) | Out-Null
 }
 
@@ -160,7 +162,6 @@ function Set-EmulatorGpsSalta {
   & $adb -s $serial shell cmd location providers set-test-provider-location gps --location "${lat},${lng}" --accuracy 5 2>$null | Out-Null
   & $adb -s $serial emu geo fix $lng $lat 1200 2>$null | Out-Null
   Write-Step "GPS emulador: $lat, $lng (Salta)"
-  Start-EmulatorGpsPulse -Serial $serial -Lat $lat -Lng $lng
 }
 
 function Start-EmulatorGpsPulse {
@@ -241,6 +242,16 @@ function Wait-MetroBundleReady {
 }
 
 function Start-MetroBundler {
+  try {
+    $alive = Invoke-WebRequest -Uri "http://127.0.0.1:$MetroPort/status" -UseBasicParsing -TimeoutSec 2
+    if ($alive.StatusCode -eq 200) {
+      Write-Step "Metro ya está en el puerto $MetroPort."
+      return
+    }
+  } catch {
+    # Metro no está corriendo
+  }
+
   Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue
   Remove-Item Env:CI -ErrorAction SilentlyContinue
   $env:RCT_METRO_PORT = $MetroPort

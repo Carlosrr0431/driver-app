@@ -9,6 +9,11 @@ jest.mock('@expo/vector-icons', () => {
   };
 });
 
+jest.mock('react-native-gesture-handler', () => {
+  const { Pressable } = require('react-native');
+  return { Pressable };
+});
+
 jest.mock('@react-navigation/bottom-tabs', () => ({
   useBottomTabBarHeight: () => 78,
 }));

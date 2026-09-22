@@ -66,8 +66,6 @@ export function AppResumeSkeleton({ visible }) {
   }));
 
   if (!visible) return null;
-  // El overlay con mapa tapa botones en Android lento. El Home se rehidrata solo.
-  return null;
 
   const padX = Math.max(screenPadding, s(16));
   const chipH = s(36, { min: 32, max: 42 });
@@ -85,7 +83,7 @@ export function AppResumeSkeleton({ visible }) {
       accessibilityLabel="Actualizando estado"
       accessibilityRole="progressbar"
       accessibilityState={{ busy: true }}
-      pointerEvents="auto"
+      pointerEvents="none"
       style={styles.overlay}
     >
       <ResumeMapBackdrop />

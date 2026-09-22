@@ -32,6 +32,8 @@ import {
   recoverClosedBottomSheetIndex,
   shouldRestoreClosedBottomSheet,
   shouldAllowSheetContentPan,
+  SHEET_PAN_ACTIVE_OFFSET_Y,
+  SHEET_PAN_FAIL_OFFSET_X,
   resolveActiveTripSnapPoints,
   shouldSnapActiveTripSheet,
   didNavigationHudChange,
@@ -3347,6 +3349,8 @@ const ActiveTripScreen = () => {
         animateOnMount={false}
         enableContentPanningGesture={allowSheetContentPan}
         enableHandlePanningGesture={!showFinishModal && !showCancelConfirm}
+        activeOffsetY={SHEET_PAN_ACTIVE_OFFSET_Y}
+        failOffsetX={SHEET_PAN_FAIL_OFFSET_X}
         backgroundStyle={styles.sheetBg}
         handleStyle={styles.handleArea}
         handleIndicatorStyle={styles.handle}
