@@ -208,21 +208,22 @@ describe('street hail setup sheet', () => {
     expect(resolveStreetHailSetupBottomInset(78, 24, { searching: true })).toBe(0);
   });
 
-  it('con teclado (viewport corto) prioriza input y POIs', () => {
+  it('solo reserva el safe-area para maximizar espacio de POIs', () => {
     const inset = resolveStreetHailSearchTopInset({
       safeTop: 24,
       viewportHeight: 360,
     });
+    // Solo el safe-area, sin espacio extra para chips
+    expect(inset).toBe(24);
     expect(360 - inset).toBeGreaterThanOrEqual(220);
-    expect(inset).toBe(32);
   });
 
-  it('sin teclado deja ver el chip del chofer', () => {
+  it('sin notch el topInset es 0', () => {
     const inset = resolveStreetHailSearchTopInset({
-      safeTop: 24,
+      safeTop: 0,
       viewportHeight: 800,
     });
-    expect(inset).toBe(76);
+    expect(inset).toBe(0);
   });
 });
 

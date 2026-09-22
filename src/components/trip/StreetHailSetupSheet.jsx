@@ -198,7 +198,31 @@ export function StreetHailSetupSheet({
 
         {step === STEP.SEARCH ? (
           <View>
-            <Text style={styles.title}>¿A dónde van?</Text>
+            {/* Acciones arriba del input — siempre visibles aunque aparezca el teclado */}
+            <View style={styles.searchActions}>
+              <Pressable
+                onPress={() => {
+                  setQuery('');
+                  setOptions([]);
+                  setStep(STEP.CHOOSE);
+                }}
+                disabled={busy}
+                style={({ pressed }) => [styles.backBtn, styles.searchActionBtn, pressed ? { opacity: 0.75 } : null]}
+              >
+                <MaterialCommunityIcons name="arrow-left" size={16} color={colors.textMuted} />
+                <Text style={styles.backText}>Volver</Text>
+              </Pressable>
+              <Pressable
+                onPress={onCancel}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Cancelar viaje en calle"
+                style={({ pressed }) => [styles.backBtn, styles.searchActionBtn, pressed ? { opacity: 0.75 } : null]}
+              >
+                <MaterialCommunityIcons name="close" size={16} color={colors.textMuted} />
+                <Text style={styles.backText}>Cancelar viaje</Text>
+              </Pressable>
+            </View>
             <View style={styles.inputRow}>
               <MaterialCommunityIcons
                 name={searching ? 'loading' : 'magnify'}
@@ -253,30 +277,6 @@ export function StreetHailSetupSheet({
               <Text style={styles.empty}>Sin resultados para “{query.trim()}”</Text>
             ) : null}
 
-            <View style={styles.searchActions}>
-              <Pressable
-                onPress={() => {
-                  setQuery('');
-                  setOptions([]);
-                  setStep(STEP.CHOOSE);
-                }}
-                disabled={busy}
-                style={({ pressed }) => [styles.backBtn, styles.searchActionBtn, pressed ? { opacity: 0.75 } : null]}
-              >
-                <MaterialCommunityIcons name="arrow-left" size={16} color={colors.textMuted} />
-                <Text style={styles.backText}>Volver</Text>
-              </Pressable>
-              <Pressable
-                onPress={onCancel}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityLabel="Cancelar viaje en calle"
-                style={({ pressed }) => [styles.backBtn, styles.searchActionBtn, pressed ? { opacity: 0.75 } : null]}
-              >
-                <MaterialCommunityIcons name="close" size={16} color={colors.danger} />
-                <Text style={[styles.backText, { color: colors.danger }]}>Cancelar</Text>
-              </Pressable>
-            </View>
           </View>
         ) : null}
 

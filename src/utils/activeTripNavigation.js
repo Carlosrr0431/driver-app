@@ -418,15 +418,11 @@ export function resolveStreetHailSearchTopInset({
   safeTop = 0,
   viewportHeight = 800,
 } = {}) {
-  const height = Number(viewportHeight);
-  const safeH = Number.isFinite(height) && height > 0 ? height : 800;
+  // Al buscar destino queremos maximizar el espacio para POIs.
+  // Solo reservamos el safe-area (notch) y nada más.
   const top = Number(safeTop);
   const safeTopPx = Number.isFinite(top) && top > 0 ? top : 0;
-  const compact = safeH < 480;
-  const headerPeek = safeTopPx + (compact ? 8 : 52);
-  const minSheet = compact ? 220 : 280;
-  const maxInset = Math.max(0, Math.round(safeH - minSheet));
-  return Math.max(0, Math.min(Math.round(headerPeek), maxInset));
+  return Math.max(0, Math.round(safeTopPx));
 }
 
 export function resolveStreetHailSetupKeyboardBehavior(searching) {
